@@ -481,7 +481,7 @@ async function finishCurrentWorkout() {
 }
 
 // Gemini AI Integration
-async function callGemini(prompt) {
+async function callGemini(prompt, preferredTier = 'fast') {
   const key = STATE.apiKey.trim();
   if (!key) {
     alert('Podaj klucz Gemini API w zakładce Ustawienia!');
@@ -503,20 +503,56 @@ async function callGemini(prompt) {
     console.error('List models failed', e);
   }
 
-  // 2. Build list of actual available models, sorted by best choice
+  // 2. Select model tier:
+  // 'smart' (Pro tier) for detailed coaching analysis and expert Q&A
+  // 'fast' (Flash tier) for quick JSON parsing of Keep notes
   let modelsToTry = [];
   if (availableModels.length > 0) {
-    // Put flash first, then pro, then the rest
-    const flashModels = availableModels.filter(m => m.includes('flash'));
     const proModels = availableModels.filter(m => m.includes('pro') && !m.includes('flash'));
+    const flashModels = availableModels.filter(m => m.includes('flash'));
     const others = availableModels.filter(m => !m.includes('flash') && !m.includes('pro'));
-    modelsToTry = [...flashModels, ...proModels, ...others];
+
+    if (preferredTier === 'smart') {
+      // Prioritize Pro models for deep coaching reasoning
+      modelsToTry = [...proModels, ...flashModels, ...others];
+    } else {
+      // Prioritize Flash models for fast data parsing
+      modelsToTry = [...flashModels, ...proModels, ...others];
+    }
   } else {
-    // If listing failed, try standard Gemini 1.5 endpoints
-    modelsToTry = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.0-pro'];
+    modelsToTry = preferredTier === 'smart'
+      ? ['gemini-1.5-pro-latest', 'gemini-1.5-pro', 'gemini-1.5-flash-latest']
+      : ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-1.5-pro-latest'];
   }
 
   let lastError = null;
+
+  for (const model of modelsToTry) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }]
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) return text;
+      } else {
+        const err = await response.json().catch(() => ({}));
+        lastError = new Error(err.error?.message || `HTTP ${response.status}`);
+      }
+    } catch (e) {
+      lastError = e;
+    }
+  }
+
+  throw lastError || new Error('Brak dostępnego modelu Gemini dla tego klucza.');
+}
 
   for (const model of modelsToTry) {
     try {
@@ -748,7 +784,7 @@ async function triggerCoachAnalysis(session) {
 
   const setsSummary = session.sets.map(s => `${s.exercise}: S${s.setNum} ${s.weight}kg x ${s.reps}`).join('\n');
   const prompt = `
-Działasz jako doświadczony trener siłowy i analityk periodyzacji w aplikacji IronCoach.
+Działasz jako doświadczony, zaawansowany trener personalny i fizjolog sportowy w aplikacji IronCoach.
 Właśnie zakończył się trening użytkownika:
 Plan: ${session.planName}
 Całkowity tonaż: ${session.totalVolumeKg} kg
@@ -756,14 +792,15 @@ Ukończone serie: ${session.completedSets}
 Szczegóły serii:
 ${setsSummary}
 
-Przygotuj krótką, merytoryczną analizę w języku polskim:
-1. 📊 Ocena objętości i tonażu sesji.
-2. 🎯 Wskazówka na kolejny trening (Progresywne przeładowanie - np. do jakich ćwiczeń dodać ciężar lub powtórzenia).
-3. ⚡ Krótka uwaga o regeneracji.
-Bądź konkretny i zwięzły.`;
+Przygotuj pogłębioną, merytoryczną analizę w języku polskim:
+1. 📊 Ocena objętości, balansu i intensywności sesji.
+2. 🎯 Konkretna periodyzacja i progresywne przeładowanie na kolejny trening (do jakich ćwiczeń dodać ciężar, do jakich powtórzenia, gdzie utrzymać obciążenie).
+3. ⚡ Praktyczne zalecenia regeneracyjne i biomechaniczne.
+Używaj czytelnego formatowania punktowego.`;
 
   try {
-    const feedback = await callGemini(prompt);
+    // Use 'smart' (Pro tier) for coaching analysis
+    const feedback = await callGemini(prompt, 'smart');
     session.coachFeedback = feedback;
     localStorage.setItem('iron_history', JSON.stringify(STATE.history));
     reportBox.innerHTML = formatMarkdown(feedback);
@@ -777,18 +814,50 @@ Bądź konkretny i zwięzły.`;
 }
 
 async function askCoachQuestion() {
-  const q = document.getElementById('coach-question-input').value.trim();
+  const inputEl = document.getElementById('coach-question-input');
+  const btnEl = document.getElementById('coach-submit-btn');
+  const ansBox = document.getElementById('coach-answer-box');
+  const q = inputEl.value.trim();
   if (!q) return;
 
-  const ansBox = document.getElementById('coach-answer-box');
+  // 1. Lock input and button to prevent editing/double submitting
+  inputEl.disabled = true;
+  if (btnEl) {
+    btnEl.disabled = true;
+    btnEl.innerHTML = `<span style="display: inline-flex; align-items: center; gap: 8px;">⏳ Trener myśli...</span>`;
+    btnEl.style.opacity = '0.7';
+  }
+
+  // 2. Show clear progress indicator
   ansBox.style.display = 'block';
-  ansBox.textContent = 'Trener myśli... 🧠';
+  ansBox.innerHTML = `
+    <div style="display: flex; align-items: center; gap: 10px; color: var(--accent);">
+      <span style="font-size: 20px; animation: spin 1s linear infinite;">🧠</span>
+      <span><b>Trener AI analizuje Twoje pytanie...</b> (model zaawansowany Gemini Pro)</span>
+    </div>
+  `;
 
   try {
-    const ans = await callGemini(`Jesteś trenerem personalnym siłowym w aplikacji IronCoach. Odpowiedz krótko i konkretnie po polsku na pytanie: ${q}`);
-    ansBox.innerHTML = formatMarkdown(ans);
+    // 3. Use 'smart' model (Pro tier) for deep reasoning
+    const ans = await callGemini(
+      `Jesteś certyfikowanym trenerem personalnym siłowym i biomechanikiem w aplikacji IronCoach. Udziel wyczerpującej, merytorycznej i praktycznej odpowiedzi w języku polskim na pytanie użytkownika: ${q}`,
+      'smart'
+    );
+    ansBox.innerHTML = `
+      <div style="font-weight: 700; color: var(--primary); margin-bottom: 6px;">Odpowiedź Trenera:</div>
+      ${formatMarkdown(ans)}
+    `;
+    inputEl.value = '';
   } catch (err) {
-    ansBox.textContent = 'Błąd: ' + err.message;
+    ansBox.innerHTML = `<p style="color: var(--danger);">Błąd: ${escapeHtml(err.message)}</p>`;
+  } finally {
+    // 4. Unlock input and button
+    inputEl.disabled = false;
+    if (btnEl) {
+      btnEl.disabled = false;
+      btnEl.textContent = 'Zapytaj';
+      btnEl.style.opacity = '1';
+    }
   }
 }
 
