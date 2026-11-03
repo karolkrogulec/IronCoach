@@ -48,90 +48,181 @@ async function loadExerciseGifsDatabase() {
   }
 }
 
-// Helper to find matching GIF for Polish or English exercise name
+// Mapping dictionary of exact Polish terms to exact English slugs in the 1320 database
+const EXERCISE_SLUG_MAP = {
+  // Klatka
+  'wyciskanie sztangi leżąc': 'barbell-bench-press',
+  'wyciskanie sztangi lezac': 'barbell-bench-press',
+  'wyciskanie leżąc': 'barbell-bench-press',
+  'wyciskanie lezac': 'barbell-bench-press',
+  'wyciskanie hantli leżąc': 'dumbbell-bench-press',
+  'wyciskanie hantli lezac': 'dumbbell-bench-press',
+  'wyciskanie hantli skos': 'incline-dumbbell-bench-press',
+  'wyciskanie hantli skos dodatni': 'incline-dumbbell-bench-press',
+  'wyciskanie sztangi skos': 'barbell-incline-bench-press',
+  'rozpiętki': 'dumbbell-fly',
+  'rozpietki': 'dumbbell-fly',
+  'rozpiętki brama': 'cable-crossover',
+  'pompki': 'push-up',
+  'pompki na poręczach': 'chest-dips',
+  'dips': 'chest-dips',
+
+  // Plecy
+  'martwy ciąg': 'barbell-deadlift',
+  'martwy ciag': 'barbell-deadlift',
+  'stiff leg': 'stiff-leg-deadlift',
+  'martwy ciąg na prostych': 'stiff-leg-deadlift',
+  'wiosłowanie sztangą': 'barbell-bent-over-row',
+  'wioslowanie sztanga': 'barbell-bent-over-row',
+  'wiosłowanie hantlem': 'dumbbell-bent-over-row',
+  'wioslowanie hantlem': 'dumbbell-bent-over-row',
+  'wiosłowanie': 'barbell-bent-over-row',
+  'podciąganie': 'pull-up',
+  'podciaganie': 'pull-up',
+  'ściąganie drążka': 'cable-lat-pulldown',
+  'sciąganie wyciąg': 'cable-lat-pulldown',
+
+  // Nogi
+  'przysiad ze sztangą': 'barbell-squat',
+  'przysiad': 'barbell-squat',
+  'przysiady': 'barbell-squat',
+  'suwnica': 'leg-press',
+  'wypychanie nóg': 'leg-press',
+  'wyprosty nóg': 'lever-leg-extension',
+  'uginanie nóg': 'lever-seated-leg-curl',
+  'wspięcia na palce': 'standing-calf-raise',
+  'wykroki': 'dumbbell-lunge',
+
+  // Barki
+  'wyciskanie żołnierskie': 'overhead-press',
+  'wyciskanie zolnierskie': 'overhead-press',
+  'ohp': 'overhead-press',
+  'wznosy bokiem': 'dumbbell-lateral-raise',
+  'wznosy ramion bokiem': 'dumbbell-lateral-raise',
+  'face pull': 'cable-face-pull',
+  'wznosy w opadzie': 'dumbbell-rear-lateral-raise',
+
+  // Triceps & Biceps
+  'uginanie ze sztangą': 'barbell-curl',
+  'uginanie z hantlami': 'dumbbell-bicep-curl',
+  'uginanie ramion': 'dumbbell-bicep-curl',
+  'biceps': 'dumbbell-bicep-curl',
+  'prostowanie na wyciągu': 'cable-triceps-pushdown',
+  'prostowanie ramion': 'cable-triceps-pushdown',
+  'wyciskanie francuskie': 'barbell-lying-triceps-extension',
+  'francuskie': 'barbell-lying-triceps-extension'
+};
+
 function findExerciseGif(name) {
   if (!name || !STATE.exerciseGifs || STATE.exerciseGifs.length === 0) return null;
-  const lower = name.toLowerCase().trim();
+  const clean = name.toLowerCase().replace(/[^a-z0-9ąćęłńóśźż\s]/gi, ' ').replace(/\s+/g, ' ').trim();
 
-  // Polish to English key phrase mappings for popular gym exercises
-  const translations = [
-    { pl: 'wyciskanie sztangi leżąc', en: 'barbell bench press' },
-    { pl: 'wyciskanie leżąc', en: 'bench press' },
-    { pl: 'wyciskanie hantli skos', en: 'incline dumbbell press' },
-    { pl: 'wyciskanie hantli', en: 'dumbbell press' },
-    { pl: 'wyciskanie żołnierskie', en: 'overhead press' },
-    { pl: 'ohp', en: 'overhead press' },
-    { pl: 'przysiad', en: 'squat' },
-    { pl: 'martwy ciąg', en: 'deadlift' },
-    { pl: 'stiff leg', en: 'stiff leg deadlift' },
-    { pl: 'wiosłowanie sztangą', en: 'barbell bent over row' },
-    { pl: 'wiosłowanie hantlem', en: 'dumbbell row' },
-    { pl: 'wiosłowanie', en: 'row' },
-    { pl: 'podciąganie', en: 'pull-up' },
-    { pl: 'ściąganie drążka', en: 'lat pulldown' },
-    { pl: 'rozpiętki', en: 'dumbbell fly' },
-    { pl: 'wznosy bokiem', en: 'lateral raise' },
-    { pl: 'uginanie ramion ze sztangą', en: 'barbell curl' },
-    { pl: 'uginanie ramion z hantlami', en: 'dumbbell curl' },
-    { pl: 'uginanie ramion', en: 'biceps curl' },
-    { pl: 'prostowanie ramion', en: 'pushdown' },
-    { pl: 'francuskie', en: 'skull crusher' },
-    { pl: 'pompki na poręczach', en: 'dips' },
-    { pl: 'dips', en: 'dips' },
-    { pl: 'brzuszki', en: 'crunches' },
-    { pl: 'wspięcia na palce', en: 'calf raise' }
-  ];
+  // 1. Check custom saved mapping in localStorage
+  const savedMappings = JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}');
+  if (savedMappings[name]) {
+    const found = STATE.exerciseGifs.find(item => item.s === savedMappings[name] || item.n.toLowerCase() === savedMappings[name].toLowerCase());
+    if (found) return found;
+  }
 
-  let searchTerms = [lower];
-  for (const t of translations) {
-    if (lower.includes(t.pl)) {
-      searchTerms.push(t.en);
+  // 2. Exact match in our Polish dictionary
+  for (const [plKey, slug] of Object.entries(EXERCISE_SLUG_MAP)) {
+    if (clean.includes(plKey)) {
+      const found = STATE.exerciseGifs.find(item => item.s.includes(slug) || item.s === slug);
+      if (found) return found;
     }
   }
 
-  for (const term of searchTerms) {
-    const found = STATE.exerciseGifs.find(item => 
-      item.n.toLowerCase().includes(term) || item.s.includes(term.replace(/\s+/g, '-'))
-    );
-    if (found) return found;
-  }
-
-  // Fallback: match by individual words
-  const words = lower.split(/\s+/).filter(w => w.length > 3);
-  for (const w of words) {
-    const found = STATE.exerciseGifs.find(item => item.n.toLowerCase().includes(w));
-    if (found) return found;
-  }
+  // 3. Exact slug / English name search
+  const direct = STATE.exerciseGifs.find(item => 
+    item.n.toLowerCase() === clean || item.s === clean.replace(/\s+/g, '-')
+  );
+  if (direct) return direct;
 
   return null;
 }
 
+let currentModalExerciseName = '';
+
 function openGifModal(exerciseName) {
+  currentModalExerciseName = exerciseName;
   const match = findExerciseGif(exerciseName);
   const modal = document.getElementById('gif-preview-modal');
   const title = document.getElementById('gif-modal-title');
   const img = document.getElementById('gif-modal-img');
   const instr = document.getElementById('gif-modal-instructions');
+  const searchInput = document.getElementById('gif-search-input');
+  if (searchInput) searchInput.value = '';
 
   title.textContent = exerciseName;
+
   if (match && match.g) {
     img.src = match.g;
     img.style.display = 'block';
     instr.innerHTML = `
-      <p style="color: var(--primary); font-weight: 700; margin-bottom: 4px;">Ang. ${escapeHtml(match.n)}</p>
-      ${(match.i || []).map(step => `<li style="margin-bottom: 4px;">${escapeHtml(step)}</li>`).join('')}
+      <div style="color: var(--primary); font-weight: 700; margin-bottom: 4px;">🎬 ${escapeHtml(match.n)}</div>
+      <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">Partia: ${escapeHtml(match.m || '')}</div>
+      ${(match.i || []).map(step => `<li style="margin-bottom: 3px; font-size: 12px;">${escapeHtml(step)}</li>`).join('')}
     `;
   } else {
     img.style.display = 'none';
     instr.innerHTML = `
-      <p style="color: var(--text-muted); margin: 16px 0;">Brak bezpośredniej animacji GIF w bazie dla tego ćwiczenia.</p>
-      <a href="https://www.youtube.com/results?search_query=ćwiczenie+${encodeURIComponent(exerciseName)}+technika" target="_blank" class="btn btn-secondary">
-        ▶ Szukaj techniki na YouTube
+      <p style="color: var(--text-muted); margin: 12px 0; font-size: 13px;">Nie dopasowano automatycznie animacji dla tej nazwy.</p>
+      <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Wpisz angielską nazwę poniżej, aby wybrać z 1300 animacji w bazie:</p>
+      <a href="https://www.youtube.com/results?search_query=ćwiczenie+${encodeURIComponent(exerciseName)}+technika" target="_blank" class="btn btn-secondary" style="margin-bottom: 12px;">
+        ▶ Zobacz technikę na YouTube
       </a>
     `;
   }
 
   modal.style.display = 'flex';
+}
+
+function handleGifSearch(query) {
+  const q = query.toLowerCase().trim();
+  const resultsBox = document.getElementById('gif-search-results');
+  if (!q || q.length < 2) {
+    resultsBox.style.display = 'none';
+    return;
+  }
+
+  const matches = STATE.exerciseGifs.filter(item => 
+    item.n.toLowerCase().includes(q) || item.s.includes(q.replace(/\s+/g, '-'))
+  ).slice(0, 8);
+
+  if (matches.length === 0) {
+    resultsBox.innerHTML = '<div style="padding: 8px; font-size: 12px; color: var(--text-muted);">Brak wyników w bazie.</div>';
+    resultsBox.style.display = 'block';
+    return;
+  }
+
+  resultsBox.innerHTML = matches.map(m => `
+    <div onclick="selectCustomGif('${escapeHtml(m.s)}')" style="padding: 8px; border-bottom: 1px solid var(--border); cursor: pointer; text-align: left; font-size: 13px;">
+      <b>${escapeHtml(m.n)}</b> <span style="font-size: 11px; color: var(--text-muted);">(${escapeHtml(m.m)})</span>
+    </div>
+  `).join('');
+  resultsBox.style.display = 'block';
+}
+
+function selectCustomGif(slug) {
+  const match = STATE.exerciseGifs.find(item => item.s === slug);
+  if (!match) return;
+
+  // Save persistent mapping so this exercise always shows this GIF
+  const savedMappings = JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}');
+  savedMappings[currentModalExerciseName] = slug;
+  localStorage.setItem('iron_custom_gif_map', JSON.stringify(savedMappings));
+
+  const img = document.getElementById('gif-modal-img');
+  const instr = document.getElementById('gif-modal-instructions');
+  const resultsBox = document.getElementById('gif-search-results');
+  resultsBox.style.display = 'none';
+
+  img.src = match.g;
+  img.style.display = 'block';
+  instr.innerHTML = `
+    <div style="color: var(--success); font-weight: 700; margin-bottom: 4px;">✅ Przypisano: ${escapeHtml(match.n)}</div>
+    ${(match.i || []).map(step => `<li style="margin-bottom: 3px; font-size: 12px;">${escapeHtml(step)}</li>`).join('')}
+  `;
 }
 
 function closeGifModal() {

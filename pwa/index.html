@@ -527,12 +527,19 @@
         <img id="gif-modal-img" src="" alt="Technika ćwiczenia" style="width: 100%; max-height: 320px; object-fit: contain; display: none;">
       </div>
 
-      <div id="gif-modal-instructions" style="text-align: left; font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 16px;"></div>
+      <div id="gif-modal-instructions" style="text-align: left; font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 12px;"></div>
+
+      <!-- Quick Search / Override GIF -->
+      <div style="background: var(--surface-elevated); border-radius: 10px; padding: 10px; margin-bottom: 14px; text-align: left;">
+        <label style="font-size: 11px; font-weight: 700; color: var(--text-muted); display: block; margin-bottom: 4px;">Zmień animację (wyszukaj w bazie 1300 ćwiczeń):</label>
+        <input type="text" id="gif-search-input" class="input-box" style="text-align: left; font-size: 13px;" placeholder="Wpisz np. squat, press, deadlift..." oninput="handleGifSearch(this.value)">
+        <div id="gif-search-results" style="display: none; max-height: 160px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-top: 6px;"></div>
+      </div>
 
       <button class="btn btn-secondary" onclick="closeGifModal()">Zamknij</button>
     </div>
   </div>
 
-  <script src="app.js?v=10"></script>
+  <script src="app.js?v=11"></script>
 </body>
 </html>
