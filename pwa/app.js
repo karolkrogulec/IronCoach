@@ -74,7 +74,7 @@ function renderPlans() {
   if (!container) return;
 
   if (STATE.plans.length === 0) {
-    container.innerHTML = `<p style="color: var(--text-muted); font-size: 14px;">Brak planów. Zaimportuj notatkę z Keep!</p>`;
+    container.innerHTML = `<p style="color: var(--text-muted); font-size: 14px;">Brak planów. Zaimportuj notatkę z Keep lub kliknij 'Nowy Plan'!</p>`;
     return;
   }
 
@@ -88,7 +88,8 @@ function renderPlans() {
         ${plan.exercises.length} ćwiczeń • ${escapeHtml(plan.description || '')}
       </p>
       <div style="display: flex; gap: 8px; justify-content: flex-end;">
-        <button class="btn btn-sm btn-secondary" onclick="deletePlan('${plan.id}')">Usuń</button>
+        <button class="btn btn-sm btn-secondary" onclick="openEditPlanModal('${plan.id}')">✏️ Edytuj</button>
+        <button class="btn btn-sm btn-secondary" style="color: var(--danger); border-color: rgba(255,82,82,0.3);" onclick="deletePlan('${plan.id}')">🗑️ Usuń</button>
       </div>
     </div>
   `).join('');
@@ -104,17 +105,41 @@ function renderRecentWorkouts() {
     return;
   }
 
-  container.innerHTML = STATE.history.slice(0, 5).map(session => `
-    <div class="card" onclick="openSessionDetails('${session.id}')" style="cursor: pointer;">
+  container.innerHTML = STATE.history.slice(0, 10).map(session => `
+    <div class="card">
       <div class="card-title" style="font-size: 15px;">
         <span>${escapeHtml(session.planName)}</span>
         <span class="badge badge-cyan">${session.totalVolumeKg} kg</span>
       </div>
-      <p style="color: var(--text-muted); font-size: 12px;">
+      <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 8px;">
         ${new Date(session.endTime).toLocaleString('pl-PL')} • ${session.completedSets} serii
       </p>
+      <div style="display: flex; gap: 8px; justify-content: flex-end;">
+        <button class="btn btn-sm btn-secondary" onclick="viewHistoryReport('${session.id}')">📄 Raport AI</button>
+        <button class="btn btn-sm btn-secondary" style="color: var(--danger); border-color: rgba(255,82,82,0.3);" onclick="deleteHistorySession('${session.id}')">Usuń</button>
+      </div>
     </div>
   `).join('');
+}
+
+function deleteHistorySession(sessionId) {
+  if (!confirm('Czy na pewno chcesz usunąć ten zapis treningu?')) return;
+  STATE.history = STATE.history.filter(s => s.id !== sessionId);
+  localStorage.setItem('iron_history', JSON.stringify(STATE.history));
+  renderRecentWorkouts();
+}
+
+function viewHistoryReport(sessionId) {
+  const session = STATE.history.find(s => s.id === sessionId);
+  if (!session) return;
+  showView('coach');
+  const reportBox = document.getElementById('coach-report-content');
+  if (session.coachFeedback) {
+    reportBox.innerHTML = formatMarkdown(session.coachFeedback);
+    reportBox.style.display = 'block';
+  } else {
+    triggerCoachAnalysis(session);
+  }
 }
 
 // Start Workout Session
@@ -507,25 +532,102 @@ function saveParsedPlan() {
   showView('home');
 }
 
-// Modal for manual plan creation
+// Modal for adding / editing plans
+let editingPlanId = null;
+
 function openNewPlanModal() {
-  const planName = prompt('Podaj nazwę nowego planu treningowego (np. FBW, Dół ciała):');
-  if (!planName || !planName.trim()) return;
+  editingPlanId = null;
+  document.getElementById('plan-modal-title').textContent = 'Nowy Plan Treningowy';
+  document.getElementById('modal-plan-name').value = '';
+  document.getElementById('modal-plan-desc').value = '';
+  document.getElementById('modal-exercises-list').innerHTML = '';
+  addModalExerciseRow('Wyciskanie sztangi leżąc', 4, 8, 80);
+  addModalExerciseRow('Wyciskanie hantli skos', 3, 10, 26);
+  const modal = document.getElementById('plan-modal');
+  modal.style.display = 'flex';
+}
 
-  const ex1 = prompt('Podaj pierwsze ćwiczenie (np. Przysiady 4x8 100kg):', 'Wyciskanie sztangi 3x10 60kg');
-  const newPlan = {
-    id: 'plan-' + Date.now(),
-    name: planName.trim(),
-    description: 'Utworzony ręcznie',
-    exercises: [
-      { name: ex1 || 'Ćwiczenie 1', sets: 3, reps: 10, weight: 0, muscle: 'Ogólne' }
-    ]
-  };
+function openEditPlanModal(planId) {
+  const plan = STATE.plans.find(p => p.id === planId);
+  if (!plan) return;
+  editingPlanId = planId;
+  document.getElementById('plan-modal-title').textContent = 'Edycja Planu Treningowego';
+  document.getElementById('modal-plan-name').value = plan.name || '';
+  document.getElementById('modal-plan-desc').value = plan.description || '';
+  
+  const listEl = document.getElementById('modal-exercises-list');
+  listEl.innerHTML = '';
+  (plan.exercises || []).forEach(ex => {
+    addModalExerciseRow(ex.name, ex.sets, ex.reps, ex.weight);
+  });
+  if ((plan.exercises || []).length === 0) {
+    addModalExerciseRow('', 3, 10, 0);
+  }
 
-  STATE.plans.push(newPlan);
+  const modal = document.getElementById('plan-modal');
+  modal.style.display = 'flex';
+}
+
+function closePlanModal() {
+  const modal = document.getElementById('plan-modal');
+  modal.style.display = 'none';
+}
+
+function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0) {
+  const listEl = document.getElementById('modal-exercises-list');
+  const row = document.createElement('div');
+  row.className = 'modal-ex-row';
+  row.style.cssText = 'display: grid; grid-template-columns: 1fr 50px 50px 60px 30px; gap: 6px; align-items: center; margin-bottom: 8px;';
+  row.innerHTML = `
+    <input type="text" class="input-box modal-ex-name" style="text-align: left; font-size: 13px;" placeholder="Ćwiczenie" value="${escapeHtml(name)}">
+    <input type="number" class="input-box modal-ex-sets" placeholder="Ser" value="${sets}" title="Serie">
+    <input type="number" class="input-box modal-ex-reps" placeholder="Powt" value="${reps}" title="Powtórzenia">
+    <input type="number" step="0.5" class="input-box modal-ex-weight" placeholder="kg" value="${weight}" title="Ciężar (kg)">
+    <button type="button" style="background: none; border: none; color: var(--danger); font-size: 16px; cursor: pointer;" onclick="this.parentElement.remove()">✕</button>
+  `;
+  listEl.appendChild(row);
+}
+
+function saveModalPlan() {
+  const name = document.getElementById('modal-plan-name').value.trim();
+  if (!name) return alert('Podaj nazwę planu!');
+  const desc = document.getElementById('modal-plan-desc').value.trim();
+
+  const rows = document.querySelectorAll('#modal-exercises-list .modal-ex-row');
+  const exercises = [];
+  rows.forEach(r => {
+    const exName = r.querySelector('.modal-ex-name').value.trim();
+    const sets = parseInt(r.querySelector('.modal-ex-sets').value) || 3;
+    const reps = parseInt(r.querySelector('.modal-ex-reps').value) || 10;
+    const weight = parseFloat(r.querySelector('.modal-ex-weight').value) || 0;
+    if (exName) {
+      exercises.push({ name: exName, sets, reps, weight, muscle: 'Ogólne' });
+    }
+  });
+
+  if (exercises.length === 0) {
+    return alert('Dodaj przynajmniej jedno ćwiczenie!');
+  }
+
+  if (editingPlanId) {
+    const idx = STATE.plans.findIndex(p => p.id === editingPlanId);
+    if (idx !== -1) {
+      STATE.plans[idx].name = name;
+      STATE.plans[idx].description = desc;
+      STATE.plans[idx].exercises = exercises;
+    }
+  } else {
+    STATE.plans.push({
+      id: 'plan-' + Date.now(),
+      name: name,
+      description: desc,
+      exercises: exercises
+    });
+  }
+
   localStorage.setItem('iron_plans', JSON.stringify(STATE.plans));
   renderPlans();
-  alert('Plan został dodany! Możesz go edytować podczas treningu.');
+  closePlanModal();
 }
 
 // Coach Analysis
