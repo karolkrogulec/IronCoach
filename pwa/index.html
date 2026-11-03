@@ -396,15 +396,35 @@
         <div id="coach-report-content" class="coach-bubble" style="display: none;"></div>
       </div>
 
-      <!-- Ask Coach Box -->
-      <div class="card">
-        <div class="card-title">💬 Zapytaj Trenera</div>
-        <p style="color: var(--text-muted); font-size: 13px;">
-          Zapytaj o zamiennik ćwiczenia, ból stawu lub regenerację:
-        </p>
-        <textarea id="coach-question-input" class="text-area" style="min-height: 80px;" placeholder="np. Czym zastąpić wyciskanie sztangi leżąc, bo czuję ból w przednim aktonie barku?"></textarea>
-        <button id="coach-submit-btn" class="btn btn-primary" onclick="askCoachQuestion()">Zapytaj</button>
-        <div id="coach-answer-box" class="coach-bubble" style="display: none;"></div>
+      <!-- Interactive Coach Chat -->
+      <div class="card" style="padding: 14px;">
+        <div class="card-title" style="margin-bottom: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span>💬 Czat z Trenerem</span>
+            <span class="badge badge-cyan">Gemini Pro</span>
+          </div>
+          <button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 2px 8px;" onclick="clearCoachChat()">Wyczyść czat</button>
+        </div>
+
+        <!-- Chat messages container -->
+        <div id="coach-chat-messages" style="
+          max-height: 380px;
+          min-height: 180px;
+          overflow-y: auto;
+          background: #0d0f13;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 12px;
+          margin-bottom: 12px;
+          display: flex;
+          flex-direction: column;
+        "></div>
+
+        <!-- Chat Input Bar -->
+        <div style="display: flex; gap: 8px; align-items: flex-end;">
+          <textarea id="coach-question-input" class="text-area" style="min-height: 44px; height: 44px; margin: 0; padding: 10px; font-size: 14px; resize: none; flex: 1;" placeholder="Napisz do trenera... (np. Czym zastąpić OHP?)"></textarea>
+          <button id="coach-submit-btn" class="btn btn-primary" style="width: auto; height: 44px; padding: 0 18px; font-size: 14px; white-space: nowrap;" onclick="askCoachQuestion()">Wyślij</button>
+        </div>
       </div>
     </div>
   </section>
@@ -513,6 +533,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=8"></script>
+  <script src="app.js?v=9"></script>
 </body>
 </html>

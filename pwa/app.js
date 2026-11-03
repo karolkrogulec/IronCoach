@@ -21,7 +21,8 @@ const STATE = {
   timerInterval: null,
   timerSeconds: 0,
   parsedKeepPlan: null,
-  exerciseGifs: []
+  exerciseGifs: [],
+  coachChat: JSON.parse(localStorage.getItem('iron_coach_chat')) || []
 };
 
 // Initialize
@@ -33,6 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderPlans();
   renderRecentWorkouts();
   checkActiveWorkout();
+  renderCoachChat();
 });
 
 async function loadExerciseGifsDatabase() {
@@ -816,49 +818,122 @@ Używaj czytelnego formatowania punktowego.`;
 async function askCoachQuestion() {
   const inputEl = document.getElementById('coach-question-input');
   const btnEl = document.getElementById('coach-submit-btn');
-  const ansBox = document.getElementById('coach-answer-box');
+  const chatMessagesEl = document.getElementById('coach-chat-messages');
   const q = inputEl.value.trim();
   if (!q) return;
 
-  // 1. Lock input and button to prevent editing/double submitting
+  // 1. Append user message to chat immediately
+  const userMsg = { role: 'user', text: q, time: Date.now() };
+  STATE.coachChat.push(userMsg);
+  saveCoachChat();
+  renderCoachChat();
+
+  // 2. Clear & lock input, set button loading state
+  inputEl.value = '';
   inputEl.disabled = true;
   if (btnEl) {
     btnEl.disabled = true;
-    btnEl.innerHTML = `<span style="display: inline-flex; align-items: center; gap: 8px;">⏳ Trener myśli...</span>`;
+    btnEl.innerHTML = `<span style="display: inline-flex; align-items: center; gap: 6px;">⏳ Trener myśli...</span>`;
     btnEl.style.opacity = '0.7';
   }
 
-  // 2. Show clear progress indicator
-  ansBox.style.display = 'block';
-  ansBox.innerHTML = `
-    <div style="display: flex; align-items: center; gap: 10px; color: var(--accent);">
-      <span style="font-size: 20px; animation: spin 1s linear infinite;">🧠</span>
-      <span><b>Trener AI analizuje Twoje pytanie...</b> (model zaawansowany Gemini Pro)</span>
-    </div>
-  `;
+  // 3. Scroll to bottom
+  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+
+  // 4. Build context with workout history and full conversation thread
+  const lastWorkout = STATE.history[0];
+  const workoutContext = lastWorkout
+    ? `Ostatni trening użytkownika: ${lastWorkout.planName}, tonaż: ${lastWorkout.totalVolumeKg}kg, serii: ${lastWorkout.completedSets}.`
+    : `Brak zarejestrowanych sesji.`;
+
+  // Build thread history for Gemini
+  const conversationHistory = STATE.coachChat.slice(-8).map(m => 
+    `${m.role === 'user' ? 'Użytkownik' : 'Trener'}: ${m.text}`
+  ).join('\n\n');
+
+  const fullPrompt = `
+Jesteś doświadczonym, empatycznym trenerem personalnym i fizjologiem w aplikacji IronCoach.
+Rozmawiasz z użytkownikiem w trybie ciągłego czatu.
+
+Kontekst treningowy:
+${workoutContext}
+
+Dotychczasowy przebieg rozmowy:
+${conversationHistory}
+
+Udziel naturalnej, merytorycznej i pomocnej odpowiedzi po polsku jako Trener na ostatnią wiadomość użytkownika.
+`;
 
   try {
-    // 3. Use 'smart' model (Pro tier) for deep reasoning
-    const ans = await callGemini(
-      `Jesteś certyfikowanym trenerem personalnym siłowym i biomechanikiem w aplikacji IronCoach. Udziel wyczerpującej, merytorycznej i praktycznej odpowiedzi w języku polskim na pytanie użytkownika: ${q}`,
-      'smart'
-    );
-    ansBox.innerHTML = `
-      <div style="font-weight: 700; color: var(--primary); margin-bottom: 6px;">Odpowiedź Trenera:</div>
-      ${formatMarkdown(ans)}
-    `;
-    inputEl.value = '';
+    // 5. Call Gemini Pro
+    const ans = await callGemini(fullPrompt, 'smart');
+    STATE.coachChat.push({ role: 'assistant', text: ans, time: Date.now() });
+    saveCoachChat();
+    renderCoachChat();
   } catch (err) {
-    ansBox.innerHTML = `<p style="color: var(--danger);">Błąd: ${escapeHtml(err.message)}</p>`;
+    STATE.coachChat.push({ role: 'assistant', text: `⚠️ Błąd: ${err.message}`, time: Date.now() });
+    renderCoachChat();
   } finally {
-    // 4. Unlock input and button
+    // 6. Unlock input and button
     inputEl.disabled = false;
+    inputEl.focus();
     if (btnEl) {
       btnEl.disabled = false;
-      btnEl.textContent = 'Zapytaj';
+      btnEl.textContent = 'Wyślij';
       btnEl.style.opacity = '1';
     }
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
   }
+}
+
+function renderCoachChat() {
+  const container = document.getElementById('coach-chat-messages');
+  if (!container) return;
+
+  if (STATE.coachChat.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; color: var(--text-muted); padding: 24px 12px; font-size: 13px;">
+        👋 Cześć! Jestem Twoim trenerem personalnym AI.<br>
+        Możesz zapytać mnie o technikę, zamiennik ćwiczenia, ból stawu, progres lub dietę okołotreningową.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = STATE.coachChat.map(m => {
+    const isUser = m.role === 'user';
+    return `
+      <div style="display: flex; justify-content: ${isUser ? 'flex-end' : 'flex-start'}; margin-bottom: 10px;">
+        <div style="
+          max-width: 85%;
+          padding: 10px 14px;
+          border-radius: ${isUser ? '14px 14px 2px 14px' : '14px 14px 14px 2px'};
+          background: ${isUser ? 'var(--primary)' : 'var(--surface-elevated)'};
+          color: ${isUser ? '#000' : 'var(--text)'};
+          font-weight: ${isUser ? '600' : '400'};
+          font-size: 14px;
+          line-height: 1.5;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+          border: ${isUser ? 'none' : '1px solid var(--border)'};
+        ">
+          ${isUser ? escapeHtml(m.text) : formatMarkdown(m.text)}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  container.scrollTop = container.scrollHeight;
+}
+
+function saveCoachChat() {
+  localStorage.setItem('iron_coach_chat', JSON.stringify(STATE.coachChat));
+}
+
+function clearCoachChat() {
+  if (!confirm('Czy na pewno chcesz wyczyścić historię rozmowy z trenerem?')) return;
+  STATE.coachChat = [];
+  saveCoachChat();
+  renderCoachChat();
 }
 
 // API Key & Settings
