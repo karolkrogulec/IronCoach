@@ -556,33 +556,6 @@ async function callGemini(prompt, preferredTier = 'fast') {
   throw lastError || new Error('Brak dostępnego modelu Gemini dla tego klucza.');
 }
 
-  for (const model of modelsToTry) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }]
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) return text;
-      } else {
-        const err = await response.json().catch(() => ({}));
-        lastError = new Error(err.error?.message || `HTTP ${response.status}`);
-      }
-    } catch (e) {
-      lastError = e;
-    }
-  }
-
-  throw lastError || new Error('Brak dostępnego modelu Gemini dla tego klucza.');
-}
-
 // Parse Note from Google Keep (supports single or multiple plans in one note)
 async function parseKeepWithGemini() {
   const rawText = document.getElementById('keep-text-input').value.trim();
