@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Dumbbell icon in gold/amber -->
+    <path
+        android:fillColor="#FFB300"
+        android:pathData="M24,40 L34,40 L34,68 L24,68 Z M74,40 L84,40 L84,68 L74,68 Z M34,51 L74,51 L74,57 L34,57 Z M18,45 L24,45 L24,63 L18,63 Z M84,45 L90,45 L90,63 L84,63 Z" />
+</vector>

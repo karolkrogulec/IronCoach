@@ -1,0 +1,171 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.ironcoach.app"
+4    android:versionCode="1"
+5    android:versionName="1.0" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="26"
+9        android:targetSdkVersion="35" />
+10
+11    <uses-permission android:name="android.permission.INTERNET" />
+11-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:4:5-67
+11-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:4:22-64
+12
+13    <permission
+13-->[androidx.core:core:1.15.0] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/3f4f4e6fb8d7c30d4a3ff0c844d0e403/transformed/core-1.15.0/AndroidManifest.xml:22:5-24:47
+14        android:name="com.ironcoach.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+14-->[androidx.core:core:1.15.0] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/3f4f4e6fb8d7c30d4a3ff0c844d0e403/transformed/core-1.15.0/AndroidManifest.xml:23:9-81
+15        android:protectionLevel="signature" />
+15-->[androidx.core:core:1.15.0] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/3f4f4e6fb8d7c30d4a3ff0c844d0e403/transformed/core-1.15.0/AndroidManifest.xml:24:9-44
+16
+17    <uses-permission android:name="com.ironcoach.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+17-->[androidx.core:core:1.15.0] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/3f4f4e6fb8d7c30d4a3ff0c844d0e403/transformed/core-1.15.0/AndroidManifest.xml:26:5-97
+17-->[androidx.core:core:1.15.0] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/3f4f4e6fb8d7c30d4a3ff0c844d0e403/transformed/core-1.15.0/AndroidManifest.xml:26:22-94
+18
+19    <application
+19-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:6:5-35:19
+20        android:name="com.ironcoach.app.IronCoachApp"
+20-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:7:9-37
+21        android:allowBackup="true"
+21-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:8:9-35
+22        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+22-->[androidx.core:core:1.15.0] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/3f4f4e6fb8d7c30d4a3ff0c844d0e403/transformed/core-1.15.0/AndroidManifest.xml:28:18-86
+23        android:dataExtractionRules="@xml/data_extraction_rules"
+23-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:9:9-65
+24        android:debuggable="true"
+25        android:extractNativeLibs="false"
+26        android:fullBackupContent="@xml/backup_rules"
+26-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:10:9-54
+27        android:icon="@mipmap/ic_launcher"
+27-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:11:9-43
+28        android:label="@string/app_name"
+28-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:12:9-41
+29        android:roundIcon="@mipmap/ic_launcher_round"
+29-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:13:9-54
+30        android:supportsRtl="true"
+30-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:14:9-35
+31        android:theme="@style/Theme.IronCoach" >
+31-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:15:9-47
+32        <activity
+32-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:17:9-34:20
+33            android:name="com.ironcoach.app.MainActivity"
+33-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:18:13-41
+34            android:exported="true"
+34-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:19:13-36
+35            android:theme="@style/Theme.IronCoach"
+35-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:20:13-51
+36            android:windowSoftInputMode="adjustResize" >
+36-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:21:13-55
+37            <intent-filter>
+37-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:23:13-26:29
+38                <action android:name="android.intent.action.MAIN" />
+38-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:24:17-69
+38-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:24:25-66
+39
+40                <category android:name="android.intent.category.LAUNCHER" />
+40-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:25:17-77
+40-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:25:27-74
+41            </intent-filter>
+42
+43            <!-- Intent Filter to receive shared workout notes directly from Google Keep -->
+44            <intent-filter>
+44-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:29:13-33:29
+45                <action android:name="android.intent.action.SEND" />
+45-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:30:17-69
+45-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:30:25-66
+46
+47                <category android:name="android.intent.category.DEFAULT" />
+47-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:31:17-76
+47-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:31:27-73
+48
+49                <data android:mimeType="text/plain" />
+49-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:32:17-55
+49-->/Users/karolkrogulec/Antigravity Project/app/src/main/AndroidManifest.xml:32:23-52
+50            </intent-filter>
+51        </activity>
+52
+53        <provider
+53-->[androidx.emoji2:emoji2:1.3.0] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/5bfb7d725341ecad167d5163e37b0691/transformed/emoji2-1.3.0/AndroidManifest.xml:24:9-32:20
+54            android:name="androidx.startup.InitializationProvider"
+54-->[androidx.emoji2:emoji2:1.3.0] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/5bfb7d725341ecad167d5163e37b0691/transformed/emoji2-1.3.0/AndroidManifest.xml:25:13-67
+55            android:authorities="com.ironcoach.app.androidx-startup"
+55-->[androidx.emoji2:emoji2:1.3.0] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/5bfb7d725341ecad167d5163e37b0691/transformed/emoji2-1.3.0/AndroidManifest.xml:26:13-68
+56            android:exported="false" >
+56-->[androidx.emoji2:emoji2:1.3.0] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/5bfb7d725341ecad167d5163e37b0691/transformed/emoji2-1.3.0/AndroidManifest.xml:27:13-37
+57            <meta-data
+57-->[androidx.emoji2:emoji2:1.3.0] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/5bfb7d725341ecad167d5163e37b0691/transformed/emoji2-1.3.0/AndroidManifest.xml:29:13-31:52
+58                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+58-->[androidx.emoji2:emoji2:1.3.0] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/5bfb7d725341ecad167d5163e37b0691/transformed/emoji2-1.3.0/AndroidManifest.xml:30:17-75
+59                android:value="androidx.startup" />
+59-->[androidx.emoji2:emoji2:1.3.0] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/5bfb7d725341ecad167d5163e37b0691/transformed/emoji2-1.3.0/AndroidManifest.xml:31:17-49
+60            <meta-data
+60-->[androidx.lifecycle:lifecycle-process:2.8.7] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/86a43281d1456bf155a39fb94bbd0818/transformed/lifecycle-process-2.8.7/AndroidManifest.xml:29:13-31:52
+61                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+61-->[androidx.lifecycle:lifecycle-process:2.8.7] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/86a43281d1456bf155a39fb94bbd0818/transformed/lifecycle-process-2.8.7/AndroidManifest.xml:30:17-78
+62                android:value="androidx.startup" />
+62-->[androidx.lifecycle:lifecycle-process:2.8.7] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/86a43281d1456bf155a39fb94bbd0818/transformed/lifecycle-process-2.8.7/AndroidManifest.xml:31:17-49
+63            <meta-data
+63-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:29:13-31:52
+64                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+64-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:30:17-85
+65                android:value="androidx.startup" />
+65-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:31:17-49
+66        </provider>
+67
+68        <activity
+68-->[androidx.compose.ui:ui-tooling-android:1.7.5] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/2d1d66745a8359873fd3084de4ebc1c8/transformed/ui-tooling-release/AndroidManifest.xml:23:9-25:39
+69            android:name="androidx.compose.ui.tooling.PreviewActivity"
+69-->[androidx.compose.ui:ui-tooling-android:1.7.5] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/2d1d66745a8359873fd3084de4ebc1c8/transformed/ui-tooling-release/AndroidManifest.xml:24:13-71
+70            android:exported="true" />
+70-->[androidx.compose.ui:ui-tooling-android:1.7.5] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/2d1d66745a8359873fd3084de4ebc1c8/transformed/ui-tooling-release/AndroidManifest.xml:25:13-36
+71
+72        <service
+72-->[androidx.room:room-runtime:2.6.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c9b38a8805db62018fdf6c979b1bc533/transformed/room-runtime-2.6.1/AndroidManifest.xml:24:9-28:63
+73            android:name="androidx.room.MultiInstanceInvalidationService"
+73-->[androidx.room:room-runtime:2.6.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c9b38a8805db62018fdf6c979b1bc533/transformed/room-runtime-2.6.1/AndroidManifest.xml:25:13-74
+74            android:directBootAware="true"
+74-->[androidx.room:room-runtime:2.6.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c9b38a8805db62018fdf6c979b1bc533/transformed/room-runtime-2.6.1/AndroidManifest.xml:26:13-43
+75            android:exported="false" />
+75-->[androidx.room:room-runtime:2.6.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c9b38a8805db62018fdf6c979b1bc533/transformed/room-runtime-2.6.1/AndroidManifest.xml:27:13-37
+76
+77        <receiver
+77-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:34:9-52:20
+78            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+78-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:35:13-76
+79            android:directBootAware="false"
+79-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:36:13-44
+80            android:enabled="true"
+80-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:37:13-35
+81            android:exported="true"
+81-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:38:13-36
+82            android:permission="android.permission.DUMP" >
+82-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:39:13-57
+83            <intent-filter>
+83-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:40:13-42:29
+84                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+84-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:41:17-91
+84-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:41:25-88
+85            </intent-filter>
+86            <intent-filter>
+86-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:43:13-45:29
+87                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+87-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:44:17-85
+87-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:44:25-82
+88            </intent-filter>
+89            <intent-filter>
+89-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:46:13-48:29
+90                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+90-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:47:17-88
+90-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:47:25-85
+91            </intent-filter>
+92            <intent-filter>
+92-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:49:13-51:29
+93                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+93-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:50:17-95
+93-->[androidx.profileinstaller:profileinstaller:1.3.1] /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/AndroidManifest.xml:50:25-92
+94            </intent-filter>
+95        </receiver>
+96    </application>
+97
+98</manifest>

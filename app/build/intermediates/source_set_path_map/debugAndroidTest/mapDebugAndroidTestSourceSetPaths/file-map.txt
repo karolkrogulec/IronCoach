@@ -1,0 +1,6 @@
+com.ironcoach.app.test.app-tracing-1.2.0-0 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/278f6d90823e84957761e6be562c850b/transformed/tracing-1.2.0/res
+com.ironcoach.app.test.app-core-1.6.1-1 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/99c5ed13b3a206aad2b57bfda53d4ea8/transformed/core-1.6.1/res
+com.ironcoach.app.test.app-androidTest-2 /Users/karolkrogulec/Antigravity Project/app/build/generated/res/resValues/androidTest/debug
+com.ironcoach.app.test.app-mergeDebugAndroidTestResources-3 /Users/karolkrogulec/Antigravity Project/app/build/intermediates/incremental/debugAndroidTest/mergeDebugAndroidTestResources/merged.dir
+com.ironcoach.app.test.app-mergeDebugAndroidTestResources-4 /Users/karolkrogulec/Antigravity Project/app/build/intermediates/incremental/debugAndroidTest/mergeDebugAndroidTestResources/stripped.dir
+com.ironcoach.app.test.app-debugAndroidTest-5 /Users/karolkrogulec/Antigravity Project/app/build/intermediates/merged_res/debugAndroidTest/mergeDebugAndroidTestResources

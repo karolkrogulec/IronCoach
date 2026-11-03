@@ -1,0 +1,63 @@
+com.ironcoach.app-sqlite-framework-2.4.0-0 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/01baa875c37b96502579902d3c6bb7cb/transformed/sqlite-framework-2.4.0/res
+com.ironcoach.app-navigation-common-ktx-2.8.4-1 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/05e8a0f662a7800b66292f54804876ac/transformed/navigation-common-ktx-2.8.4/res
+com.ironcoach.app-ui-tooling-data-release-2 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/0a9dc76cd3b8a9c75498130fd096aeae/transformed/ui-tooling-data-release/res
+com.ironcoach.app-annotation-experimental-1.4.1-3 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/0d1c0beb54962830a0a20207e14b951c/transformed/annotation-experimental-1.4.1/res
+com.ironcoach.app-animation-core-release-4 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/0e69cf1f43c7f4ef6c6bd323fb18b6cf/transformed/animation-core-release/res
+com.ironcoach.app-customview-poolingcontainer-1.0.0-5 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/12c66eed2d4776f48db7ea0fc5fedc11/transformed/customview-poolingcontainer-1.0.0/res
+com.ironcoach.app-material-release-6 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/12e1714dea96dd8b2ee5995c3b01509a/transformed/material-release/res
+com.ironcoach.app-datastore-core-release-7 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/14deb26999703559ee3628354209d253/transformed/datastore-core-release/res
+com.ironcoach.app-lifecycle-livedata-core-2.8.7-8 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/1c03b2d690763b9967675204adf1d8b9/transformed/lifecycle-livedata-core-2.8.7/res
+com.ironcoach.app-lifecycle-runtime-release-9 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/24040e117c2d0002f5cd5f1685c61e2e/transformed/lifecycle-runtime-release/res
+com.ironcoach.app-ui-graphics-release-10 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/248ec014011123fdda33800fce1aa5dc/transformed/ui-graphics-release/res
+com.ironcoach.app-ui-text-release-11 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/2666d119d60017a76eb5c97fe041d69b/transformed/ui-text-release/res
+com.ironcoach.app-core-runtime-2.2.0-12 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/26e324a6cf2526f1d14e637cf69cc6d4/transformed/core-runtime-2.2.0/res
+com.ironcoach.app-graphics-path-1.0.1-13 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/27210ee0902699590b80ffc9434ff308/transformed/graphics-path-1.0.1/res
+com.ironcoach.app-runtime-saveable-release-14 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/273461987799cd959145e113d8cf13f7/transformed/runtime-saveable-release/res
+com.ironcoach.app-tracing-1.2.0-15 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/278f6d90823e84957761e6be562c850b/transformed/tracing-1.2.0/res
+com.ironcoach.app-ui-tooling-release-16 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/2d1d66745a8359873fd3084de4ebc1c8/transformed/ui-tooling-release/res
+com.ironcoach.app-lifecycle-runtime-compose-release-17 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/35ad0359ebe3cc884ad1a9af89c425b6/transformed/lifecycle-runtime-compose-release/res
+com.ironcoach.app-savedstate-ktx-1.2.1-18 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/3b20fe889c1988e7578dfaa44e7870a9/transformed/savedstate-ktx-1.2.1/res
+com.ironcoach.app-core-1.15.0-19 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/3f4f4e6fb8d7c30d4a3ff0c844d0e403/transformed/core-1.15.0/res
+com.ironcoach.app-lifecycle-viewmodel-ktx-2.8.7-20 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/42212803a8475cdb9876e9ac781063e0/transformed/lifecycle-viewmodel-ktx-2.8.7/res
+com.ironcoach.app-lifecycle-viewmodel-release-21 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/46a77d283a6847d84720348f927995ee/transformed/lifecycle-viewmodel-release/res
+com.ironcoach.app-datastore-preferences-release-22 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/470f6e2b71987c6c269fc7e6710aeb85/transformed/datastore-preferences-release/res
+com.ironcoach.app-lifecycle-viewmodel-compose-release-23 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/476b3c7f70ede3b29b746654fc30f46e/transformed/lifecycle-viewmodel-compose-release/res
+com.ironcoach.app-activity-1.9.3-24 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/515ca59fa16e13d28555f82384401867/transformed/activity-1.9.3/res
+com.ironcoach.app-navigation-compose-2.8.4-25 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/59ee03a95dac73703808974e7c47fd76/transformed/navigation-compose-2.8.4/res
+com.ironcoach.app-savedstate-1.2.1-26 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/5b27067dd7a0d68d35340c086b1deab1/transformed/savedstate-1.2.1/res
+com.ironcoach.app-emoji2-1.3.0-27 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/5bfb7d725341ecad167d5163e37b0691/transformed/emoji2-1.3.0/res
+com.ironcoach.app-material3-release-28 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/648b1a0f948eebd223eb10a6304daf56/transformed/material3-release/res
+com.ironcoach.app-material-icons-core-release-29 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/65eabf7fd2c59a149e2dbddbca90e96c/transformed/material-icons-core-release/res
+com.ironcoach.app-ui-release-30 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/6aad0702cf40b43912c247a30ec4b009/transformed/ui-release/res
+com.ironcoach.app-core-ktx-1.15.0-31 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/70834c6eefbcace4802898ae6dba0957/transformed/core-ktx-1.15.0/res
+com.ironcoach.app-lifecycle-runtime-ktx-release-32 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/72724f5d68aac0a45fee814b62f3e80a/transformed/lifecycle-runtime-ktx-release/res
+com.ironcoach.app-startup-runtime-1.1.1-33 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/7300bce35cf10eeff8fd9fad2adfa469/transformed/startup-runtime-1.1.1/res
+com.ironcoach.app-ui-unit-release-34 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/73e33809bbc497e4d6d072956dbceea6/transformed/ui-unit-release/res
+com.ironcoach.app-material-ripple-release-35 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/78dcabfbc4d5a755dbb4eb9a8d478b72/transformed/material-ripple-release/res
+com.ironcoach.app-foundation-release-36 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/7b34436bd6e3229e5a7bf8add02f7ea5/transformed/foundation-release/res
+com.ironcoach.app-navigation-common-2.8.4-37 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/7b87b751ea0099c6fe93760978508c45/transformed/navigation-common-2.8.4/res
+com.ironcoach.app-lifecycle-process-2.8.7-38 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/86a43281d1456bf155a39fb94bbd0818/transformed/lifecycle-process-2.8.7/res
+com.ironcoach.app-sqlite-2.4.0-39 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/97c081a2522d43d16e6ec8e85f4bd343/transformed/sqlite-2.4.0/res
+com.ironcoach.app-ui-tooling-preview-release-40 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/a951f8c35b8753f8f32fdd4c703a608c/transformed/ui-tooling-preview-release/res
+com.ironcoach.app-activity-ktx-1.9.3-41 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/adef56280e998c47ed360f20ea5aa8ab/transformed/activity-ktx-1.9.3/res
+com.ironcoach.app-lifecycle-viewmodel-savedstate-2.8.7-42 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/b0dbb40e21c155b44c02ada06a547ba4/transformed/lifecycle-viewmodel-savedstate-2.8.7/res
+com.ironcoach.app-ui-geometry-release-43 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/b19e48afac450c71931affaa1e6f0daf/transformed/ui-geometry-release/res
+com.ironcoach.app-material-icons-extended-release-44 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c350978c37e13c1d70131155af7fc7df/transformed/material-icons-extended-release/res
+com.ironcoach.app-profileinstaller-1.3.1-45 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c379a932256857d6d619965220c96f57/transformed/profileinstaller-1.3.1/res
+com.ironcoach.app-room-runtime-2.6.1-46 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/c9b38a8805db62018fdf6c979b1bc533/transformed/room-runtime-2.6.1/res
+com.ironcoach.app-foundation-layout-release-47 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/cae3d2b7fe99610517149835ed632b61/transformed/foundation-layout-release/res
+com.ironcoach.app-ui-util-release-48 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/cc287b0f7dd58f6b81d3bb227c51031c/transformed/ui-util-release/res
+com.ironcoach.app-room-ktx-2.6.1-49 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/d5aee7bfebf89cde9d81b13e2fab6991/transformed/room-ktx-2.6.1/res
+com.ironcoach.app-navigation-runtime-2.8.4-50 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/d6ee266127805728f9b809efc0ece826/transformed/navigation-runtime-2.8.4/res
+com.ironcoach.app-animation-release-51 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/dadfeec1b9c8e1df75889917829899ed/transformed/animation-release/res
+com.ironcoach.app-activity-compose-1.9.3-52 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/e01815a8ad406963b7893079b9f337d2/transformed/activity-compose-1.9.3/res
+com.ironcoach.app-navigation-runtime-ktx-2.8.4-53 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/e19dc4d908ef0493fa0a7ac1e5e7891b/transformed/navigation-runtime-ktx-2.8.4/res
+com.ironcoach.app-runtime-release-54 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/e5ccde632a6bcb3d19d7192477e55b28/transformed/runtime-release/res
+com.ironcoach.app-datastore-release-55 /Users/karolkrogulec/.gradle/caches/8.10.2/transforms/fccc31a75dcc8fd29c369d71a234741a/transformed/datastore-release/res
+com.ironcoach.app-pngs-56 /Users/karolkrogulec/Antigravity Project/app/build/generated/res/pngs/debug
+com.ironcoach.app-resValues-57 /Users/karolkrogulec/Antigravity Project/app/build/generated/res/resValues/debug
+com.ironcoach.app-packageDebugResources-58 /Users/karolkrogulec/Antigravity Project/app/build/intermediates/incremental/debug/packageDebugResources/merged.dir
+com.ironcoach.app-packageDebugResources-59 /Users/karolkrogulec/Antigravity Project/app/build/intermediates/incremental/debug/packageDebugResources/stripped.dir
+com.ironcoach.app-debug-60 /Users/karolkrogulec/Antigravity Project/app/build/intermediates/merged_res/debug/mergeDebugResources
+com.ironcoach.app-debug-61 /Users/karolkrogulec/Antigravity Project/app/src/debug/res
+com.ironcoach.app-main-62 /Users/karolkrogulec/Antigravity Project/app/src/main/res

@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>IronCoach AI</title>
+  <meta name="theme-color" content="#101216">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏋️</text></svg>">
+  
+  <style>
+    :root {
+      --bg: #101216;
+      --surface: #1A1D24;
+      --surface-elevated: #242832;
+      --primary: #FFB300;
+      --primary-hover: #FFA000;
+      --accent: #00E5FF;
+      --success: #00E676;
+      --danger: #FF5252;
+      --text: #F0F3F8;
+      --text-muted: #8E99A8;
+      --border: #2C323E;
+      --radius: 14px;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 15px;
+      line-height: 1.5;
+      padding-bottom: 80px;
+      min-height: 100vh;
+      overflow-x: hidden;
+      user-select: none;
+    }
+
+    /* Header */
+    header {
+      position: sticky;
+      top: 0;
+      background: rgba(16, 18, 22, 0.95);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 100;
+    }
+    .logo-box { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 19px; }
+    .logo-box span { color: var(--primary); }
+    .header-btns { display: flex; gap: 8px; }
+    .icon-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 18px;
+    }
+
+    /* Bottom Navigation */
+    nav.bottom-nav {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-around;
+      padding: 8px 4px env(safe-area-inset-bottom, 8px);
+      z-index: 100;
+    }
+    .nav-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      background: none;
+      padding: 6px 12px;
+      border-radius: 8px;
+      transition: all 0.2s;
+    }
+    .nav-item.active { color: var(--primary); }
+    .nav-item svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; }
+
+    /* Layout & Containers */
+    .container { padding: 16px; max-width: 600px; margin: 0 auto; }
+    .view { display: none; }
+    .view.active { display: block; }
+
+    /* Cards */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .card-title {
+      font-size: 17px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 12px 18px;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      transition: opacity 0.2s;
+      width: 100%;
+    }
+    .btn:active { opacity: 0.8; }
+    .btn-primary { background: var(--primary); color: #000; }
+    .btn-accent { background: var(--accent); color: #000; }
+    .btn-secondary { background: var(--surface-elevated); color: var(--text); border: 1px solid var(--border); }
+    .btn-sm { padding: 6px 12px; font-size: 13px; border-radius: 8px; width: auto; }
+
+    /* Active workout logger styles */
+    .exercise-block {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .exercise-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .exercise-title { font-size: 16px; font-weight: 700; }
+    .set-row {
+      display: grid;
+      grid-template-columns: 36px 1fr 1fr 44px;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .set-num {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--surface-elevated);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .set-num.done { background: rgba(0, 230, 118, 0.2); color: var(--success); }
+    .input-box {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: #fff;
+      padding: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      text-align: center;
+      width: 100%;
+    }
+    .check-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--surface-elevated);
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 18px;
+    }
+    .check-btn.completed {
+      background: var(--success);
+      border-color: var(--success);
+      color: #000;
+    }
+
+    /* Rest Timer Floating Bar */
+    #rest-timer-bar {
+      display: none;
+      position: fixed;
+      bottom: 74px;
+      left: 16px;
+      right: 16px;
+      background: #1e2530;
+      border: 1px solid var(--accent);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      border-radius: 14px;
+      padding: 12px 16px;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 99;
+    }
+    .timer-text { font-size: 17px; font-weight: 800; color: var(--accent); }
+
+    /* Inputs */
+    textarea.text-area {
+      width: 100%;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 12px;
+      font-family: inherit;
+      font-size: 14px;
+      min-height: 140px;
+      resize: vertical;
+      margin: 10px 0;
+    }
+
+    /* Coach chat bubble */
+    .coach-bubble {
+      background: var(--surface-elevated);
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      padding: 14px;
+      margin-top: 12px;
+      line-height: 1.6;
+    }
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      background: var(--surface-elevated);
+      color: var(--primary);
+    }
+    .badge-cyan { background: rgba(0, 229, 255, 0.15); color: var(--accent); }
+  </style>
+</head>
+<body>
+
+  <!-- App Header -->
+  <header>
+    <div class="logo-box">
+      <span>🏋️</span> IronCoach AI
+    </div>
+    <div class="header-btns">
+      <button class="icon-btn" onclick="showView('settings')" title="Ustawienia">⚙️</button>
+    </div>
+  </header>
+
+  <!-- Rest Timer Banner -->
+  <div id="rest-timer-bar">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <span>⏱️</span>
+      <span class="timer-text" id="timer-display">90s</span>
+    </div>
+    <div style="display: flex; gap: 8px;">
+      <button class="btn btn-sm btn-secondary" onclick="addTimerSeconds(30)">+30s</button>
+      <button class="btn btn-sm btn-secondary" onclick="stopTimer()">Pomiń</button>
+    </div>
+  </div>
+
+  <!-- VIEW: DASHBOARD (HOME) -->
+  <section id="view-home" class="view active">
+    <div class="container">
+      
+      <!-- Ongoing workout prompt -->
+      <div id="active-session-banner" class="card" style="display: none; border-color: var(--primary); background: rgba(255, 179, 0, 0.08);">
+        <div class="card-title" style="color: var(--primary);">
+          <span>⚠️ Trwający trening</span>
+          <span class="badge">W TRAKCIE</span>
+        </div>
+        <p id="active-session-name" style="font-size: 16px; font-weight: 700; margin: 6px 0;"></p>
+        <button class="btn btn-primary" onclick="resumeActiveWorkout()">Wznów sesję</button>
+      </div>
+
+      <!-- Quick Actions -->
+      <div class="card">
+        <div class="card-title">Rozpocznij Trening</div>
+        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
+          Wybierz gotowy plan treningowy lub zaimportuj swoje zapiski z Google Keep.
+        </p>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-accent" onclick="showView('import-keep')">📥 Import z Keep</button>
+          <button class="btn btn-secondary" onclick="openNewPlanModal()">➕ Nowy Plan</button>
+        </div>
+      </div>
+
+      <!-- Plan list -->
+      <h3 style="margin: 18px 0 10px; font-size: 17px; font-weight: 700;">Twoje Plany Treningowe</h3>
+      <div id="plans-list"></div>
+
+      <!-- Recent Workouts -->
+      <h3 style="margin: 22px 0 10px; font-size: 17px; font-weight: 700;">Ostatnie Treningi</h3>
+      <div id="recent-workouts-list"></div>
+
+    </div>
+  </section>
+
+  <!-- VIEW: ACTIVE WORKOUT -->
+  <section id="view-active-workout" class="view">
+    <div class="container">
+      <div class="card" style="position: sticky; top: 68px; z-index: 10; margin-bottom: 14px; background: rgba(26, 29, 36, 0.95); backdrop-filter: blur(8px);">
+        <div class="card-title">
+          <span id="workout-plan-title">Trening</span>
+          <button class="btn btn-sm btn-primary" onclick="finishCurrentWorkout()">Zakończ</button>
+        </div>
+        <div style="display: flex; gap: 16px; font-size: 13px; color: var(--text-muted);">
+          <span>Serii: <b id="workout-sets-counter" style="color: #fff;">0/0</b></span>
+          <span>Tonaż: <b id="workout-volume-counter" style="color: var(--primary);">0 kg</b></span>
+          <span>Czas: <b id="workout-duration-counter" style="color: var(--accent);">0:00</b></span>
+        </div>
+      </div>
+
+      <div id="workout-exercises-container"></div>
+    </div>
+  </section>
+
+  <!-- VIEW: IMPORT FROM KEEP -->
+  <section id="view-import-keep" class="view">
+    <div class="container">
+      <div class="card">
+        <div class="card-title">
+          <span>📥 Import z Google Keep</span>
+          <span class="badge badge-cyan">Gemini AI</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 13px; margin-top: 4px;">
+          Wklej notatkę z Keep lub skorzystaj z udostępnienia. Gemini rozpozna ćwiczenia, serie i obciążenia.
+        </p>
+
+        <textarea id="keep-text-input" class="text-area" placeholder="Przykład:&#10;Klatka + Triceps:&#10;1. Wyciskanie sztangi leżąc 4x8 80kg&#10;2. Wyciskanie hantli skos 3x10 26kg&#10;3. Rozpiętki brama 3x12&#10;4. Pompki na poręczach 3x max"></textarea>
+
+        <button id="parse-keep-btn" class="btn btn-accent" onclick="parseKeepWithGemini()">
+          ✨ Rozpoznaj z Gemini AI
+        </button>
+
+        <div id="keep-parse-loading" style="display: none; text-align: center; padding: 16px; color: var(--accent);">
+          Analiza notatki przez Gemini 1.5 Flash... ⏳
+        </div>
+      </div>
+
+      <!-- Preview parsed plan -->
+      <div id="parsed-plan-preview" style="display: none;">
+        <div class="card">
+          <div class="card-title">
+            <span id="preview-plan-name">Nazwa Planu</span>
+            <span class="badge">Rozpoznano</span>
+          </div>
+          <div id="preview-exercises-list"></div>
+          <button class="btn btn-primary" style="margin-top: 14px;" onclick="saveParsedPlan()">
+            💾 Zapisz Plan w Aplikacji
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VIEW: COACH REPORT & CHAT -->
+  <section id="view-coach" class="view">
+    <div class="container">
+      <div class="card">
+        <div class="card-title">
+          <span>🧠 Trener Gemini AI</span>
+          <span class="badge badge-cyan">Raport Sesji</span>
+        </div>
+        <div id="coach-loading" style="display: none; padding: 14px; text-align: center; color: var(--accent);">
+          Gemini analizuje tonaż, powtórzenia i periodyzację... 🏋️‍♂️
+        </div>
+        <div id="coach-report-content" class="coach-bubble" style="display: none;"></div>
+      </div>
+
+      <!-- Ask Coach Box -->
+      <div class="card">
+        <div class="card-title">💬 Zapytaj Trenera</div>
+        <p style="color: var(--text-muted); font-size: 13px;">
+          Zapytaj o zamiennik ćwiczenia, ból stawu lub regenerację:
+        </p>
+        <textarea id="coach-question-input" class="text-area" style="min-height: 80px;" placeholder="np. Czym zastąpić wyciskanie sztangi leżąc, bo czuję ból w przednim aktonie barku?"></textarea>
+        <button class="btn btn-primary" onclick="askCoachQuestion()">Zapytaj</button>
+        <div id="coach-answer-box" class="coach-bubble" style="display: none;"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VIEW: SETTINGS -->
+  <section id="view-settings" class="view">
+    <div class="container">
+      <div class="card">
+        <div class="card-title">🔑 Klucz Gemini API</div>
+        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 10px;">
+          Potrzebny do analizy sesji i importu z Keep. Możesz go wygenerować bezpłatnie w Google AI Studio.
+        </p>
+        <input type="password" id="gemini-api-key" class="input-box" style="text-align: left; margin-bottom: 10px;" placeholder="AIzaSy...">
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-primary" onclick="saveApiKey()">Zapisz Klucz</button>
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" class="btn btn-secondary" style="text-decoration: none; width: auto; font-size: 13px;">Pobierz darmowy klucz ↗</a>
+        </div>
+        <p id="api-key-status" style="color: var(--success); font-size: 13px; margin-top: 8px; display: none;">✅ Zapisano pomyślnie!</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📱 Instalacja na Telefonie (PWA)</div>
+        <p style="color: var(--text-muted); font-size: 13px; line-height: 1.6;">
+          Aby dodać IronCoach jako ikonę na ekranie głównym:<br>
+          1. Otwórz tę stronę w przeglądarce <b>Chrome</b> na telefonie.<br>
+          2. Kliknij menu (trzy kropki) w prawym górnym rogu.<br>
+          3. Wybierz <b>"Dodaj do ekranu głównego"</b> lub <b>"Zainstaluj aplikację"</b>.<br>
+          Dzięki temu aplikacja działa pełnoekranowo i w 100% offline!
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">💾 Kopia Zapasowa Danych</div>
+        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
+          Wszystkie Twoje dane (plany, serie, historia) są zapisane w pamięci telefonu. Możesz je wyeksportować do pliku JSON.
+        </p>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary" onclick="exportDataJson()">Eksportuj do JSON</button>
+          <button class="btn btn-secondary" onclick="document.getElementById('import-file-input').click()">Importuj JSON</button>
+          <input type="file" id="import-file-input" style="display: none;" accept=".json" onchange="importDataJson(event)">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Bottom Nav -->
+  <nav class="bottom-nav">
+    <button class="nav-item active" onclick="showView('home')">
+      <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+      Pulpit
+    </button>
+    <button class="nav-item" onclick="showView('import-keep')">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+      Keep
+    </button>
+    <button class="nav-item" onclick="showView('coach')">
+      <svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+      Trener AI
+    </button>
+    <button class="nav-item" onclick="showView('settings')">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+      Opcje
+    </button>
+  </nav>
+
+  <script src="app.js"></script>
+</body>
+</html>

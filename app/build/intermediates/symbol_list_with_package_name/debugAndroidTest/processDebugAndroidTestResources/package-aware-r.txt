@@ -1,0 +1,3 @@
+com.ironcoach.app.test
+style WhiteBackgroundDialogTheme
+style WhiteBackgroundTheme
