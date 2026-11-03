@@ -355,28 +355,32 @@ async function callGemini(prompt) {
     throw new Error('Missing API Key');
   }
 
-  // First, auto-discover all available models for this specific API key
-  let targetModel = null;
+  // 1. Fetch available models for this specific API key
+  let availableModels = [];
   try {
     const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
-    if (listRes.ok) {
-      const listData = await listRes.json();
-      const available = (listData.models || [])
+    const listData = await listRes.json();
+    if (listData.models && Array.isArray(listData.models)) {
+      availableModels = listData.models
         .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
         .map(m => m.name.replace('models/', ''));
-      
-      // Prefer flash, then pro, then anything available
-      targetModel = available.find(m => m.includes('flash')) 
-                 || available.find(m => m.includes('pro')) 
-                 || available[0];
     }
   } catch (e) {
-    console.warn('Model discovery failed, fallback to defaults', e);
+    console.error('List models failed', e);
   }
 
-  const modelsToTry = targetModel 
-    ? [targetModel, 'gemini-1.5-flash-latest', 'gemini-2.0-flash', 'gemini-pro']
-    : ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-pro'];
+  // 2. Build list of actual available models, sorted by best choice
+  let modelsToTry = [];
+  if (availableModels.length > 0) {
+    // Put flash first, then pro, then the rest
+    const flashModels = availableModels.filter(m => m.includes('flash'));
+    const proModels = availableModels.filter(m => m.includes('pro') && !m.includes('flash'));
+    const others = availableModels.filter(m => !m.includes('flash') && !m.includes('pro'));
+    modelsToTry = [...flashModels, ...proModels, ...others];
+  } else {
+    // If listing failed, try standard Gemini 1.5 endpoints
+    modelsToTry = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.0-pro'];
+  }
 
   let lastError = null;
 
@@ -404,7 +408,7 @@ async function callGemini(prompt) {
     }
   }
 
-  throw lastError || new Error('Nie udało się połączyć z modelem Gemini.');
+  throw lastError || new Error('Brak dostępnego modelu Gemini dla tego klucza.');
 }
 
 // Parse Note from Google Keep
