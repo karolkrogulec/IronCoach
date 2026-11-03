@@ -411,7 +411,7 @@ async function callGemini(prompt) {
   throw lastError || new Error('Brak dostępnego modelu Gemini dla tego klucza.');
 }
 
-// Parse Note from Google Keep
+// Parse Note from Google Keep (supports single or multiple plans in one note)
 async function parseKeepWithGemini() {
   const rawText = document.getElementById('keep-text-input').value.trim();
   if (!rawText) return alert('Wklej najpierw treść notatki z Keep!');
@@ -422,21 +422,29 @@ async function parseKeepWithGemini() {
   preview.style.display = 'none';
 
   const prompt = `
-Jesteś ekspertem treningu siłowego. Przekształć poniższą notatkę z Google Keep w czysty format JSON.
-Zwróć WYŁĄCZNIE poprawny JSON (bez żadnego formatowania markdown \`\`\`json):
-{
-  "name": "Nazwa planu (np. Klatka + Triceps)",
-  "description": "Krótki opis",
-  "exercises": [
-    {
-      "name": "Nazwa ćwiczenia",
-      "muscle": "Partia (Klatka, Plecy, Nogi, Barki, Ramiona)",
-      "sets": 3,
-      "reps": 10,
-      "weight": 80
-    }
-  ]
-}
+Jesteś ekspertem treningu siłowego. Przekształć poniższą notatkę z Google Keep w strukturę planów treningowych.
+Uwaga: W notatce może znajdować się JEDEN lub KILKA planów (np. Dzień 1 / Dzień 2, lub Push / Pull / Legs, lub osobne bloki treningowe).
+Zwróć WYŁĄCZNIE poprawny format JSON (tablicę planów):
+[
+  {
+    "name": "Nazwa planu (np. Trening A: Klatka i Triceps)",
+    "description": "Krótki opis lub data",
+    "exercises": [
+      {
+        "name": "Nazwa ćwiczenia",
+        "muscle": "Partia (Klatka, Plecy, Nogi, Barki, Ramiona, Brzuch)",
+        "sets": 3,
+        "reps": 10,
+        "weight": 80
+      }
+    ]
+  }
+]
+
+Zasady:
+1. Zawsze zwróć tablicę JSON, nawet jeśli notatka ma tylko 1 plan (wtedy tablica z 1 elementem).
+2. Jeśli w notatce jest kilka dni treningowych/superserii z osobnymi dniami, stwórz osobny obiekt planu dla każdego z nich.
+3. Bez żadnych dodatkowych komentarzy i bez znaczników markdown.
 
 Treść notatki:
 """
@@ -446,14 +454,30 @@ ${rawText}
   try {
     const rawResponse = await callGemini(prompt);
     const cleaned = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
+    let parsed = JSON.parse(cleaned);
 
-    STATE.parsedKeepPlan = parsed;
-    document.getElementById('preview-plan-name').textContent = parsed.name || 'Nowy Plan';
-    document.getElementById('preview-exercises-list').innerHTML = (parsed.exercises || []).map(ex => `
-      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px;">
-        <span><b>${escapeHtml(ex.name)}</b> (${ex.muscle})</span>
-        <span>${ex.sets}x${ex.reps} ${ex.weight ? ex.weight + 'kg' : ''}</span>
+    // Normalize: if Gemini returned a single object instead of array, wrap it
+    if (!Array.isArray(parsed)) {
+      parsed = [parsed];
+    }
+
+    STATE.parsedKeepPlans = parsed;
+
+    // Render preview of all recognized plans
+    const previewContainer = document.getElementById('preview-exercises-list');
+    document.getElementById('preview-plan-name').textContent = `Rozpoznano planów: ${parsed.length}`;
+
+    previewContainer.innerHTML = parsed.map((p, idx) => `
+      <div style="margin-bottom: 14px; padding: 10px; background: var(--surface-elevated); border-radius: 8px;">
+        <div style="font-weight: 800; font-size: 15px; color: var(--primary); margin-bottom: 6px;">
+          ${idx + 1}. ${escapeHtml(p.name || 'Plan')}
+        </div>
+        ${(p.exercises || []).map(ex => `
+          <div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px;">
+            <span><b>${escapeHtml(ex.name)}</b> (${ex.muscle || 'Inne'})</span>
+            <span>${ex.sets}x${ex.reps} ${ex.weight ? ex.weight + 'kg' : ''}</span>
+          </div>
+        `).join('')}
       </div>
     `).join('');
 
@@ -466,19 +490,42 @@ ${rawText}
 }
 
 function saveParsedPlan() {
-  if (!STATE.parsedKeepPlan) return;
+  if (!STATE.parsedKeepPlans || STATE.parsedKeepPlans.length === 0) return;
+
+  STATE.parsedKeepPlans.forEach(p => {
+    STATE.plans.push({
+      id: 'plan-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
+      name: p.name || 'Plan z Keep',
+      description: p.description || '',
+      exercises: p.exercises || []
+    });
+  });
+
+  localStorage.setItem('iron_plans', JSON.stringify(STATE.plans));
+  renderPlans();
+  alert(`Zapisano pomyślnie ${STATE.parsedKeepPlans.length} plan(ów)!`);
+  showView('home');
+}
+
+// Modal for manual plan creation
+function openNewPlanModal() {
+  const planName = prompt('Podaj nazwę nowego planu treningowego (np. FBW, Dół ciała):');
+  if (!planName || !planName.trim()) return;
+
+  const ex1 = prompt('Podaj pierwsze ćwiczenie (np. Przysiady 4x8 100kg):', 'Wyciskanie sztangi 3x10 60kg');
   const newPlan = {
     id: 'plan-' + Date.now(),
-    name: STATE.parsedKeepPlan.name || 'Plan z Keep',
-    description: STATE.parsedKeepPlan.description || '',
-    exercises: STATE.parsedKeepPlan.exercises || []
+    name: planName.trim(),
+    description: 'Utworzony ręcznie',
+    exercises: [
+      { name: ex1 || 'Ćwiczenie 1', sets: 3, reps: 10, weight: 0, muscle: 'Ogólne' }
+    ]
   };
 
   STATE.plans.push(newPlan);
   localStorage.setItem('iron_plans', JSON.stringify(STATE.plans));
   renderPlans();
-  alert('Plan został pomyślnie zapisany w aplikacji!');
-  showView('home');
+  alert('Plan został dodany! Możesz go edytować podczas treningu.');
 }
 
 // Coach Analysis
