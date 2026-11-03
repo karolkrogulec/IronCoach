@@ -355,11 +355,32 @@ async function callGemini(prompt) {
     throw new Error('Missing API Key');
   }
 
-  // Use gemini-1.5-flash-latest or gemini-2.0-flash / fallback
-  const models = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-1.5-pro-latest', 'gemini-pro'];
+  // First, auto-discover all available models for this specific API key
+  let targetModel = null;
+  try {
+    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+    if (listRes.ok) {
+      const listData = await listRes.json();
+      const available = (listData.models || [])
+        .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+        .map(m => m.name.replace('models/', ''));
+      
+      // Prefer flash, then pro, then anything available
+      targetModel = available.find(m => m.includes('flash')) 
+                 || available.find(m => m.includes('pro')) 
+                 || available[0];
+    }
+  } catch (e) {
+    console.warn('Model discovery failed, fallback to defaults', e);
+  }
+
+  const modelsToTry = targetModel 
+    ? [targetModel, 'gemini-1.5-flash-latest', 'gemini-2.0-flash', 'gemini-pro']
+    : ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-pro'];
+
   let lastError = null;
 
-  for (const model of models) {
+  for (const model of modelsToTry) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
       const response = await fetch(url, {
