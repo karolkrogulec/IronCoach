@@ -20,7 +20,8 @@ const STATE = {
   apiKey: localStorage.getItem('iron_gemini_api_key') || '',
   timerInterval: null,
   timerSeconds: 0,
-  parsedKeepPlan: null
+  parsedKeepPlan: null,
+  exerciseGifs: []
 };
 
 // Initialize
@@ -28,10 +29,115 @@ document.addEventListener('DOMContentLoaded', () => {
   registerServiceWorker();
   checkSharedParams();
   loadApiKey();
+  loadExerciseGifsDatabase();
   renderPlans();
   renderRecentWorkouts();
   checkActiveWorkout();
 });
+
+async function loadExerciseGifsDatabase() {
+  try {
+    const res = await fetch('./exercises_db.json');
+    if (res.ok) {
+      STATE.exerciseGifs = await res.json();
+    }
+  } catch (e) {
+    console.warn('Failed to load local exercise GIFs db', e);
+  }
+}
+
+// Helper to find matching GIF for Polish or English exercise name
+function findExerciseGif(name) {
+  if (!name || !STATE.exerciseGifs || STATE.exerciseGifs.length === 0) return null;
+  const lower = name.toLowerCase().trim();
+
+  // Polish to English key phrase mappings for popular gym exercises
+  const translations = [
+    { pl: 'wyciskanie sztangi leżąc', en: 'barbell bench press' },
+    { pl: 'wyciskanie leżąc', en: 'bench press' },
+    { pl: 'wyciskanie hantli skos', en: 'incline dumbbell press' },
+    { pl: 'wyciskanie hantli', en: 'dumbbell press' },
+    { pl: 'wyciskanie żołnierskie', en: 'overhead press' },
+    { pl: 'ohp', en: 'overhead press' },
+    { pl: 'przysiad', en: 'squat' },
+    { pl: 'martwy ciąg', en: 'deadlift' },
+    { pl: 'stiff leg', en: 'stiff leg deadlift' },
+    { pl: 'wiosłowanie sztangą', en: 'barbell bent over row' },
+    { pl: 'wiosłowanie hantlem', en: 'dumbbell row' },
+    { pl: 'wiosłowanie', en: 'row' },
+    { pl: 'podciąganie', en: 'pull-up' },
+    { pl: 'ściąganie drążka', en: 'lat pulldown' },
+    { pl: 'rozpiętki', en: 'dumbbell fly' },
+    { pl: 'wznosy bokiem', en: 'lateral raise' },
+    { pl: 'uginanie ramion ze sztangą', en: 'barbell curl' },
+    { pl: 'uginanie ramion z hantlami', en: 'dumbbell curl' },
+    { pl: 'uginanie ramion', en: 'biceps curl' },
+    { pl: 'prostowanie ramion', en: 'pushdown' },
+    { pl: 'francuskie', en: 'skull crusher' },
+    { pl: 'pompki na poręczach', en: 'dips' },
+    { pl: 'dips', en: 'dips' },
+    { pl: 'brzuszki', en: 'crunches' },
+    { pl: 'wspięcia na palce', en: 'calf raise' }
+  ];
+
+  let searchTerms = [lower];
+  for (const t of translations) {
+    if (lower.includes(t.pl)) {
+      searchTerms.push(t.en);
+    }
+  }
+
+  for (const term of searchTerms) {
+    const found = STATE.exerciseGifs.find(item => 
+      item.n.toLowerCase().includes(term) || item.s.includes(term.replace(/\s+/g, '-'))
+    );
+    if (found) return found;
+  }
+
+  // Fallback: match by individual words
+  const words = lower.split(/\s+/).filter(w => w.length > 3);
+  for (const w of words) {
+    const found = STATE.exerciseGifs.find(item => item.n.toLowerCase().includes(w));
+    if (found) return found;
+  }
+
+  return null;
+}
+
+function openGifModal(exerciseName) {
+  const match = findExerciseGif(exerciseName);
+  const modal = document.getElementById('gif-preview-modal');
+  const title = document.getElementById('gif-modal-title');
+  const img = document.getElementById('gif-modal-img');
+  const instr = document.getElementById('gif-modal-instructions');
+
+  title.textContent = exerciseName;
+  if (match && match.g) {
+    img.src = match.g;
+    img.style.display = 'block';
+    instr.innerHTML = `
+      <p style="color: var(--primary); font-weight: 700; margin-bottom: 4px;">Ang. ${escapeHtml(match.n)}</p>
+      ${(match.i || []).map(step => `<li style="margin-bottom: 4px;">${escapeHtml(step)}</li>`).join('')}
+    `;
+  } else {
+    img.style.display = 'none';
+    instr.innerHTML = `
+      <p style="color: var(--text-muted); margin: 16px 0;">Brak bezpośredniej animacji GIF w bazie dla tego ćwiczenia.</p>
+      <a href="https://www.youtube.com/results?search_query=ćwiczenie+${encodeURIComponent(exerciseName)}+technika" target="_blank" class="btn btn-secondary">
+        ▶ Szukaj techniki na YouTube
+      </a>
+    `;
+  }
+
+  modal.style.display = 'flex';
+}
+
+function closeGifModal() {
+  const modal = document.getElementById('gif-preview-modal');
+  modal.style.display = 'none';
+  const img = document.getElementById('gif-modal-img');
+  img.src = '';
+}
 
 // PWA Service Worker
 function registerServiceWorker() {
@@ -207,7 +313,10 @@ function renderActiveExercises() {
   container.innerHTML = STATE.activeWorkout.exercises.map((ex, exIdx) => `
     <div class="exercise-block">
       <div class="exercise-header">
-        <span class="exercise-title">${escapeHtml(ex.name)}</span>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="exercise-title">${escapeHtml(ex.name)}</span>
+          <button class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="openGifModal('${escapeHtml(ex.name)}')">🎬 GIF</button>
+        </div>
         <button class="btn btn-sm btn-secondary" onclick="addSetToExercise(${exIdx})">+ Seria</button>
       </div>
       <div style="display: grid; grid-template-columns: 36px 1fr 1fr 44px; gap: 8px; margin-bottom: 6px; font-size: 11px; color: var(--text-muted);">

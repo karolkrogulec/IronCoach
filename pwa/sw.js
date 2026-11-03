@@ -1,9 +1,10 @@
-const CACHE_NAME = 'ironcoach-v6';
+const CACHE_NAME = 'ironcoach-v7';
 const ASSETS = [
   './',
   './index.html',
   './app.js',
-  './manifest.json'
+  './manifest.json',
+  './exercises_db.json'
 ];
 
 self.addEventListener('install', (event) => {
