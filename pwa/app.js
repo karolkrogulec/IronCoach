@@ -2894,6 +2894,13 @@ function importDataJson(event) {
         localStorage.setItem('iron_custom_gif_map', JSON.stringify({ ...currentMap, ...data.customGifMap }));
       }
 
+      // 4. Restore Coach AI chat history if present
+      if (Array.isArray(data.coachChat) && data.coachChat.length > 0) {
+        STATE.coachChat = data.coachChat;
+        saveCoachChat();
+        renderCoachChat();
+      }
+
       renderPlans();
       renderRecentWorkouts();
       alert('Dane i historia zostały bezpiecznie zaimportowane!');
