@@ -1,7 +1,8 @@
-const CACHE_NAME = 'ironcoach-v20';
+const CACHE_NAME = 'ironcoach-v21';
 const ASSETS = [
   './',
   './index.html',
+  './gifs.html',
   './app.js',
   './manifest.json',
   './exercises_db.json'

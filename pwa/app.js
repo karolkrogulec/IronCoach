@@ -960,7 +960,7 @@ function handleGifSearch(query) {
     })
     .filter(x => x.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 15)
+    .slice(0, 30)
     .map(x => x.item);
 
   if (matches.length === 0) {
@@ -970,12 +970,15 @@ function handleGifSearch(query) {
   }
 
   resultsBox.innerHTML = matches.map(m => `
-    <div onclick="selectCustomGif('${escapeHtml(m.s)}')" style="padding: 8px; border-bottom: 1px solid var(--border); cursor: pointer; text-align: left; font-size: 13px; display: flex; justify-content: space-between; align-items: center;">
-      <div>
-        <b>${escapeHtml(m.n)}</b>
-        <span style="font-size: 11px; color: var(--text-muted);"> (${escapeHtml(m.m)})</span>
+    <div onclick="selectCustomGif('${escapeHtml(m.s)}')" style="padding: 6px 8px; border-bottom: 1px solid var(--border); cursor: pointer; text-align: left; font-size: 13px; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1;">
+        <img src="${escapeHtml(m.g)}" alt="" loading="lazy" style="width: 40px; height: 40px; border-radius: 6px; object-fit: cover; background: #fff; flex-shrink: 0;">
+        <div style="min-width: 0; flex: 1;">
+          <div style="font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(m.n)}</div>
+          <div style="font-size: 11px; color: var(--text-muted);">Partia: ${escapeHtml(m.m)} • <span style="font-family: monospace; font-size: 10px;">${escapeHtml(m.s)}</span></div>
+        </div>
       </div>
-      <span style="font-size: 11px; color: var(--accent);">Wybierz</span>
+      <span style="font-size: 11px; font-weight: 700; color: var(--accent); flex-shrink: 0;">Wybierz</span>
     </div>
   `).join('');
   resultsBox.style.display = 'block';
