@@ -774,11 +774,13 @@ function startWorkout(planId) {
   const supersetRestSeconds = parseInt(plan.supersetRestSeconds) || 30;
 
   const exercises = (plan.exercises || []).map(ex => {
+    const loadType = ex.loadType || 'standard';
+    const hasInitialWeight = (parseFloat(ex.weight) || 0) > 0;
     const sets = [];
     for (let i = 1; i <= (ex.sets || 3); i++) {
       sets.push({
         num: i,
-        weight: ex.weight || 0,
+        weight: loadType === 'bodyweight' && !hasInitialWeight ? 0 : (ex.weight || 0),
         reps: ex.reps || 10,
         completed: false,
         completedAt: null,
@@ -789,6 +791,8 @@ function startWorkout(planId) {
       name: ex.name,
       muscle: ex.muscle || 'Inne',
       supersetGroup: ex.supersetGroup || '',
+      loadType: loadType,
+      showExtraWeight: loadType === 'bodyweight' ? hasInitialWeight : true,
       sets
     };
   });
@@ -926,38 +930,104 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
     ? `<span class="badge" style="font-size: 10px; background: rgba(255,179,0,0.2); color: var(--primary);">👉 Kolejne w SS</span>`
     : '';
 
+  const loadType = ex.loadType || 'standard';
+  const isBodyweightNoLoad = loadType === 'bodyweight' && !ex.showExtraWeight;
+  const isBodyweightWithLoad = loadType === 'bodyweight' && ex.showExtraWeight;
+  const isDualDumbbell = loadType === 'dual_dumbbell';
+
+  let loadBadgeHtml = '';
+  if (isDualDumbbell) {
+    loadBadgeHtml = `<span class="badge" style="font-size: 10px; background: rgba(0, 229, 255, 0.15); color: var(--accent);">💪 2× Hantle (tonaż ×2)</span>`;
+  } else if (loadType === 'bodyweight') {
+    loadBadgeHtml = `<span class="badge" style="font-size: 10px; background: rgba(0, 230, 118, 0.15); color: var(--success);">🤸 Masa ciała</span>`;
+  }
+
+  let extraWeightToggleBtn = '';
+  if (isBodyweightNoLoad) {
+    extraWeightToggleBtn = `<button class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px; color: var(--primary); border-color: rgba(255,179,0,0.4);" onclick="toggleBodyweightExtraLoad(${exIdx}, true)">➕ Dołóż ciężar</button>`;
+  } else if (isBodyweightWithLoad) {
+    extraWeightToggleBtn = `<button class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="toggleBodyweightExtraLoad(${exIdx}, false)">🤸 Tylko masa ciała</button>`;
+  }
+
+  const gridCols = isBodyweightNoLoad ? '36px 1fr 44px' : '36px 1fr 1fr 44px';
+  const weightHeaderLabel = isDualDumbbell
+    ? 'KG (1 HANTEL ×2)'
+    : (isBodyweightWithLoad ? '+KG (DOŁOŻONE)' : 'KG');
+
   return `
     <div class="exercise-block ${isNextInSuperset ? 'next-in-superset' : ''}">
       <div class="exercise-header">
         <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
           ${ssTag}
           <span class="exercise-title">${escapeHtml(ex.name)}</span>
+          ${loadBadgeHtml}
           ${nextBadge}
           <button class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="openGifModal('${escapeHtml(ex.name)}')">🎬 GIF</button>
+          ${extraWeightToggleBtn}
         </div>
         <button class="btn btn-sm btn-secondary" onclick="addSetToExercise(${exIdx})">+ Seria</button>
       </div>
-      <div style="display: grid; grid-template-columns: 36px 1fr 1fr 44px; gap: 8px; margin-bottom: 6px; font-size: 11px; color: var(--text-muted);">
-        <span>SER</span><span>KG</span><span>POWT</span><span>OK</span>
+      <div style="display: grid; grid-template-columns: ${gridCols}; gap: 8px; margin-bottom: 6px; font-size: 11px; color: var(--text-muted);">
+        <span>SER</span>
+        ${isBodyweightNoLoad ? '' : `<span>${weightHeaderLabel}</span>`}
+        <span>POWT</span>
+        <span>OK</span>
       </div>
-      ${ex.sets.map((set, sIdx) => `
-        <div class="set-row">
-          <div class="set-num ${set.completed ? 'done' : ''}">${set.num}</div>
-          <input type="number" step="0.5" class="input-box" value="${set.weight}" onchange="updateSetData(${exIdx}, ${sIdx}, 'weight', this.value)">
-          <input type="number" class="input-box" value="${set.reps}" onchange="updateSetData(${exIdx}, ${sIdx}, 'reps', this.value)">
-          <button class="check-btn ${set.completed ? 'completed' : ''}" onclick="toggleSetComplete(${exIdx}, ${sIdx})">
-            ${set.completed ? '✓' : '○'}
-          </button>
-        </div>
-      `).join('')}
+      ${ex.sets.map((set, sIdx) => {
+        const wVal = parseFloat(set.weight) || 0;
+        const dualHint = isDualDumbbell && wVal > 0
+          ? `<div style="font-size: 10px; color: var(--accent); text-align: center; margin-top: 2px;">= ${wVal * 2} kg łącznie</div>`
+          : '';
+        return `
+          <div class="set-row" style="grid-template-columns: ${gridCols};">
+            <div class="set-num ${set.completed ? 'done' : ''}">${set.num}</div>
+            ${isBodyweightNoLoad ? '' : `
+              <div>
+                <input type="number" step="0.5" class="input-box" value="${set.weight}" onchange="updateSetData(${exIdx}, ${sIdx}, 'weight', this.value)">
+                ${dualHint}
+              </div>
+            `}
+            <input type="number" class="input-box" value="${set.reps}" onchange="updateSetData(${exIdx}, ${sIdx}, 'reps', this.value)">
+            <button class="check-btn ${set.completed ? 'completed' : ''}" onclick="toggleSetComplete(${exIdx}, ${sIdx})">
+              ${set.completed ? '✓' : '○'}
+            </button>
+          </div>
+        `;
+      }).join('')}
     </div>
   `;
+}
+
+function toggleBodyweightExtraLoad(exIdx, enable) {
+  if (!STATE.activeWorkout) return;
+  const ex = STATE.activeWorkout.exercises[exIdx];
+  if (!ex) return;
+  ex.showExtraWeight = !!enable;
+  if (!enable) {
+    ex.sets.forEach(s => { s.weight = 0; });
+  }
+  saveActiveWorkout();
+  renderActiveExercises();
+  updateWorkoutStats();
+}
+
+function getEffectiveSetWeight(ex, set) {
+  const loadType = ex.loadType || 'standard';
+  if (loadType === 'bodyweight' && !ex.showExtraWeight) {
+    return 0;
+  }
+  const rawWeight = parseFloat(set.weight) || 0;
+  if (loadType === 'dual_dumbbell') {
+    return rawWeight * 2;
+  }
+  return rawWeight;
 }
 
 function updateSetData(exIdx, sIdx, field, val) {
   if (!STATE.activeWorkout) return;
   STATE.activeWorkout.exercises[exIdx].sets[sIdx][field] = parseFloat(val) || 0;
   saveActiveWorkout();
+  renderActiveExercises();
   updateWorkoutStats();
 }
 
@@ -1033,7 +1103,8 @@ function updateWorkoutStats() {
       totalSets++;
       if (s.completed) {
         completed++;
-        volume += (s.weight * s.reps);
+        const effectiveW = getEffectiveSetWeight(ex, s);
+        volume += (effectiveW * s.reps);
       }
     });
   });
@@ -1180,13 +1251,16 @@ async function finishCurrentWorkout() {
       totalSets++;
       if (s.completed) {
         completedSets++;
-        totalVolumeKg += (s.weight * s.reps);
+        const effectiveWeight = getEffectiveSetWeight(ex, s);
+        totalVolumeKg += (effectiveWeight * s.reps);
         completedSetsList.push({
           exercise: ex.name,
           muscle: ex.muscle || 'Inne',
           supersetGroup: ex.supersetGroup || '',
+          loadType: ex.loadType || 'standard',
           setNum: s.num,
           weight: s.weight,
+          effectiveWeight: effectiveWeight,
           reps: s.reps,
           completedAt: s.completedAt || null
         });
@@ -1310,7 +1384,13 @@ async function parseKeepWithGemini() {
   const prompt = `
 Jesteś ekspertem treningu siłowego. Przekształć poniższą notatkę z Google Keep w strukturę planów treningowych.
 Uwaga: W notatce może znajdować się JEDEN lub KILKA planów (np. Dzień 1 / Dzień 2, lub Push / Pull / Legs).
-Rozpoznaj również ewentualne superserie (np. oznaczone jako 1a/1b, A1/A2, "superseria", lub połączone znakiem "+") i nadaj im wspólny identyfikator "supersetGroup": "A", "B", "C" (lub "" dla pojedynczych ćwiczeń).
+Rozpoznaj również:
+1) Superserie (np. oznaczone jako 1a/1b, A1/A2, "superseria", lub połączone znakiem "+") i nadaj im wspólny identyfikator "supersetGroup": "A", "B", "C" (lub "" dla pojedynczych ćwiczeń).
+2) Typ obciążenia "loadType":
+   - "bodyweight" dla ćwiczeń z masą własnego ciała bez ciężaru (np. pompki, podciąganie bez obciążenia, deska, brzuszki),
+   - "dual_dumbbell" dla ćwiczeń wykonywanych dwoma hantlami naraz na obie ręce (np. wyciskanie hantli, wznosy bokiem z hantlami, uginanie z hantlami, RDL z hantlami),
+   - "standard" dla ćwiczeń ze sztangą, na maszynie, wyciągu lub jednorącz.
+
 Zwróć WYŁĄCZNIE poprawny format JSON (tablicę planów):
 [
   {
@@ -1325,7 +1405,8 @@ Zwróć WYŁĄCZNIE poprawny format JSON (tablicę planów):
         "sets": 3,
         "reps": 10,
         "weight": 80,
-        "supersetGroup": ""
+        "supersetGroup": "",
+        "loadType": "standard"
       }
     ]
   }
@@ -1360,15 +1441,23 @@ ${rawText}
         <div style="font-weight: 800; font-size: 15px; color: var(--primary); margin-bottom: 6px;">
           ${idx + 1}. ${escapeHtml(p.name || 'Plan')}
         </div>
-        ${(p.exercises || []).map(ex => `
-          <div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px;">
-            <span>
-              ${ex.supersetGroup ? `<b style="color: var(--accent);">[SS ${escapeHtml(ex.supersetGroup)}]</b> ` : ''}
-              <b>${escapeHtml(ex.name)}</b> (${ex.muscle || 'Inne'})
-            </span>
-            <span>${ex.sets}x${ex.reps} ${ex.weight ? ex.weight + 'kg' : ''}</span>
-          </div>
-        `).join('')}
+        ${(p.exercises || []).map(ex => {
+          const ltBadge = ex.loadType === 'dual_dumbbell'
+            ? `<span style="color: var(--accent); font-size: 11px;">[2× Hantle]</span> `
+            : (ex.loadType === 'bodyweight' ? `<span style="color: var(--success); font-size: 11px;">[Masa ciała]</span> ` : '');
+          const wDisp = ex.loadType === 'bodyweight' && !ex.weight
+            ? 'Masa ciała'
+            : (ex.weight ? (ex.loadType === 'dual_dumbbell' ? `2×${ex.weight}kg` : `${ex.weight}kg`) : '');
+          return `
+            <div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px;">
+              <span>
+                ${ex.supersetGroup ? `<b style="color: var(--accent);">[SS ${escapeHtml(ex.supersetGroup)}]</b> ` : ''}
+                ${ltBadge}<b>${escapeHtml(ex.name)}</b> (${ex.muscle || 'Inne'})
+              </span>
+              <span>${ex.sets}x${ex.reps} ${wDisp}</span>
+            </div>
+          `;
+        }).join('')}
       </div>
     `).join('');
 
@@ -1396,7 +1485,8 @@ function saveParsedPlan() {
         sets: parseInt(ex.sets) || 3,
         reps: parseInt(ex.reps) || 10,
         weight: parseFloat(ex.weight) || 0,
-        supersetGroup: ex.supersetGroup || ''
+        supersetGroup: ex.supersetGroup || '',
+        loadType: ex.loadType || 'standard'
       }))
     });
   });
@@ -1408,7 +1498,7 @@ function saveParsedPlan() {
 }
 
 // ============================================================================
-// MODAL FOR ADDING / EDITING PLANS (WITH SUPERSETS & REST CONFIGURATION)
+// MODAL FOR ADDING / EDITING PLANS (WITH SUPERSETS, LOAD TYPES & REST CONFIG)
 // ============================================================================
 let editingPlanId = null;
 
@@ -1420,9 +1510,9 @@ function openNewPlanModal() {
   document.getElementById('modal-plan-rest').value = 90;
   document.getElementById('modal-plan-ss-rest').value = 30;
   document.getElementById('modal-exercises-list').innerHTML = '';
-  addModalExerciseRow('Wyciskanie sztangi leżąc', 4, 8, 80, '');
-  addModalExerciseRow('Wyciskanie hantli skos', 3, 10, 26, 'A');
-  addModalExerciseRow('Wiosłowanie hantlem', 3, 10, 30, 'A');
+  addModalExerciseRow('Wyciskanie sztangi leżąc', 4, 8, 80, '', 'standard');
+  addModalExerciseRow('Wyciskanie hantli skos', 3, 10, 26, 'A', 'dual_dumbbell');
+  addModalExerciseRow('Pompki na poręczach (Dipy)', 3, 10, 0, 'A', 'bodyweight');
   const modal = document.getElementById('plan-modal');
   modal.style.display = 'flex';
 }
@@ -1440,10 +1530,10 @@ function openEditPlanModal(planId) {
   const listEl = document.getElementById('modal-exercises-list');
   listEl.innerHTML = '';
   (plan.exercises || []).forEach(ex => {
-    addModalExerciseRow(ex.name, ex.sets, ex.reps, ex.weight, ex.supersetGroup || '');
+    addModalExerciseRow(ex.name, ex.sets, ex.reps, ex.weight, ex.supersetGroup || '', ex.loadType || 'standard');
   });
   if ((plan.exercises || []).length === 0) {
-    addModalExerciseRow('', 3, 10, 0, '');
+    addModalExerciseRow('', 3, 10, 0, '', 'standard');
   }
 
   const modal = document.getElementById('plan-modal');
@@ -1455,7 +1545,7 @@ function closePlanModal() {
   modal.style.display = 'none';
 }
 
-function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, supersetGroup = '') {
+function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, supersetGroup = '', loadType = 'standard') {
   const listEl = document.getElementById('modal-exercises-list');
   const row = document.createElement('div');
   row.className = 'modal-ex-row';
@@ -1469,15 +1559,32 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
     { val: 'D', label: '🔗 Superseria D' }
   ];
 
+  const loadOptions = [
+    { val: 'standard', label: '🏋️ Ciężar standard (1×)' },
+    { val: 'dual_dumbbell', label: '💪 2× Hantle (licz ×2)' },
+    { val: 'bodyweight', label: '🤸 Masa ciała (bez ciężaru)' }
+  ];
+
+  const hasExtraBwWeight = loadType === 'bodyweight' && (parseFloat(weight) || 0) > 0;
+  const hideWeightBox = loadType === 'bodyweight' && !hasExtraBwWeight;
+  const weightLabelText = loadType === 'dual_dumbbell'
+    ? '1 HANTEL (KG ×2)'
+    : (loadType === 'bodyweight' ? '+DOŁOŻONO (KG)' : 'CIĘŻAR (KG)');
+
   row.innerHTML = `
     <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 6px;">
       <input type="text" class="input-box modal-ex-name" style="text-align: left; font-size: 13px; flex: 1;" placeholder="Nazwa ćwiczenia (np. RDL, Back Squat)" value="${escapeHtml(name)}">
       <button type="button" style="background: none; border: none; color: var(--danger); font-size: 18px; padding: 0 6px; cursor: pointer;" onclick="this.closest('.modal-ex-row').remove()" title="Usuń ćwiczenie">✕</button>
     </div>
-    <div style="display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 6px; align-items: center;">
-      <select class="input-box modal-ex-ss" style="font-size: 12px; padding: 6px 4px; color: var(--accent);">
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;">
+      <select class="input-box modal-ex-ss" style="font-size: 11px; padding: 6px 4px; color: var(--accent);">
         ${ssOptions.map(o => `<option value="${o.val}" ${supersetGroup === o.val ? 'selected' : ''}>${o.label}</option>`).join('')}
       </select>
+      <select class="input-box modal-ex-loadtype" style="font-size: 11px; padding: 6px 4px; color: var(--primary);" onchange="handleModalLoadTypeChange(this)">
+        ${loadOptions.map(o => `<option value="${o.val}" ${loadType === o.val ? 'selected' : ''}>${o.label}</option>`).join('')}
+      </select>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 6px; align-items: center;">
       <div style="position: relative;">
         <input type="number" class="input-box modal-ex-sets" style="font-size: 13px; padding: 6px;" placeholder="Ser" value="${sets}" title="Serie">
         <span style="font-size: 9px; color: var(--text-muted); display: block; text-align: center;">SERIE</span>
@@ -1486,13 +1593,51 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
         <input type="number" class="input-box modal-ex-reps" style="font-size: 13px; padding: 6px;" placeholder="Powt" value="${reps}" title="Powtórzenia">
         <span style="font-size: 9px; color: var(--text-muted); display: block; text-align: center;">POWT</span>
       </div>
-      <div style="position: relative;">
+      <div class="modal-weight-container" style="position: relative; ${hideWeightBox ? 'display: none;' : ''}">
         <input type="number" step="0.5" class="input-box modal-ex-weight" style="font-size: 13px; padding: 6px;" placeholder="kg" value="${weight}" title="Ciężar (kg)">
-        <span style="font-size: 9px; color: var(--text-muted); display: block; text-align: center;">CIĘŻAR (KG)</span>
+        <span class="modal-weight-label" style="font-size: 9px; color: var(--text-muted); display: block; text-align: center;">${weightLabelText}</span>
+      </div>
+      <div class="modal-bw-add-container" style="${hideWeightBox ? 'display: flex;' : 'display: none;'} flex-direction: column; align-items: center; justify-content: center;">
+        <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 6px 8px; width: 100%; color: var(--primary);" onclick="enableModalBwExtraWeight(this)">➕ Dołóż ciężar</button>
+        <span style="font-size: 9px; color: var(--success); display: block; text-align: center; margin-top: 2px;">MASA CIAŁA</span>
       </div>
     </div>
   `;
   listEl.appendChild(row);
+}
+
+function handleModalLoadTypeChange(selectEl) {
+  const row = selectEl.closest('.modal-ex-row');
+  if (!row) return;
+  const val = selectEl.value;
+  const weightContainer = row.querySelector('.modal-weight-container');
+  const bwAddContainer = row.querySelector('.modal-bw-add-container');
+  const weightInput = row.querySelector('.modal-ex-weight');
+  const weightLabel = row.querySelector('.modal-weight-label');
+
+  if (val === 'bodyweight') {
+    weightInput.value = 0;
+    weightContainer.style.display = 'none';
+    bwAddContainer.style.display = 'flex';
+  } else {
+    weightContainer.style.display = 'block';
+    bwAddContainer.style.display = 'none';
+    weightLabel.textContent = val === 'dual_dumbbell' ? '1 HANTEL (KG ×2)' : 'CIĘŻAR (KG)';
+  }
+}
+
+function enableModalBwExtraWeight(btnEl) {
+  const row = btnEl.closest('.modal-ex-row');
+  if (!row) return;
+  const weightContainer = row.querySelector('.modal-weight-container');
+  const bwAddContainer = row.querySelector('.modal-bw-add-container');
+  const weightLabel = row.querySelector('.modal-weight-label');
+  const weightInput = row.querySelector('.modal-ex-weight');
+
+  bwAddContainer.style.display = 'none';
+  weightContainer.style.display = 'block';
+  weightLabel.textContent = '+DOŁOŻONO (KG)';
+  weightInput.focus();
 }
 
 function saveModalPlan() {
@@ -1508,10 +1653,13 @@ function saveModalPlan() {
     const exName = r.querySelector('.modal-ex-name').value.trim();
     const sets = parseInt(r.querySelector('.modal-ex-sets').value) || 3;
     const reps = parseInt(r.querySelector('.modal-ex-reps').value) || 10;
-    const weight = parseFloat(r.querySelector('.modal-ex-weight').value) || 0;
+    const loadType = r.querySelector('.modal-ex-loadtype').value || 'standard';
+    const weightContainer = r.querySelector('.modal-weight-container');
+    const isWeightHidden = weightContainer && weightContainer.style.display === 'none';
+    const weight = isWeightHidden ? 0 : (parseFloat(r.querySelector('.modal-ex-weight').value) || 0);
     const supersetGroup = r.querySelector('.modal-ex-ss').value || '';
     if (exName) {
-      exercises.push({ name: exName, sets, reps, weight, supersetGroup, muscle: 'Ogólne' });
+      exercises.push({ name: exName, sets, reps, weight, supersetGroup, loadType, muscle: 'Ogólne' });
     }
   });
 
@@ -1545,7 +1693,7 @@ function saveModalPlan() {
 }
 
 // ============================================================================
-// COACH AI ANALYSIS & CONVERSATIONAL CHAT (Includes Duration & Rest Times)
+// COACH AI ANALYSIS & CONVERSATIONAL CHAT (Includes Duration, Rests & LoadTypes)
 // ============================================================================
 async function triggerCoachAnalysis(session) {
   const loading = document.getElementById('coach-loading');
@@ -1554,9 +1702,15 @@ async function triggerCoachAnalysis(session) {
   reportBox.style.display = 'none';
 
   const durSec = session.durationSeconds || (session.endTime && session.startTime ? Math.round((session.endTime - session.startTime) / 1000) : 0);
-  const setsSummary = (session.sets || []).map(s =>
-    `${s.supersetGroup ? `[SS ${s.supersetGroup}] ` : ''}${s.exercise}: S${s.setNum} ${s.weight}kg x ${s.reps}`
-  ).join('\n');
+  const setsSummary = (session.sets || []).map(s => {
+    let wDesc = `${s.weight}kg`;
+    if (s.loadType === 'dual_dumbbell') {
+      wDesc = `2x ${s.weight}kg (łącznie ${s.effectiveWeight || s.weight * 2}kg)`;
+    } else if (s.loadType === 'bodyweight') {
+      wDesc = s.weight > 0 ? `Masa ciała + ${s.weight}kg` : `Masa własnego ciała (BW)`;
+    }
+    return `${s.supersetGroup ? `[SS ${s.supersetGroup}] ` : ''}${s.exercise}: S${s.setNum} ${wDesc} x ${s.reps}`;
+  }).join('\n');
 
   const restsSummary = (session.restLogs && session.restLogs.length > 0)
     ? session.restLogs.map((r, i) =>
@@ -1768,7 +1922,8 @@ function importDataJson(event) {
             sets: parseInt(ex.sets) || 3,
             reps: parseInt(ex.reps) || 10,
             weight: parseFloat(ex.weight) || 0,
-            supersetGroup: ex.supersetGroup || ''
+            supersetGroup: ex.supersetGroup || '',
+            loadType: ex.loadType || 'standard'
           })) : []
         }));
         STATE.plans = normalizedPlans;
@@ -1798,8 +1953,10 @@ function importDataJson(event) {
               exercise: s.exercise || 'Ćwiczenie',
               muscle: s.muscle || 'Inne',
               supersetGroup: s.supersetGroup || '',
+              loadType: s.loadType || 'standard',
               setNum: s.setNum || (sIdx + 1),
               weight: parseFloat(s.weight) || 0,
+              effectiveWeight: parseFloat(s.effectiveWeight) || (s.loadType === 'dual_dumbbell' ? (parseFloat(s.weight) || 0) * 2 : (parseFloat(s.weight) || 0)),
               reps: parseInt(s.reps) || 0,
               completedAt: s.completedAt || null
             })) : [],
