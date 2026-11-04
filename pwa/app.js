@@ -27,7 +27,13 @@ const STATE = {
   wakeLockSentinel: null,
   parsedKeepPlans: null,
   exerciseGifs: [],
-  coachChat: JSON.parse(localStorage.getItem('iron_coach_chat')) || []
+  coachChat: JSON.parse(localStorage.getItem('iron_coach_chat')) || [],
+  userProfile: JSON.parse(localStorage.getItem('iron_user_profile')) || {
+    weightKg: '',
+    heightCm: '',
+    goal: 'Budowa masy mięśniowej (Hipertrofia)',
+    goalNotes: ''
+  }
 };
 
 // Initialize
@@ -35,6 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
   registerServiceWorker();
   checkSharedParams();
   loadApiKey();
+  loadUserProfile();
   loadExerciseGifsDatabase();
   renderPlans();
   renderRecentWorkouts();
@@ -1693,50 +1700,115 @@ function saveModalPlan() {
 }
 
 // ============================================================================
-// COACH AI ANALYSIS & CONVERSATIONAL CHAT (Includes Duration, Rests & LoadTypes)
+// COACH AI ANALYSIS & CONVERSATIONAL CHAT (Includes Profile, Goal, Duration, Rests & LoadTypes)
 // ============================================================================
+function buildCoachProfileAndPlansContext() {
+  const p = STATE.userProfile || {};
+  const weightVal = parseFloat(p.weightKg) || 0;
+  const heightVal = parseFloat(p.heightCm) || 0;
+  let bmiStr = '';
+  if (weightVal > 0 && heightVal > 0) {
+    const bmi = (weightVal / Math.pow(heightVal / 100, 2)).toFixed(1);
+    bmiStr = ` (BMI: ${bmi})`;
+  }
+
+  const profileSection = [
+    `• Waga użytkownika: ${weightVal > 0 ? weightVal + ' kg' : 'nie podano'}`,
+    `• Wzrost użytkownika: ${heightVal > 0 ? heightVal + ' cm' + bmiStr : 'nie podano'}`,
+    `• Główny cel treningowy: ${p.goal || 'Budowa masy mięśniowej (Hipertrofia)'}`,
+    p.goalNotes ? `• Dodatkowe priorytety / uwagi / kontuzje: ${p.goalNotes}` : null
+  ].filter(Boolean).join('\n');
+
+  const plansSection = (STATE.plans && STATE.plans.length > 0)
+    ? STATE.plans.map(pl => {
+        const exList = (pl.exercises || []).map(e => {
+          const ss = e.supersetGroup ? `[SS ${e.supersetGroup}] ` : '';
+          const lt = e.loadType === 'dual_dumbbell'
+            ? `(2x hantle po ${e.weight}kg = ${e.weight * 2}kg)`
+            : (e.loadType === 'bodyweight'
+                ? (e.weight > 0 ? `(Masa ciała + ${e.weight}kg)` : `(Masa własnego ciała)`)
+                : `${e.weight}kg`);
+          return `${ss}${e.name} ${e.sets}x${e.reps} ${lt}`;
+        }).join(', ');
+        return `- ${pl.name} (przerwa główna: ${pl.restSeconds || 90}s, w superserii: ${pl.supersetRestSeconds || 30}s): ${exList}`;
+      }).join('\n')
+    : 'Brak zapisanych planów.';
+
+  return { profileSection, plansSection, userWeightKg: weightVal };
+}
+
+function formatSessionDetailsForCoach(session, userWeightKg = 0) {
+  if (!session) return 'Brak danych sesji.';
+  const durSec = session.durationSeconds || (session.endTime && session.startTime ? Math.round((session.endTime - session.startTime) / 1000) : 0);
+
+  const setsSummary = (session.sets || []).map(s => {
+    let wDesc = `${s.weight}kg`;
+    if (s.loadType === 'dual_dumbbell') {
+      wDesc = `2x hantle po ${s.weight}kg (łącznie ${s.effectiveWeight || s.weight * 2}kg na serię)`;
+    } else if (s.loadType === 'bodyweight') {
+      const bwBase = userWeightKg > 0 ? `Masa ciała (${userWeightKg}kg)` : `Masa własnego ciała (BW)`;
+      wDesc = s.weight > 0 ? `${bwBase} + dołożone ${s.weight}kg` : bwBase;
+    }
+    return `${s.supersetGroup ? `[Superseria ${s.supersetGroup}] ` : '[Izolacja] '}${s.exercise}: Seria ${s.setNum} -> ${wDesc} x ${s.reps} powt.`;
+  }).join('\n');
+
+  const restsSummary = (session.restLogs && session.restLogs.length > 0)
+    ? session.restLogs.map((r, i) => {
+        const rTypeLabel = r.type === 'superset-short' ? 'wewnątrz superserii' : (r.type === 'superset-round' ? 'po obwodzie superserii' : 'między seriami');
+        return `Przerwa #${i + 1} (${rTypeLabel}, po ${r.afterExercise} S${r.afterSet}): planowana ${r.plannedSeconds}s, rzeczywista ${r.actualSeconds}s${r.overtimeSeconds > 0 ? ` (PRZEKROCZONO o +${r.overtimeSeconds}s)` : ' (w normie)'}`;
+      }).join('\n')
+    : 'Brak szczegółowych pomiarów przerw.';
+
+  return `Plan: ${session.planName}
+Data: ${new Date(session.endTime || Date.now()).toLocaleString('pl-PL')}
+Całkowity czas treningu: ${formatDuration(durSec)} (${durSec} sekund)
+Średnia przerwa między seriami/ćwiczeniami: ${session.avgRestSeconds || 0} sekund
+Całkowity tonaż (z uwzględnieniem podwójnych hantli): ${session.totalVolumeKg} kg
+Ukończone serie: ${session.completedSets}
+
+Wykonane serie (z uwzględnieniem superserii, 2x hantli i masy ciała):
+${setsSummary}
+
+Zarejestrowane przerwy między ćwiczeniami/seriami:
+${restsSummary}`;
+}
+
 async function triggerCoachAnalysis(session) {
   const loading = document.getElementById('coach-loading');
   const reportBox = document.getElementById('coach-report-content');
   loading.style.display = 'block';
   reportBox.style.display = 'none';
 
-  const durSec = session.durationSeconds || (session.endTime && session.startTime ? Math.round((session.endTime - session.startTime) / 1000) : 0);
-  const setsSummary = (session.sets || []).map(s => {
-    let wDesc = `${s.weight}kg`;
-    if (s.loadType === 'dual_dumbbell') {
-      wDesc = `2x ${s.weight}kg (łącznie ${s.effectiveWeight || s.weight * 2}kg)`;
-    } else if (s.loadType === 'bodyweight') {
-      wDesc = s.weight > 0 ? `Masa ciała + ${s.weight}kg` : `Masa własnego ciała (BW)`;
-    }
-    return `${s.supersetGroup ? `[SS ${s.supersetGroup}] ` : ''}${s.exercise}: S${s.setNum} ${wDesc} x ${s.reps}`;
-  }).join('\n');
+  const { profileSection, plansSection, userWeightKg } = buildCoachProfileAndPlansContext();
+  const currentSessionDetails = formatSessionDetailsForCoach(session, userWeightKg);
 
-  const restsSummary = (session.restLogs && session.restLogs.length > 0)
-    ? session.restLogs.map((r, i) =>
-        `Przerwa #${i + 1} (po ${r.afterExercise} S${r.afterSet}): planowana ${r.plannedSeconds}s, rzeczywista ${r.actualSeconds}s${r.overtimeSeconds > 0 ? ` (przekroczono o +${r.overtimeSeconds}s)` : ''}`
-      ).join('\n')
-    : 'Brak szczegółowych pomiarów przerw.';
+  // Also include brief summary of up to 3 previous workouts for progression context
+  const prevWorkouts = STATE.history
+    .filter(h => h.id !== session.id)
+    .slice(0, 3)
+    .map(h => `- ${new Date(h.endTime).toLocaleDateString('pl-PL')} (${h.planName}): tonaż ${h.totalVolumeKg}kg, serii ${h.completedSets}, czas ${formatDuration(h.durationSeconds || 0)}, śr. przerwa ${h.avgRestSeconds || 0}s`)
+    .join('\n') || 'To pierwszy zarejestrowany trening.';
 
   const prompt = `
 Działasz jako doświadczony, zaawansowany trener personalny i fizjolog sportowy w aplikacji IronCoach.
-Właśnie zakończył się trening użytkownika:
-Plan: ${session.planName}
-Całkowity czas treningu: ${formatDuration(durSec)} (${durSec} sekund)
-Średnia przerwa między seriami: ${session.avgRestSeconds || 0} sekund
-Całkowity tonaż: ${session.totalVolumeKg} kg
-Ukończone serie: ${session.completedSets}
+Przeanalizuj zakończony trening użytkownika, biorąc pod uwagę WSZYSTKIE poniższe dane: jego wagę, wzrost, cel treningowy, superserie, ćwiczenia z masą własnego ciała, ćwiczenia z dwoma hantlami (tonaż liczony podwójnie), czas trwania całego treningu oraz czasy poszczególnych przerw (w tym przekroczenia czasu przerwy).
 
-Szczegóły wykonanych serii:
-${setsSummary}
+=== PROFIL I CEL UŻYTKOWNIKA ===
+${profileSection}
 
-Historia przerw między ćwiczeniami/seriami:
-${restsSummary}
+=== SZCZEGÓŁY ZAKOŃCZONEGO TRENINGU ===
+${currentSessionDetails}
 
-Przygotuj pogłębioną, merytoryczną analizę w języku polskim:
-1. 📊 Ocena objętości, gęstości treningowej (czas trwania sesji i dyscyplina przerw między seriami/superseriami) oraz intensywności.
-2. 🎯 Konkretna periodyzacja i progresywne przeładowanie na kolejny trening (do jakich ćwiczeń dodać ciężar, do jakich powtórzenia, gdzie skrócić lub wydłużyć przerwy).
-3. ⚡ Praktyczne zalecenia regeneracyjne i biomechaniczne.
+=== POPRZEDNIE TRENINGI (DO PORÓWNANIA PROGRESU) ===
+${prevWorkouts}
+
+=== AKTUALNE PLANY TRENINGOWE UŻYTKOWNIKA ===
+${plansSection}
+
+Przygotuj pogłębioną, spersonalizowaną analizę w języku polskim:
+1. 📊 Ocena sesji pod kątem celu użytkownika (${STATE.userProfile?.goal || 'Hipertrofia'}) oraz jego parametrów (waga/wzrost): oceń objętość, tonaż (w tym ćwiczenia z masą własnego ciała i 2x hantle), gęstość treningową (całkowity czas sesji) oraz dyscyplinę przerw między ćwiczeniami i wewnątrz superserii.
+2. 🎯 Konkretna periodyzacja i progresywne przeładowanie na kolejny trening: wskaż dokładnie do jakich ćwiczeń dodać ciężar (lub dołożyć ciężar w ćwiczeniach z masą ciała), gdzie dodać powtórzenia, a gdzie zmodyfikować czas przerw.
+3. ⚡ Praktyczne wskazówki biomechaniczne, żywieniowe (dopasowane do wagi i celu) oraz regeneracyjne.
 Używaj czytelnego formatowania punktowego.`;
 
   try {
@@ -1775,26 +1847,40 @@ async function askCoachQuestion() {
 
   chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
 
+  const { profileSection, plansSection, userWeightKg } = buildCoachProfileAndPlansContext();
   const lastWorkout = STATE.history[0];
-  const workoutContext = lastWorkout
-    ? `Ostatni trening użytkownika: ${lastWorkout.planName}, czas trwania: ${formatDuration(lastWorkout.durationSeconds || 0)}, śr. przerwa: ${lastWorkout.avgRestSeconds || 0}s, tonaż: ${lastWorkout.totalVolumeKg}kg, serii: ${lastWorkout.completedSets}.`
-    : `Brak zarejestrowanych sesji.`;
+  const lastWorkoutDetails = lastWorkout
+    ? formatSessionDetailsForCoach(lastWorkout, userWeightKg)
+    : `Brak zarejestrowanych sesji w historii.`;
 
-  const conversationHistory = STATE.coachChat.slice(-8).map(m => 
+  const recentHistorySummary = STATE.history.slice(0, 5).map(h =>
+    `• ${new Date(h.endTime).toLocaleDateString('pl-PL')} - ${h.planName}: ${h.totalVolumeKg}kg, ${h.completedSets} serii, czas ${formatDuration(h.durationSeconds || 0)}, śr. przerwa ${h.avgRestSeconds || 0}s`
+  ).join('\n') || 'Brak historii.';
+
+  const conversationHistory = STATE.coachChat.slice(-10).map(m => 
     `${m.role === 'user' ? 'Użytkownik' : 'Trener'}: ${m.text}`
   ).join('\n\n');
 
   const fullPrompt = `
 Jesteś doświadczonym, empatycznym trenerem personalnym i fizjologiem w aplikacji IronCoach.
-Rozmawiasz z użytkownikiem w trybie ciągłego czatu.
+Rozmawiasz z użytkownikiem w trybie ciągłego czatu. Zawsze bierz pod uwagę jego wagę, wzrost, cel treningowy, strukturę planów (superserie, ćwiczenia z masą ciała, ćwiczenia 2x hantle) oraz pełne dane z jego ostatnich treningów (czas trwania, tonaż, rzeczywiste przerwy między seriami).
 
-Kontekst treningowy:
-${workoutContext}
+=== PROFIL I CEL TRENINGOWY UŻYTKOWNIKA ===
+${profileSection}
 
-Dotychczasowy przebieg rozmowy:
+=== AKTUALNE PLANY TRENINGOWE ===
+${plansSection}
+
+=== OSTATNI ZAREJESTROWANY TRENING (SZCZEGÓŁY SERII I PRZERW) ===
+${lastWorkoutDetails}
+
+=== HISTORIA OSTATNICH SESJI ===
+${recentHistorySummary}
+
+=== DOTYCHCZASOWY PRZEBIEG ROZMOWY ===
 ${conversationHistory}
 
-Udziel naturalnej, merytorycznej i pomocnej odpowiedzi po polsku jako Trener na ostatnią wiadomość użytkownika.
+Udziel naturalnej, merytorycznej, spersonalizowanej odpowiedzi po polsku jako Trener na ostatnią wiadomość użytkownika.
 `;
 
   try {
@@ -1868,8 +1954,70 @@ function clearCoachChat() {
 }
 
 // ============================================================================
-// API KEY & ROBUST EXPORT / IMPORT (Preserves history when plans evolve)
+// USER PROFILE, API KEY & ROBUST EXPORT / IMPORT
 // ============================================================================
+function loadUserProfile() {
+  const p = STATE.userProfile || {};
+  const wInput = document.getElementById('profile-weight');
+  const hInput = document.getElementById('profile-height');
+  const gInput = document.getElementById('profile-goal');
+  const gnInput = document.getElementById('profile-goal-notes');
+
+  if (wInput) wInput.value = p.weightKg || '';
+  if (hInput) hInput.value = p.heightCm || '';
+  if (gInput && p.goal) gInput.value = p.goal;
+  if (gnInput) gnInput.value = p.goalNotes || '';
+
+  updateProfileSummaryUI();
+}
+
+function saveUserProfile() {
+  const weightKg = parseFloat(document.getElementById('profile-weight')?.value) || '';
+  const heightCm = parseFloat(document.getElementById('profile-height')?.value) || '';
+  const goal = document.getElementById('profile-goal')?.value || 'Budowa masy mięśniowej (Hipertrofia)';
+  const goalNotes = (document.getElementById('profile-goal-notes')?.value || '').trim();
+
+  STATE.userProfile = { weightKg, heightCm, goal, goalNotes };
+  localStorage.setItem('iron_user_profile', JSON.stringify(STATE.userProfile));
+  updateProfileSummaryUI();
+
+  const status = document.getElementById('profile-save-status');
+  if (status) {
+    status.style.display = 'block';
+    setTimeout(() => { status.style.display = 'none'; }, 3500);
+  }
+}
+
+function updateProfileSummaryUI() {
+  const p = STATE.userProfile || {};
+  const w = parseFloat(p.weightKg) || 0;
+  const h = parseFloat(p.heightCm) || 0;
+
+  const bmiBadge = document.getElementById('profile-bmi-badge');
+  if (bmiBadge) {
+    if (w > 0 && h > 0) {
+      const bmi = (w / Math.pow(h / 100, 2)).toFixed(1);
+      bmiBadge.textContent = `BMI: ${bmi}`;
+      bmiBadge.style.display = 'inline-block';
+    } else {
+      bmiBadge.style.display = 'none';
+    }
+  }
+
+  const coachSummary = document.getElementById('coach-profile-summary');
+  if (coachSummary) {
+    const parts = [];
+    if (w > 0) parts.push(`Waga: <b>${w} kg</b>`);
+    if (h > 0) parts.push(`Wzrost: <b>${h} cm</b>`);
+    if (p.goal) parts.push(`Cel: <b>${escapeHtml(p.goal)}</b>`);
+    if (p.goalNotes) parts.push(`Uwagi: <i>${escapeHtml(p.goalNotes)}</i>`);
+
+    coachSummary.innerHTML = parts.length > 0
+      ? parts.join(' • ')
+      : 'Nie podano jeszcze wagi i wzrostu — kliknij "Zmień", aby uzupełnić profil';
+  }
+}
+
 function loadApiKey() {
   const input = document.getElementById('gemini-api-key');
   if (input) input.value = STATE.apiKey;
@@ -1886,8 +2034,9 @@ function saveApiKey() {
 
 function exportDataJson() {
   const backup = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     exportedAt: new Date().toISOString(),
+    userProfile: STATE.userProfile,
     plans: STATE.plans,
     history: STATE.history,
     customGifMap: JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}'),
@@ -1907,6 +2056,18 @@ function importDataJson(event) {
   reader.onload = (e) => {
     try {
       const data = JSON.parse(e.target.result);
+
+      // 0. Restore user profile if present
+      if (data.userProfile && typeof data.userProfile === 'object') {
+        STATE.userProfile = {
+          weightKg: data.userProfile.weightKg || '',
+          heightCm: data.userProfile.heightCm || '',
+          goal: data.userProfile.goal || 'Budowa masy mięśniowej (Hipertrofia)',
+          goalNotes: data.userProfile.goalNotes || ''
+        };
+        localStorage.setItem('iron_user_profile', JSON.stringify(STATE.userProfile));
+        loadUserProfile();
+      }
 
       // 1. Safely normalize and import plans without breaking existing structure
       if (Array.isArray(data.plans)) {

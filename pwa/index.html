@@ -460,13 +460,24 @@
   <!-- VIEW: COACH REPORT & CHAT -->
   <section id="view-coach" class="view">
     <div class="container">
+      <!-- Active User Profile Context Banner for AI Coach -->
+      <div class="card" style="padding: 12px 14px; margin-bottom: 12px; border-color: rgba(0, 229, 255, 0.35); background: rgba(0, 229, 255, 0.05);">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+          <div style="font-size: 12px; line-height: 1.4;">
+            <div style="font-weight: 800; color: var(--accent); margin-bottom: 2px;">👤 Profil brany pod uwagę przez Trenera AI:</div>
+            <div id="coach-profile-summary" style="color: var(--text);">Nie ustawiono wagi/wzrostu/celu — uzupełnij w Opcjach</div>
+          </div>
+          <button class="btn btn-sm btn-secondary" style="white-space: nowrap; font-size: 11px; padding: 6px 10px;" onclick="showView('settings')">✏️ Zmień</button>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-title">
           <span>🧠 Trener Gemini AI</span>
           <span class="badge badge-cyan">Raport Sesji</span>
         </div>
         <div id="coach-loading" style="display: none; padding: 14px; text-align: center; color: var(--accent);">
-          Gemini analizuje tonaż, powtórzenia i periodyzację... 🏋️‍♂️
+          Gemini analizuje tonaż, powtórzenia, przerwy i Twój cel... 🏋️‍♂️
         </div>
         <div id="coach-report-content" class="coach-bubble" style="display: none;"></div>
       </div>
@@ -507,6 +518,42 @@
   <!-- VIEW: SETTINGS -->
   <section id="view-settings" class="view">
     <div class="container">
+      <div class="card" style="border-color: rgba(255, 179, 0, 0.4);">
+        <div class="card-title">
+          <span>👤 Twój Profil i Cel Treningowy</span>
+          <span id="profile-bmi-badge" class="badge badge-cyan" style="display: none;"></span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 12px;">
+          Te dane są automatycznie przekazywane Trenerowi AI podczas analizy każdej sesji oraz w czacie (pomagają też wyliczyć realne obciążenie w ćwiczeniach z masą ciała).
+        </p>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+          <div>
+            <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Waga ciała (kg)</label>
+            <input type="number" step="0.5" id="profile-weight" class="input-box" placeholder="np. 82.5">
+          </div>
+          <div>
+            <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Wzrost (cm)</label>
+            <input type="number" id="profile-height" class="input-box" placeholder="np. 180">
+          </div>
+        </div>
+
+        <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Główny cel treningowy</label>
+        <select id="profile-goal" class="input-box" style="text-align: left; margin-bottom: 10px; font-size: 14px;">
+          <option value="Budowa masy mięśniowej (Hipertrofia)">💪 Budowa masy mięśniowej (Hipertrofia)</option>
+          <option value="Budowa siły maksymalnej">🏋️ Budowa siły maksymalnej</option>
+          <option value="Rekompozycja sylwetki (Siła + Sylwetka)">⚡ Rekompozycja sylwetki (Siła + Sylwetka)</option>
+          <option value="Redukcja tkanki tłuszczowej i utrzymanie mięśni">🔥 Redukcja tłuszczu i utrzymanie mięśni</option>
+          <option value="Sprawność ogólna, zdrowie i kondycja">🏃 Sprawność ogólna, zdrowie i kondycja</option>
+        </select>
+
+        <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Dodatkowe szczegóły celu / priorytety / kontuzje (opcjonalnie)</label>
+        <input type="text" id="profile-goal-notes" class="input-box" style="text-align: left; font-size: 13px; margin-bottom: 12px;" placeholder="np. Priorytet góra klatki i barki, docelowo 85kg, wrażliwy lewy bark">
+
+        <button class="btn btn-primary" onclick="saveUserProfile()">💾 Zapisz Profil i Cel</button>
+        <p id="profile-save-status" style="color: var(--success); font-size: 13px; margin-top: 8px; display: none;">✅ Profil i cel zapisane! Trener AI weźmie je pod uwagę.</p>
+      </div>
+
       <div class="card">
         <div class="card-title">🔑 Klucz Gemini API</div>
         <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 10px;">
@@ -629,6 +676,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=13"></script>
+  <script src="app.js?v=14"></script>
 </body>
 </html>
