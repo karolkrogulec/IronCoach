@@ -241,52 +241,52 @@
       color: #000;
     }
 
-    /* Big Rest Timer Floating Panel */
+    /* Big Rest Timer Floating Panel (+50% larger clock) */
     #rest-timer-bar {
       display: none;
       position: fixed;
       bottom: 72px;
-      left: 12px;
-      right: 12px;
-      max-width: 576px;
+      left: 10px;
+      right: 10px;
+      max-width: 580px;
       margin: 0 auto;
-      background: rgba(20, 25, 34, 0.98);
+      background: rgba(16, 20, 28, 0.98);
       border: 2px solid var(--accent);
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.75);
-      border-radius: 18px;
-      padding: 14px 18px;
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.85);
+      border-radius: 22px;
+      padding: 18px 20px;
       flex-direction: column;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
       z-index: 150;
       transition: background 0.25s, border-color 0.25s;
     }
     #rest-timer-bar.overtime {
       background: rgba(48, 14, 18, 0.98);
       border-color: var(--danger);
-      box-shadow: 0 0 28px rgba(255, 82, 82, 0.45);
+      box-shadow: 0 0 34px rgba(255, 82, 82, 0.55);
     }
     .timer-label-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
       width: 100%;
-      font-size: 12px;
-      font-weight: 700;
+      font-size: 13px;
+      font-weight: 800;
       color: var(--text-muted);
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.6px;
     }
     .timer-big-seconds {
-      font-size: 54px;
+      font-size: 84px;
       font-weight: 900;
-      line-height: 1.05;
+      line-height: 1.02;
       color: var(--accent);
       font-variant-numeric: tabular-nums;
-      letter-spacing: -1px;
+      letter-spacing: -2px;
       text-align: center;
-      padding: 4px 16px;
-      border-radius: 12px;
+      padding: 6px 24px;
+      border-radius: 16px;
     }
     #rest-timer-bar.overtime .timer-big-seconds {
       color: #fff;
@@ -354,10 +354,10 @@
       <span id="timer-overtime-badge" style="display: none; color: var(--danger); font-weight: 800;">⚠️ PRZEKROCZONO CZAS!</span>
     </div>
     <div class="timer-big-seconds" id="timer-display">90s</div>
-    <div style="display: flex; gap: 8px; width: 100%; justify-content: center;">
-      <button class="btn btn-sm btn-secondary" style="flex: 1; font-size: 14px; padding: 10px;" onclick="addTimerSeconds(-15)">-15s</button>
-      <button class="btn btn-sm btn-secondary" style="flex: 1; font-size: 14px; padding: 10px;" onclick="addTimerSeconds(15)">+15s</button>
-      <button class="btn btn-sm btn-primary" style="flex: 1.5; font-size: 14px; padding: 10px;" onclick="stopTimer()">Gotowe / Pomiń</button>
+    <div style="display: flex; gap: 10px; width: 100%; justify-content: center;">
+      <button class="btn btn-sm btn-secondary" style="flex: 1; font-size: 16px; font-weight: 800; padding: 12px;" onclick="addTimerSeconds(-15)">-15s</button>
+      <button class="btn btn-sm btn-secondary" style="flex: 1; font-size: 16px; font-weight: 800; padding: 12px;" onclick="addTimerSeconds(15)">+15s</button>
+      <button class="btn btn-sm btn-primary" style="flex: 1.5; font-size: 16px; font-weight: 800; padding: 12px;" onclick="stopTimer()">Gotowe / Pomiń</button>
     </div>
   </div>
 
@@ -409,7 +409,7 @@
         <div style="display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--text-muted); align-items: center;">
           <span>Serii: <b id="workout-sets-counter" style="color: #fff;">0/0</b></span>
           <span>Tonaż: <b id="workout-volume-counter" style="color: var(--primary);">0 kg</b></span>
-          <span>Czas: <b id="workout-duration-counter" style="color: var(--accent); font-size: 15px;">0:00</b></span>
+          <span style="display: inline-flex; align-items: center; gap: 6px;">Czas: <b id="workout-duration-counter" style="color: var(--accent); font-size: 23px; font-weight: 900; font-variant-numeric: tabular-nums; background: rgba(0, 229, 255, 0.12); border: 1px solid rgba(0, 229, 255, 0.35); padding: 2px 10px; border-radius: 8px;">0:00</b></span>
           <span id="wake-lock-badge" style="font-size: 11px; color: var(--success); margin-left: auto;" title="Ekran nie wygasa podczas treningu">🔆 Ekran aktywny</span>
         </div>
       </div>
@@ -482,15 +482,29 @@
         <div id="coach-report-content" class="coach-bubble" style="display: none;"></div>
       </div>
 
-      <!-- Interactive Coach Chat -->
+      <!-- Interactive Coach Chat (Multi-Thread Support) -->
       <div class="card" style="padding: 14px;">
-        <div class="card-title" style="margin-bottom: 8px;">
+        <div class="card-title" style="margin-bottom: 10px;">
           <div style="display: flex; align-items: center; gap: 8px;">
-            <span>💬 Czat z Trenerem</span>
+            <span>💬 Czaty z Trenerem</span>
             <span class="badge badge-cyan">Gemini Pro</span>
           </div>
-          <button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 2px 8px;" onclick="clearCoachChat()">Wyczyść czat</button>
+          <div style="display: flex; gap: 6px;">
+            <button class="btn btn-sm btn-accent" style="font-size: 11px; padding: 4px 10px;" onclick="createNewCoachThread()">➕ Nowy czat</button>
+            <button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 8px;" onclick="renameActiveCoachThread()" title="Zmień nazwę wątku">✏️</button>
+            <button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 8px; color: var(--danger);" onclick="deleteActiveCoachThread()" title="Usuń ten wątek czatu">🗑️</button>
+          </div>
         </div>
+
+        <!-- Horizontal Thread Tabs Bar -->
+        <div id="coach-threads-bar" style="
+          display: flex;
+          gap: 6px;
+          overflow-x: auto;
+          padding-bottom: 8px;
+          margin-bottom: 10px;
+          border-bottom: 1px solid var(--border);
+        "></div>
 
         <!-- Chat messages container -->
         <div id="coach-chat-messages" style="
@@ -790,6 +804,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=16"></script>
+  <script src="app.js?v=17"></script>
 </body>
 </html>

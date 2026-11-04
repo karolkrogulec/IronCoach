@@ -1,4 +1,4 @@
-// IronCoach AI - Mobile PWA Engine (v16)
+// IronCoach AI - Mobile PWA Engine (v17)
 
 const STATE = {
   plans: JSON.parse(localStorage.getItem('iron_plans')) || [
@@ -28,6 +28,8 @@ const STATE = {
   parsedKeepPlans: null,
   exerciseGifs: [],
   coachChat: JSON.parse(localStorage.getItem('iron_coach_chat')) || [],
+  coachThreads: JSON.parse(localStorage.getItem('iron_coach_threads')) || [],
+  activeCoachThreadId: localStorage.getItem('iron_active_coach_thread_id') || null,
   userProfile: JSON.parse(localStorage.getItem('iron_user_profile')) || {
     weightKg: '',
     heightCm: '',
@@ -49,7 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderPlans();
   renderRecentWorkouts();
   checkActiveWorkout();
-  renderCoachChat();
+  initCoachThreads();
   setupWakeLockVisibilityListener();
 });
 
@@ -768,13 +770,52 @@ function viewHistoryReport(sessionId) {
   const session = STATE.history.find(s => s.id === sessionId);
   if (!session) return;
   showView('coach');
+  const loading = document.getElementById('coach-loading');
   const reportBox = document.getElementById('coach-report-content');
+  if (loading) loading.style.display = 'none';
   if (session.coachFeedback) {
     reportBox.innerHTML = formatMarkdown(session.coachFeedback);
     reportBox.style.display = 'block';
+  } else if (isWorkoutShortOrTest(session)) {
+    renderSkippedShortWorkoutNotice(session);
   } else {
     triggerCoachAnalysis(session);
   }
+}
+
+function isWorkoutShortOrTest(session) {
+  if (!session) return true;
+  const dur = session.durationSeconds || 0;
+  const sets = session.completedSets || 0;
+  // Shorter than 5 minutes (300s) OR fewer than 3 completed sets is treated as short/test
+  return dur < 300 || sets < 3;
+}
+
+function renderSkippedShortWorkoutNotice(session) {
+  const loading = document.getElementById('coach-loading');
+  const reportBox = document.getElementById('coach-report-content');
+  if (loading) loading.style.display = 'none';
+  if (!reportBox) return;
+  const durStr = formatDuration(session.durationSeconds || 0);
+  reportBox.innerHTML = `
+    <div style="text-align: left;">
+      <div style="font-weight: 800; color: var(--primary); margin-bottom: 6px;">⏭️ Pominięto automatyczną analizę AI (Trening krótki / testowy)</div>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+        Sesja <b>${escapeHtml(session.planName || 'Trening')}</b> trwała <b>${durStr}</b> i obejmowała <b>${session.completedSets || 0} ukończone serie</b>. Dla krótkich lub testowych sesji analiza AI nie uruchamia się automatycznie.
+      </p>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <button class="btn btn-sm btn-accent" style="width: auto;" onclick="forceCoachAnalysis('${session.id}')">✨ Wygeneruj analizę AI mimo to</button>
+        <button class="btn btn-sm btn-secondary" style="width: auto; color: var(--danger);" onclick="deleteHistorySession('${session.id}'); showView('home');">🗑️ Usuń ten testowy trening</button>
+      </div>
+    </div>
+  `;
+  reportBox.style.display = 'block';
+}
+
+function forceCoachAnalysis(sessionId) {
+  const session = STATE.history.find(s => s.id === sessionId);
+  if (!session) return;
+  triggerCoachAnalysis(session);
 }
 
 // ============================================================================
@@ -1287,6 +1328,16 @@ async function finishCurrentWorkout() {
     ? Math.round(restLogs.reduce((acc, r) => acc + (r.actualSeconds || 0), 0) / restLogs.length)
     : 0;
 
+  // If 0 sets were completed, discard as an empty test session without saving or running AI
+  if (completedSets === 0) {
+    STATE.activeWorkout = null;
+    localStorage.removeItem('iron_active_workout');
+    checkActiveWorkout();
+    showView('home');
+    alert('Trening testowy (0 ukończonych serii) został zamknięty bez zapisywania i bez analizy AI.');
+    return;
+  }
+
   const session = {
     id: STATE.activeWorkout.id,
     planId: STATE.activeWorkout.planId,
@@ -1312,7 +1363,11 @@ async function finishCurrentWorkout() {
   renderRecentWorkouts();
 
   showView('coach');
-  triggerCoachAnalysis(session);
+  if (isWorkoutShortOrTest(session)) {
+    renderSkippedShortWorkoutNotice(session);
+  } else {
+    triggerCoachAnalysis(session);
+  }
 }
 
 // ============================================================================
@@ -2487,9 +2542,10 @@ async function triggerCoachAnalysis(session) {
   const { profileSection, plansSection, userWeightKg } = buildCoachProfileAndPlansContext();
   const currentSessionDetails = formatSessionDetailsForCoach(session, userWeightKg);
 
-  // Also include brief summary of up to 3 previous workouts for progression context
-  const prevWorkouts = STATE.history
-    .filter(h => h.id !== session.id)
+  // Also include brief summary of up to 3 previous valid workouts for progression context
+  const validHistory = STATE.history.filter(h => h.id !== session.id && !isWorkoutShortOrTest(h));
+  const prevSource = validHistory.length > 0 ? validHistory : STATE.history.filter(h => h.id !== session.id);
+  const prevWorkouts = prevSource
     .slice(0, 3)
     .map(h => `- ${new Date(h.endTime).toLocaleDateString('pl-PL')} (${h.planName}): tonaż ${h.totalVolumeKg}kg, serii ${h.completedSets}, czas ${formatDuration(h.durationSeconds || 0)}, śr. przerwa ${h.avgRestSeconds || 0}s`)
     .join('\n') || 'To pierwszy zarejestrowany trening.';
@@ -2530,45 +2586,195 @@ Używaj czytelnego formatowania punktowego.`;
   }
 }
 
+// ============================================================================
+// MULTI-THREAD COACH CHAT (Simultaneous Conversations Support)
+// ============================================================================
+function initCoachThreads() {
+  if (!Array.isArray(STATE.coachThreads)) {
+    STATE.coachThreads = [];
+  }
+
+  // Migrate legacy single-thread STATE.coachChat if coachThreads is empty
+  if (STATE.coachThreads.length === 0) {
+    const legacyMsgs = Array.isArray(STATE.coachChat) && STATE.coachChat.length > 0
+      ? STATE.coachChat
+      : [];
+    let firstTitle = 'Czat #1';
+    const firstUserMsg = legacyMsgs.find(m => m.role === 'user');
+    if (firstUserMsg && firstUserMsg.text) {
+      firstTitle = firstUserMsg.text.slice(0, 24) + (firstUserMsg.text.length > 24 ? '…' : '');
+    }
+    const defaultThread = {
+      id: 'thread-' + Date.now(),
+      title: firstTitle,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      isThinking: false,
+      messages: legacyMsgs
+    };
+    STATE.coachThreads = [defaultThread];
+    STATE.activeCoachThreadId = defaultThread.id;
+    saveCoachThreads();
+  }
+
+  // Ensure activeCoachThreadId points to an existing thread
+  if (!STATE.activeCoachThreadId || !STATE.coachThreads.some(t => t.id === STATE.activeCoachThreadId)) {
+    STATE.activeCoachThreadId = STATE.coachThreads[0].id;
+    localStorage.setItem('iron_active_coach_thread_id', STATE.activeCoachThreadId);
+  }
+
+  // Clear any stuck isThinking flags from page reload
+  STATE.coachThreads.forEach(t => { t.isThinking = false; });
+
+  renderCoachThreadsBar();
+  renderCoachChat();
+}
+
+function getActiveCoachThread() {
+  if (!Array.isArray(STATE.coachThreads) || STATE.coachThreads.length === 0) {
+    initCoachThreads();
+  }
+  return STATE.coachThreads.find(t => t.id === STATE.activeCoachThreadId) || STATE.coachThreads[0];
+}
+
+function createNewCoachThread() {
+  const nextNum = STATE.coachThreads.length + 1;
+  const newThread = {
+    id: 'thread-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+    title: `Czat #${nextNum}`,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    isThinking: false,
+    messages: []
+  };
+  STATE.coachThreads.unshift(newThread);
+  STATE.activeCoachThreadId = newThread.id;
+  saveCoachThreads();
+  renderCoachThreadsBar();
+  renderCoachChat();
+  const inputEl = document.getElementById('coach-question-input');
+  if (inputEl) inputEl.focus();
+}
+
+function selectCoachThread(threadId) {
+  const found = STATE.coachThreads.find(t => t.id === threadId);
+  if (!found) return;
+  STATE.activeCoachThreadId = found.id;
+  localStorage.setItem('iron_active_coach_thread_id', STATE.activeCoachThreadId);
+  renderCoachThreadsBar();
+  renderCoachChat();
+}
+
+function renameActiveCoachThread() {
+  const thread = getActiveCoachThread();
+  if (!thread) return;
+  const newTitle = prompt('Podaj nową nazwę dla tego wątku czatu:', thread.title || 'Czat');
+  if (newTitle && newTitle.trim()) {
+    thread.title = newTitle.trim().slice(0, 35);
+    saveCoachThreads();
+    renderCoachThreadsBar();
+  }
+}
+
+function deleteActiveCoachThread() {
+  const thread = getActiveCoachThread();
+  if (!thread) return;
+  if (!confirm(`Czy na pewno chcesz usunąć wątek "${thread.title}"?`)) return;
+
+  STATE.coachThreads = STATE.coachThreads.filter(t => t.id !== thread.id);
+  if (STATE.coachThreads.length === 0) {
+    const fresh = {
+      id: 'thread-' + Date.now(),
+      title: 'Czat #1',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      isThinking: false,
+      messages: []
+    };
+    STATE.coachThreads = [fresh];
+  }
+  STATE.activeCoachThreadId = STATE.coachThreads[0].id;
+  saveCoachThreads();
+  renderCoachThreadsBar();
+  renderCoachChat();
+}
+
+function renderCoachThreadsBar() {
+  const bar = document.getElementById('coach-threads-bar');
+  if (!bar) return;
+
+  bar.innerHTML = STATE.coachThreads.map(t => {
+    const isActive = t.id === STATE.activeCoachThreadId;
+    const msgCount = (t.messages || []).length;
+    return `
+      <button
+        onclick="selectCoachThread('${t.id}')"
+        style="
+          flex: 0 0 auto;
+          padding: 6px 12px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: ${isActive ? '800' : '600'};
+          cursor: pointer;
+          border: 1px solid ${isActive ? 'var(--accent)' : 'var(--border)'};
+          background: ${isActive ? 'rgba(0, 229, 255, 0.16)' : 'var(--surface-elevated)'};
+          color: ${isActive ? 'var(--accent)' : 'var(--text-muted)'};
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          white-space: nowrap;
+        "
+      >
+        <span>${t.isThinking ? '⏳' : '💬'} ${escapeHtml(t.title || 'Czat')}</span>
+        <span style="font-size: 10px; opacity: 0.75;">(${msgCount})</span>
+      </button>
+    `;
+  }).join('');
+}
+
 async function askCoachQuestion() {
   const inputEl = document.getElementById('coach-question-input');
-  const btnEl = document.getElementById('coach-submit-btn');
-  const chatMessagesEl = document.getElementById('coach-chat-messages');
   const q = inputEl.value.trim();
   if (!q) return;
 
-  const userMsg = { role: 'user', text: q, time: Date.now() };
-  STATE.coachChat.push(userMsg);
-  saveCoachChat();
-  renderCoachChat();
+  const targetThread = getActiveCoachThread();
+  if (!targetThread) return;
 
-  inputEl.value = '';
-  inputEl.disabled = true;
-  if (btnEl) {
-    btnEl.disabled = true;
-    btnEl.innerHTML = `<span style="display: inline-flex; align-items: center; gap: 6px;">⏳ Trener myśli...</span>`;
-    btnEl.style.opacity = '0.7';
+  const userMsg = { role: 'user', text: q, time: Date.now() };
+  targetThread.messages.push(userMsg);
+  targetThread.updatedAt = Date.now();
+
+  // Auto-title thread from first user question if it still has a generic "Czat #N" title
+  const userMsgsCount = targetThread.messages.filter(m => m.role === 'user').length;
+  if (userMsgsCount === 1 && /^Czat #\d+$/i.test(targetThread.title || '')) {
+    targetThread.title = q.slice(0, 26) + (q.length > 26 ? '…' : '');
   }
 
-  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  targetThread.isThinking = true;
+  inputEl.value = '';
+  saveCoachThreads();
+  renderCoachThreadsBar();
+  renderCoachChat();
 
   const { profileSection, plansSection, userWeightKg } = buildCoachProfileAndPlansContext();
-  const lastWorkout = STATE.history[0];
+  const validWorkouts = STATE.history.filter(h => !isWorkoutShortOrTest(h));
+  const lastWorkout = validWorkouts[0] || STATE.history[0];
   const lastWorkoutDetails = lastWorkout
     ? formatSessionDetailsForCoach(lastWorkout, userWeightKg)
     : `Brak zarejestrowanych sesji w historii.`;
 
-  const recentHistorySummary = STATE.history.slice(0, 5).map(h =>
+  const historyForSummary = validWorkouts.length > 0 ? validWorkouts : STATE.history;
+  const recentHistorySummary = historyForSummary.slice(0, 5).map(h =>
     `• ${new Date(h.endTime).toLocaleDateString('pl-PL')} - ${h.planName}: ${h.totalVolumeKg}kg, ${h.completedSets} serii, czas ${formatDuration(h.durationSeconds || 0)}, śr. przerwa ${h.avgRestSeconds || 0}s`
   ).join('\n') || 'Brak historii.';
 
-  const conversationHistory = STATE.coachChat.slice(-10).map(m => 
+  const conversationHistory = targetThread.messages.slice(-12).map(m => 
     `${m.role === 'user' ? 'Użytkownik' : 'Trener'}: ${m.text}`
   ).join('\n\n');
 
   const fullPrompt = `
 Jesteś doświadczonym, empatycznym trenerem personalnym i fizjologiem w aplikacji IronCoach.
-Rozmawiasz z użytkownikiem w trybie ciągłego czatu. Zawsze bierz pod uwagę jego wagę, wzrost, cel treningowy, pełny raport składu ciała z wagi Fitdays (21 wskaźników, BMR, % tkanki tłuszczowej, masa mięśniowa, segmentowa analiza kończyn i tułowia), obwody ciała (talia, pas, klatka, ramiona, biceps, udo), historię zmian pomiarów w czasie, strukturę planów (superserie, ćwiczenia z masą ciała, ćwiczenia 2x hantle) oraz pełne dane z jego ostatnich treningów (czas trwania, tonaż, rzeczywiste przerwy między seriami).
+Rozmawiasz z użytkownikiem w wątku czatu pt. "${targetThread.title}". Zawsze bierz pod uwagę jego wagę, wzrost, cel treningowy, pełny raport składu ciała z wagi Fitdays (21 wskaźników, BMR, % tkanki tłuszczowej, masa mięśniowa, segmentowa analiza kończyn i tułowia), obwody ciała (talia, pas, klatka, ramiona, biceps, udo), historię zmian pomiarów w czasie, strukturę planów (superserie, ćwiczenia z masą ciała, ćwiczenia 2x hantle) oraz pełne dane z jego ostatnich treningów (czas trwania, tonaż, rzeczywiste przerwy między seriami).
 
 === PROFIL, SKŁAD CIAŁA (FITDAYS), OBWODY I CEL UŻYTKOWNIKA ===
 ${profileSection}
@@ -2582,7 +2788,7 @@ ${lastWorkoutDetails}
 === HISTORIA OSTATNICH SESJI ===
 ${recentHistorySummary}
 
-=== DOTYCHCZASOWY PRZEBIEG ROZMOWY ===
+=== DOTYCHCZASOWY PRZEBIEG ROZMOWY W TYM WĄTKU ===
 ${conversationHistory}
 
 Udziel naturalnej, merytorycznej, spersonalizowanej odpowiedzi po polsku jako Trener na ostatnią wiadomość użytkownika.
@@ -2590,21 +2796,15 @@ Udziel naturalnej, merytorycznej, spersonalizowanej odpowiedzi po polsku jako Tr
 
   try {
     const ans = await callGemini(fullPrompt, 'smart');
-    STATE.coachChat.push({ role: 'assistant', text: ans, time: Date.now() });
-    saveCoachChat();
-    renderCoachChat();
+    targetThread.messages.push({ role: 'assistant', text: ans, time: Date.now() });
+    targetThread.updatedAt = Date.now();
   } catch (err) {
-    STATE.coachChat.push({ role: 'assistant', text: `⚠️ Błąd: ${err.message}`, time: Date.now() });
-    renderCoachChat();
+    targetThread.messages.push({ role: 'assistant', text: `⚠️ Błąd: ${err.message}`, time: Date.now() });
   } finally {
-    inputEl.disabled = false;
-    inputEl.focus();
-    if (btnEl) {
-      btnEl.disabled = false;
-      btnEl.textContent = 'Wyślij';
-      btnEl.style.opacity = '1';
-    }
-    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    targetThread.isThinking = false;
+    saveCoachThreads();
+    renderCoachThreadsBar();
+    renderCoachChat();
   }
 }
 
@@ -2612,17 +2812,21 @@ function renderCoachChat() {
   const container = document.getElementById('coach-chat-messages');
   if (!container) return;
 
-  if (STATE.coachChat.length === 0) {
+  const activeThread = getActiveCoachThread();
+  const msgs = activeThread ? (activeThread.messages || []) : [];
+
+  if (msgs.length === 0 && (!activeThread || !activeThread.isThinking)) {
     container.innerHTML = `
       <div style="text-align: center; color: var(--text-muted); padding: 24px 12px; font-size: 13px;">
         👋 Cześć! Jestem Twoim trenerem personalnym AI.<br>
-        Możesz zapytać mnie o technikę, zamiennik ćwiczenia, superserie, czasy przerw lub progresję.
+        Wątek: <b style="color: var(--accent);">${escapeHtml(activeThread?.title || 'Nowy czat')}</b><br>
+        Możesz prowadzić kilka czatów jednocześnie (np. osobny o diecie, osobny o technice czy planie).
       </div>
     `;
     return;
   }
 
-  container.innerHTML = STATE.coachChat.map(m => {
+  const bubblesHtml = msgs.map(m => {
     const isUser = m.role === 'user';
     return `
       <div style="display: flex; justify-content: ${isUser ? 'flex-end' : 'flex-start'}; margin-bottom: 10px;">
@@ -2644,18 +2848,44 @@ function renderCoachChat() {
     `;
   }).join('');
 
+  const thinkingHtml = activeThread && activeThread.isThinking ? `
+    <div style="display: flex; justify-content: flex-start; margin-bottom: 10px;">
+      <div style="
+        padding: 10px 14px;
+        border-radius: 14px 14px 14px 2px;
+        background: var(--surface-elevated);
+        color: var(--accent);
+        font-size: 13px;
+        border: 1px dashed var(--accent);
+      ">
+        ⏳ Trener analizuje i pisze odpowiedź w tym wątku... (możesz w tym czasie przełączyć się na inny czat)
+      </div>
+    </div>
+  ` : '';
+
+  container.innerHTML = bubblesHtml + thinkingHtml;
   container.scrollTop = container.scrollHeight;
 }
 
+function saveCoachThreads() {
+  localStorage.setItem('iron_coach_threads', JSON.stringify(STATE.coachThreads));
+  if (STATE.activeCoachThreadId) {
+    localStorage.setItem('iron_active_coach_thread_id', STATE.activeCoachThreadId);
+  }
+  // Keep legacy STATE.coachChat synced with active thread for backward compatibility
+  const active = STATE.coachThreads.find(t => t.id === STATE.activeCoachThreadId);
+  if (active) {
+    STATE.coachChat = active.messages || [];
+    localStorage.setItem('iron_coach_chat', JSON.stringify(STATE.coachChat));
+  }
+}
+
 function saveCoachChat() {
-  localStorage.setItem('iron_coach_chat', JSON.stringify(STATE.coachChat));
+  saveCoachThreads();
 }
 
 function clearCoachChat() {
-  if (!confirm('Czy na pewno chcesz wyczyścić historię rozmowy z trenerem?')) return;
-  STATE.coachChat = [];
-  saveCoachChat();
-  renderCoachChat();
+  deleteActiveCoachThread();
 }
 
 // ============================================================================
@@ -2739,13 +2969,15 @@ function saveApiKey() {
 
 function exportDataJson() {
   const backup = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     exportedAt: new Date().toISOString(),
     userProfile: STATE.userProfile,
     bodyMeasurements: STATE.bodyMeasurements,
     plans: STATE.plans,
     history: STATE.history,
     customGifMap: JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}'),
+    coachThreads: STATE.coachThreads,
+    activeCoachThreadId: STATE.activeCoachThreadId,
     coachChat: STATE.coachChat
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
@@ -2865,11 +3097,23 @@ function importDataJson(event) {
         localStorage.setItem('iron_custom_gif_map', JSON.stringify({ ...currentMap, ...data.customGifMap }));
       }
 
-      // 4. Restore Coach AI chat history if present
-      if (Array.isArray(data.coachChat) && data.coachChat.length > 0) {
-        STATE.coachChat = data.coachChat;
-        saveCoachChat();
+      // 4. Restore Coach AI chat threads (or legacy single coachChat) if present
+      if (Array.isArray(data.coachThreads) && data.coachThreads.length > 0) {
+        const mergedThreads = [...STATE.coachThreads];
+        data.coachThreads.forEach(item => {
+          const idx = mergedThreads.findIndex(x => x.id === item.id);
+          if (idx !== -1) mergedThreads[idx] = { ...item, isThinking: false };
+          else mergedThreads.push({ ...item, isThinking: false });
+        });
+        STATE.coachThreads = mergedThreads;
+        if (data.activeCoachThreadId) STATE.activeCoachThreadId = data.activeCoachThreadId;
+        saveCoachThreads();
+        renderCoachThreadsBar();
         renderCoachChat();
+      } else if (Array.isArray(data.coachChat) && data.coachChat.length > 0) {
+        STATE.coachChat = data.coachChat;
+        STATE.coachThreads = [];
+        initCoachThreads();
       }
 
       renderPlans();
