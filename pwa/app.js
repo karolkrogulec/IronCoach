@@ -388,63 +388,151 @@ const EXERCISE_SLUG_MAP = {
   'deska': 'front-plank-with-twist'
 };
 
-// Polish-to-English token dictionary for smart fallback matching
+// Polish-to-English token dictionary for smart fallback matching & search
 const PL_TO_EN_TOKENS = {
-  'przysiad': 'squat', 'przysiady': 'squat',
-  'bułgarski': 'split squat', 'bulgarski': 'split squat', 'bułgarskie': 'split squat',
+  'przysiad': 'squat', 'przysiady': 'squat', 'przysiadzie': 'squat',
+  'bułgarski': 'single leg split squat', 'bulgarski': 'single leg split squat', 'bułgarskie': 'single leg split squat', 'bulgarskie': 'single leg split squat',
   'przedni': 'front', 'tylny': 'full',
   'martwy': 'deadlift', 'ciąg': 'deadlift', 'ciag': 'deadlift',
   'rumuński': 'romanian', 'rumunski': 'romanian',
-  'rdl': 'romanian deadlift',
-  'wyciskanie': 'press',
-  'leżąc': 'bench', 'lezac': 'bench', 'płasko': 'bench', 'plasko': 'bench',
-  'skos': 'incline', 'dodatni': 'incline', 'ujemny': 'decline',
+  'prostych': 'straight leg', 'sztywnych': 'stiff leg', 'stiff': 'stiff straight',
+  'rdl': 'romanian deadlift', 'sldl': 'straight leg deadlift',
+  'wyciskanie': 'press', 'wyciskania': 'press',
+  'leżąc': 'bench', 'lezac': 'bench', 'płasko': 'bench', 'plasko': 'bench', 'ławce': 'bench', 'lawce': 'bench',
+  'skos': 'incline', 'skośnej': 'incline', 'skosnej': 'incline', 'dodatni': 'incline', 'ujemny': 'decline',
   'żołnierskie': 'military press', 'zolnierskie': 'military press', 'ohp': 'military press',
-  'sztanga': 'barbell', 'sztangi': 'barbell', 'sztangą': 'barbell', 'sztanga': 'barbell',
-  'hantle': 'dumbbell', 'hantli': 'dumbbell', 'hantlami': 'dumbbell', 'hantlem': 'dumbbell',
+  'sztanga': 'barbell', 'sztangi': 'barbell', 'sztangą': 'barbell', 'sztandze': 'barbell', 'bb': 'barbell',
+  'hantle': 'dumbbell', 'hantli': 'dumbbell', 'hantlami': 'dumbbell', 'hantlem': 'dumbbell', 'hantla': 'dumbbell', 'db': 'dumbbell',
+  'kettlebell': 'kettlebell', 'kb': 'kettlebell', 'odważnik': 'kettlebell',
   'wyciąg': 'cable', 'wyciag': 'cable', 'wyciągu': 'cable', 'brama': 'cable', 'bramie': 'cable', 'linki': 'cable', 'linką': 'rope',
   'maszyna': 'lever', 'maszynie': 'lever',
   'wiosłowanie': 'bent over row', 'wioslowanie': 'bent over row',
-  'podciąganie': 'pull-up', 'podciaganie': 'pull-up',
-  'ściąganie': 'pulldown', 'sciaganie': 'pulldown', 'drążka': 'lat pulldown',
+  'podciąganie': 'pull-up', 'podciaganie': 'pull-up', 'podchwytem': 'chin-up', 'nachwytem': 'pull-up',
+  'ściąganie': 'pulldown', 'sciaganie': 'pulldown', 'drążka': 'lat pulldown', 'drazka': 'lat pulldown',
   'rozpiętki': 'fly', 'rozpietki': 'fly',
-  'pompki': 'push-up', 'poręczach': 'chest dip', 'dips': 'chest dip',
-  'uginanie': 'curl', 'młotkowe': 'hammer curl', 'mlotkowe': 'hammer curl',
-  'prostowanie': 'pushdown', 'francuskie': 'triceps extension',
-  'wznosy': 'lateral raise', 'bokiem': 'lateral raise',
+  'pompki': 'push-up', 'poręczach': 'chest dip', 'poreczach': 'chest dip', 'dips': 'chest dip', 'dipy': 'chest dip',
+  'uginanie': 'curl', 'młotkowe': 'hammer curl', 'mlotkowe': 'hammer curl', 'modlitewnik': 'preacher curl',
+  'prostowanie': 'pushdown extension', 'francuskie': 'lying triceps extension skull crusher',
+  'wznosy': 'lateral raise', 'bokiem': 'lateral raise', 'opadzie': 'rear',
   'wykroki': 'lunge', 'zakroki': 'lunge',
   'suwnica': 'leg press', 'suwnicy': 'leg press',
   'łydki': 'calf raise', 'lydki': 'calf raise', 'wspięcia': 'calf raise', 'wspiecia': 'calf raise',
-  'brzuszki': 'crunch', 'allahy': 'kneeling crunch'
+  'brzuszki': 'crunch', 'allahy': 'kneeling crunch', 'allachy': 'kneeling crunch',
+  'zwisie': 'hanging leg raise', 'deska': 'plank', 'talia': 'side bend twist', 'skłony': 'side bend', 'sklony': 'side bend',
+  'bioder': 'glute bridge', 'pośladki': 'glute', 'posladki': 'glute'
 };
 
-function findExerciseGif(name) {
-  if (!name || !STATE.exerciseGifs || STATE.exerciseGifs.length === 0) return null;
-  const clean = name.toLowerCase()
+// Normalize exercise name so numbering ("3.1."), sets ("3x8"), weights ("85kg") don't break GIF lookup
+function normalizeExKey(rawName) {
+  return String(rawName || '')
+    .toLowerCase()
+    .replace(/^\s*\d+(\.\d+)?\.?\s*/, '') // strip leading "1." or "3.1."
+    .replace(/\b\d+\s*[x×]\s*\d+\b/gi, ' ') // strip "3x8"
+    .replace(/\b\d+([.,]\d+)?\s*kg\b/gi, ' ') // strip "85kg"
     .replace(/[^a-z0-9ąćęłńóśźż\s-]/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
 
-  // 1. Check custom saved mapping in localStorage
-  const savedMappings = JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}');
-  if (savedMappings[name] || savedMappings[clean]) {
-    const targetSlug = savedMappings[name] || savedMappings[clean];
-    const found = STATE.exerciseGifs.find(item => item.s === targetSlug || item.n.toLowerCase() === targetSlug.toLowerCase());
+// Generic 1-word keys in EXERCISE_SLUG_MAP that should ONLY match if the query has no other specific modifiers
+const GENERIC_SINGLE_KEYS = new Set([
+  'deadlift', 'squat', 'lunge', 'lunges', 'dip', 'dips', 'plank', 'shrug', 'shrugs',
+  'pulldown', 'biceps', 'rozpiętki', 'rozpietki', 'pompki', 'martwy ciąg', 'martwy ciag',
+  'wiosłowanie', 'wioslowanie', 'podciąganie', 'podciaganie', 'przysiad', 'przysiady',
+  'uginanie nóg', 'uginanie nog', 'uginanie ramion', 'prostowanie ramion', 'łydki', 'lydki'
+]);
+
+function resolveSavedGifEntry(entry) {
+  if (!entry) return null;
+  if (typeof entry === 'string') {
+    const found = (STATE.exerciseGifs || []).find(item => item.s === entry || item.n.toLowerCase() === entry.toLowerCase());
     if (found) return found;
+    if (entry.startsWith('http')) {
+      return { s: 'custom-url', n: 'Własna animacja GIF', g: entry, m: 'Własny link', i: [] };
+    }
+    return null;
+  }
+  if (typeof entry === 'object') {
+    if (entry.slug && STATE.exerciseGifs && STATE.exerciseGifs.length > 0) {
+      const found = STATE.exerciseGifs.find(item => item.s === entry.slug);
+      if (found) return found;
+    }
+    if (entry.url) {
+      return {
+        s: entry.slug || 'custom-url',
+        n: entry.name || 'Przypisana animacja GIF',
+        g: entry.url,
+        m: entry.muscle || '',
+        i: entry.instructions || []
+      };
+    }
+  }
+  return null;
+}
+
+function findExerciseGif(name, exerciseObj = null) {
+  if (!name) return null;
+  const clean = normalizeExKey(name);
+  const rawLower = String(name).toLowerCase().trim();
+
+  // 0. Check direct gifUrl / gifSlug stored on exerciseObj or inside STATE.plans / STATE.activeWorkout
+  if (exerciseObj && (exerciseObj.gifUrl || exerciseObj.gifSlug)) {
+    const directResolved = resolveSavedGifEntry({ slug: exerciseObj.gifSlug, url: exerciseObj.gifUrl, name: exerciseObj.gifName || name });
+    if (directResolved) return directResolved;
   }
 
-  // 2. Check exact key or longest matching phrase in EXERCISE_SLUG_MAP
-  // Sort keys by length descending so more specific phrases ("martwy ciąg rumuński", "back squat") match before shorter ones ("martwy ciąg", "squat")
+  for (const plan of (STATE.plans || [])) {
+    for (const ex of (plan.exercises || [])) {
+      if ((ex.name === name || normalizeExKey(ex.name) === clean) && (ex.gifUrl || ex.gifSlug)) {
+        const planResolved = resolveSavedGifEntry({ slug: ex.gifSlug, url: ex.gifUrl, name: ex.gifName || ex.name });
+        if (planResolved) return planResolved;
+      }
+    }
+  }
+
+  // 1. Check custom saved mapping in localStorage (by exact name, lowercase, or normalized key)
+  const savedMappings = JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}');
+  const mappedVal = savedMappings[name] || savedMappings[rawLower] || savedMappings[clean];
+  if (mappedVal) {
+    const resolved = resolveSavedGifEntry(mappedVal);
+    if (resolved) return resolved;
+  }
+
+  if (!STATE.exerciseGifs || STATE.exerciseGifs.length === 0) return null;
+
+  // Detect explicit parenthetical equipment override like "(sztanga)" or "(hantle)"
+  let explicitEquip = null;
+  if (/\(\s*sztang/i.test(name)) explicitEquip = 'barbell';
+  else if (/\(\s*hantl/i.test(name)) explicitEquip = 'dumbbell';
+  else if (/\(\s*(wyciąg|wyciag|bram)/i.test(name)) explicitEquip = 'cable';
+  else if (/\(\s*maszyn/i.test(name)) explicitEquip = 'lever';
+
+  // Special handling: "stiff leg" + barbell -> barbell-straight-leg-deadlift
+  if ((clean.includes('stiff leg') || clean.includes('prostych')) && (explicitEquip === 'barbell' || clean.includes('sztang') || clean.includes('barbell'))) {
+    const bbStiff = STATE.exerciseGifs.find(item => item.s === 'barbell-straight-leg-deadlift' || item.s === 'barbell-romanian-deadlift');
+    if (bbStiff) return bbStiff;
+  }
+
+  // 2. Check exact key or specific multi-word phrase in EXERCISE_SLUG_MAP
   const sortedKeys = Object.keys(EXERCISE_SLUG_MAP).sort((a, b) => b.length - a.length);
+  const cleanWordCount = clean.split(/\s+/).filter(Boolean).length;
+
   for (const key of sortedKeys) {
-    // Match either exact string or whole word/phrase boundary
+    // Do NOT let generic single-word keys ("deadlift", "squat", "przysiad") hijack multi-word exercise names
+    if (GENERIC_SINGLE_KEYS.has(key) && clean !== key && cleanWordCount > key.split(/\s+/).length) {
+      continue;
+    }
+
     const regex = new RegExp(`(^|\\s|-)${key.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}(\\s|-|$)`, 'i');
     if (clean === key || regex.test(clean)) {
-      const slug = EXERCISE_SLUG_MAP[key];
+      let slug = EXERCISE_SLUG_MAP[key];
+      if (explicitEquip && !slug.startsWith(explicitEquip)) {
+        const swappedSlug = slug.replace(/^(barbell|dumbbell|cable|lever)-/, `${explicitEquip}-`);
+        const swappedItem = STATE.exerciseGifs.find(item => item.s === swappedSlug);
+        if (swappedItem) return swappedItem;
+      }
       const exactItem = STATE.exerciseGifs.find(item => item.s === slug);
       if (exactItem) return exactItem;
-      const partialItem = STATE.exerciseGifs.find(item => item.s.includes(slug));
-      if (partialItem) return partialItem;
     }
   }
 
@@ -453,7 +541,7 @@ function findExerciseGif(name) {
   const direct = STATE.exerciseGifs.find(item => item.s === directSlug || item.n.toLowerCase() === clean);
   if (direct) return direct;
 
-  // 4. Smart token translation & scoring algorithm
+  // 4. Smart token translation & scoring algorithm (separates movement tokens from equipment tokens)
   const rawWords = clean.split(/[\s-]+/).filter(w => w.length > 1);
   const englishTokens = new Set();
   rawWords.forEach(w => {
@@ -464,7 +552,12 @@ function findExerciseGif(name) {
     }
   });
 
-  // Handle common English synonyms
+  if (explicitEquip) {
+    englishTokens.delete('dumbbell');
+    englishTokens.delete('barbell');
+    englishTokens.add(explicitEquip);
+  }
+
   if (englishTokens.has('back') && englishTokens.has('squat')) {
     englishTokens.delete('back');
     englishTokens.add('barbell');
@@ -475,35 +568,51 @@ function findExerciseGif(name) {
     englishTokens.add('romanian');
     englishTokens.add('deadlift');
   }
+  if (englishTokens.has('stiff') && englishTokens.has('barbell')) {
+    englishTokens.add('straight');
+  }
 
+  const equipSet = new Set(['barbell', 'dumbbell', 'cable', 'lever', 'smith', 'kettlebell', 'band', 'ez', 'weighted']);
   const tokenArr = Array.from(englishTokens);
-  if (tokenArr.length > 0) {
+  const moveTokens = tokenArr.filter(t => !equipSet.has(t));
+  const eqTokens = tokenArr.filter(t => equipSet.has(t));
+
+  if (moveTokens.length > 0) {
     let bestItem = null;
     let bestScore = 0;
     const penaltyWords = ['band', 'ball', 'bosu', 'assisted', 'stretch', 'yoga', 'kneeling', 'one-arm', 'one-leg', 'single-leg', 'jump', 'smith', 'kettlebell'];
 
     for (const item of STATE.exerciseGifs) {
       const slugParts = item.s.split('-');
-      let matchedTokens = 0;
-      for (const tok of tokenArr) {
+      let matchedMove = 0;
+      for (const tok of moveTokens) {
         if (slugParts.includes(tok) || item.s.includes(tok)) {
-          matchedTokens++;
+          matchedMove++;
         }
       }
-      if (matchedTokens === 0) continue;
+      // Require matching at least 1 movement token (and at least 2 if query has 2+ movement tokens)
+      const minRequiredMove = moveTokens.length >= 2 ? 2 : 1;
+      if (matchedMove < minRequiredMove) continue;
 
-      let score = matchedTokens * 15;
-      // Bonus if all query tokens matched
-      if (matchedTokens === tokenArr.length) score += 25;
-      // Bonus for standard equipment if not specified otherwise
-      if (slugParts[0] === 'barbell' || slugParts[0] === 'dumbbell' || slugParts[0] === 'cable') score += 6;
-      // Penalty for exotic variations unless user asked for them
+      let matchedEq = 0;
+      for (const tok of eqTokens) {
+        if (slugParts.includes(tok) || item.s.includes(tok)) {
+          matchedEq++;
+        }
+      }
+
+      let score = matchedMove * 18 + matchedEq * 12;
+      if (matchedMove === moveTokens.length) score += 25;
+      if (eqTokens.length > 0 && matchedEq === 0) score -= 14;
+      if (eqTokens.length === 0 && (slugParts[0] === 'barbell' || slugParts[0] === 'dumbbell' || slugParts[0] === 'cable')) {
+        score += 6;
+      }
+
       for (const pen of penaltyWords) {
         if (item.s.includes(pen) && !tokenArr.includes(pen)) {
           score -= 12;
         }
       }
-      // Prefer shorter, canonical slugs
       score -= slugParts.length * 1.2;
 
       if (score > bestScore) {
@@ -512,7 +621,7 @@ function findExerciseGif(name) {
       }
     }
 
-    if (bestItem && bestScore >= 12) {
+    if (bestItem && bestScore >= 20) {
       return bestItem;
     }
   }
@@ -520,34 +629,179 @@ function findExerciseGif(name) {
   return null;
 }
 
-// Background Gemini AI matcher for unrecognized exercise names
+// Persist GIF assignment (both slug and direct URL) in localStorage, STATE.plans, STATE.activeWorkout, and Plan Modal
+function persistExerciseGifAssignment(exerciseName, gifObj) {
+  if (!exerciseName || !gifObj) return;
+  const normKey = normalizeExKey(exerciseName);
+  const rawLower = String(exerciseName).toLowerCase().trim();
+  const payload = {
+    slug: gifObj.s || 'custom-url',
+    url: gifObj.g || '',
+    name: gifObj.n || exerciseName,
+    muscle: gifObj.m || '',
+    instructions: gifObj.i || []
+  };
+
+  // 1. Save in iron_custom_gif_map under raw, lowercase, and normalized keys
+  const savedMappings = JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}');
+  savedMappings[exerciseName] = payload;
+  savedMappings[rawLower] = payload;
+  if (normKey) savedMappings[normKey] = payload;
+  localStorage.setItem('iron_custom_gif_map', JSON.stringify(savedMappings));
+
+  // 2. Save directly on matching exercises in STATE.plans
+  let plansUpdated = false;
+  (STATE.plans || []).forEach(plan => {
+    (plan.exercises || []).forEach(ex => {
+      if (ex.name === exerciseName || normalizeExKey(ex.name) === normKey) {
+        ex.gifSlug = payload.slug;
+        ex.gifUrl = payload.url;
+        ex.gifName = payload.name;
+        plansUpdated = true;
+      }
+    });
+  });
+  if (plansUpdated) {
+    localStorage.setItem('iron_plans', JSON.stringify(STATE.plans));
+  }
+
+  // 3. Save on STATE.activeWorkout if active
+  if (STATE.activeWorkout && Array.isArray(STATE.activeWorkout.exercises)) {
+    let activeUpdated = false;
+    STATE.activeWorkout.exercises.forEach(ex => {
+      if (ex.name === exerciseName || normalizeExKey(ex.name) === normKey) {
+        ex.gifSlug = payload.slug;
+        ex.gifUrl = payload.url;
+        ex.gifName = payload.name;
+        activeUpdated = true;
+      }
+    });
+    if (activeUpdated) {
+      localStorage.setItem('iron_active_workout', JSON.stringify(STATE.activeWorkout));
+    }
+  }
+
+  // 4. Update any open row in the Plan Editor modal (#modal-exercises-list)
+  document.querySelectorAll('#modal-exercises-list .modal-ex-row').forEach(row => {
+    const nameInput = row.querySelector('.modal-ex-name');
+    if (nameInput && (nameInput.value.trim() === exerciseName || normalizeExKey(nameInput.value) === normKey)) {
+      row.dataset.gifSlug = payload.slug;
+      row.dataset.gifUrl = payload.url;
+      row.dataset.gifName = payload.name;
+      const gifBtn = row.querySelector('.modal-ex-gif-btn');
+      if (gifBtn) {
+        gifBtn.style.borderColor = 'var(--success)';
+        gifBtn.style.color = 'var(--success)';
+      }
+    }
+  });
+}
+
+// Gemini AI matcher that selects the exact slug from exercises_db.json and saves it permanently
 async function autoMatchGifWithGemini(exerciseName) {
-  if (!STATE.apiKey || !STATE.exerciseGifs || STATE.exerciseGifs.length === 0) return null;
+  if (!exerciseName) return null;
+  if (!STATE.apiKey || !STATE.exerciseGifs || STATE.exerciseGifs.length === 0) {
+    alert('Upewnij się, że masz wpisany klucz Gemini API w Opcjach.');
+    return null;
+  }
   const instr = document.getElementById('gif-modal-instructions');
-  if (instr) {
-    instr.innerHTML = `<div style="color: var(--accent); padding: 10px;">🤖 Agent AI tłumaczy i dopasowuje ćwiczenie "${escapeHtml(exerciseName)}" do bazy 1320 animacji...</div>`;
+  if (instr && currentModalExerciseName === exerciseName) {
+    instr.innerHTML = `<div style="color: var(--accent); padding: 10px;">🤖 Agent AI analizuje nazwę "${escapeHtml(exerciseName)}" i wybiera najlepszą animację z bazy 1324 ćwiczeń...</div>`;
   }
 
   try {
-    const prompt = `
-Jesteś ekspertem biomechaniki i siłowni. Użytkownik ma ćwiczenie o nazwie: "${exerciseName}" (może być po polsku, angielsku lub skrótem typu RDL, OHP, BSS, Back Squat).
-Przetłumacz je na standardową angielską nazwę w formacie slug używanym w bazie ExerciseDB (np. barbell-full-squat, barbell-romanian-deadlift, barbell-bench-press, dumbbell-incline-bench-press, cable-lat-pulldown-full-range-of-motion, dumbbell-lateral-raise, cable-pushdown, barbell-bent-over-row, pull-up, barbell-single-leg-split-squat).
-Zwróć wyłącznie 3 najbardziej pasujące angielskie słowa kluczowe oddzielone spacją (bez żadnych innych słów, np. "barbell romanian deadlift").`;
+    // Step 1: Ask Gemini to translate the exercise into 3-5 English search tokens + primary candidate slugs
+    const prompt1 = `
+Jesteś ekspertem biomechaniki i siłowni. Użytkownik ma w planie ćwiczenie: "${exerciseName}".
+Uwaga: jeśli w nawiasie jest podany sprzęt np. "(sztanga)" lub "(hantle)", to ten sprzęt ma priorytet nad skrótem w nazwie (np. "Stiff Leg DB Deadlift (sztanga)" oznacza martwy ciąg na prostych nogach ze SZTANGĄ czyli barbell).
+Zwróć obiekt JSON bez markdown:
+{
+  "keywords": ["słowo1", "słowo2", "słowo3"],
+  "equipment": "barbell | dumbbell | cable | lever | bodyweight | kettlebell | band | ez-barbell"
+}`;
+    const res1 = await callGemini(prompt1, 'fast');
+    const parsed1 = JSON.parse(res1.replace(/```json/g, '').replace(/```/g, '').trim());
+    const kws = (parsed1.keywords || []).map(k => String(k).toLowerCase());
+    const eq = String(parsed1.equipment || '').toLowerCase();
 
-    const keywordsRaw = await callGemini(prompt, 'fast');
-    const kw = keywordsRaw.toLowerCase().replace(/[^a-z\s-]/g, ' ').trim();
-    const match = findExerciseGif(kw);
-    if (match) {
-      selectCustomGif(match.s);
-      return match;
+    // Filter STATE.exerciseGifs to top 45 candidates matching any keyword
+    const scoredCandidates = STATE.exerciseGifs.map(item => {
+      let s = 0;
+      for (const kw of kws) {
+        if (item.s.includes(kw) || item.n.toLowerCase().includes(kw)) s += 10;
+      }
+      if (eq && item.s.startsWith(eq)) s += 8;
+      return { item, s };
+    }).filter(x => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 45);
+
+    const candidateListText = (scoredCandidates.length > 0 ? scoredCandidates.map(c => c.item.s) : STATE.exerciseGifs.slice(0, 45).map(c => c.s)).join(', ');
+
+    // Step 2: Ask Gemini to pick the single best exact slug from the candidate list
+    const prompt2 = `
+Dla ćwiczenia "${exerciseName}" wybierz JEDEN najlepiej pasujący identyfikator (slug) z poniższej listy dostępnych animacji w bazie:
+[${candidateListText}]
+Zwróć wyłącznie sam wybrany slug (np. barbell-straight-leg-deadlift), bez żadnych innych słów.`;
+
+    const chosenSlugRaw = await callGemini(prompt2, 'fast');
+    const chosenSlug = chosenSlugRaw.toLowerCase().replace(/[^a-z0-9-]/g, '').trim();
+    const exactMatch = STATE.exerciseGifs.find(item => item.s === chosenSlug)
+      || (scoredCandidates[0] && scoredCandidates[0].item);
+
+    if (exactMatch) {
+      persistExerciseGifAssignment(exerciseName, exactMatch);
+      if (currentModalExerciseName === exerciseName) {
+        renderGifModalMatch(exactMatch, true);
+      }
+      return exactMatch;
     }
   } catch (e) {
     console.warn('AI GIF matching failed:', e);
+    if (instr && currentModalExerciseName === exerciseName) {
+      instr.innerHTML = `<div style="color: var(--danger); padding: 8px;">⚠️ Nie udało się dopasować automatycznie: ${escapeHtml(e.message)}</div>`;
+    }
   }
   return null;
 }
 
+// Batch AI matcher for all exercises in the currently open Plan Editor modal
+async function batchMatchModalPlanGifsWithGemini() {
+  if (!STATE.apiKey) {
+    return alert('Najpierw wpisz klucz Gemini API w zakładce Opcje!');
+  }
+  const rows = Array.from(document.querySelectorAll('#modal-exercises-list .modal-ex-row'));
+  const names = rows.map(r => r.querySelector('.modal-ex-name')?.value.trim()).filter(Boolean);
+  if (names.length === 0) return alert('Najpierw dodaj ćwiczenia do planu!');
+
+  let matchedCount = 0;
+  for (const exName of names) {
+    const m = await autoMatchGifWithGemini(exName);
+    if (m) matchedCount++;
+  }
+  alert(`✅ Agent AI dopasował i zapisał na stałe linki do GIFów dla ${matchedCount}/${names.length} ćwiczeń! Kliknij "Zapisz Plan", aby zachować.`);
+}
+
 let currentModalExerciseName = '';
+
+function renderGifModalMatch(match, justSaved = false) {
+  const img = document.getElementById('gif-modal-img');
+  const instr = document.getElementById('gif-modal-instructions');
+  const urlInput = document.getElementById('gif-custom-url-input');
+  const resultsBox = document.getElementById('gif-search-results');
+  if (resultsBox) resultsBox.style.display = 'none';
+
+  if (match && match.g) {
+    img.src = match.g;
+    img.style.display = 'block';
+    if (urlInput) urlInput.value = match.g;
+    instr.innerHTML = `
+      <div style="color: ${justSaved ? 'var(--success)' : 'var(--primary)'}; font-weight: 700; margin-bottom: 4px;">
+        ${justSaved ? '✅ Zapisano na stałe w planie i eksporcie: ' : '🎬 '}${escapeHtml(match.n)}
+      </div>
+      ${match.m ? `<div style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">Partia: ${escapeHtml(match.m)}</div>` : ''}
+      ${(match.i || []).map(step => `<li style="margin-bottom: 3px; font-size: 12px;">${escapeHtml(step)}</li>`).join('')}
+    `;
+  }
+}
 
 function openGifModal(exerciseName) {
   currentModalExerciseName = exerciseName;
@@ -557,32 +811,24 @@ function openGifModal(exerciseName) {
   const img = document.getElementById('gif-modal-img');
   const instr = document.getElementById('gif-modal-instructions');
   const searchInput = document.getElementById('gif-search-input');
+  const urlInput = document.getElementById('gif-custom-url-input');
   if (searchInput) searchInput.value = '';
 
   title.textContent = exerciseName;
 
   if (match && match.g) {
-    img.src = match.g;
-    img.style.display = 'block';
-    instr.innerHTML = `
-      <div style="color: var(--primary); font-weight: 700; margin-bottom: 4px;">🎬 ${escapeHtml(match.n)}</div>
-      <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">Partia: ${escapeHtml(match.m || '')}</div>
-      ${(match.i || []).map(step => `<li style="margin-bottom: 3px; font-size: 12px;">${escapeHtml(step)}</li>`).join('')}
-    `;
+    renderGifModalMatch(match, false);
   } else {
     img.style.display = 'none';
+    if (urlInput) urlInput.value = '';
     instr.innerHTML = `
       <p style="color: var(--text-muted); margin: 10px 0; font-size: 13px;">Nie dopasowano jeszcze animacji dla tej nazwy.</p>
-      <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
-        <button class="btn btn-accent btn-sm" style="width: 100%; padding: 10px;" onclick="autoMatchGifWithGemini('${escapeHtml(exerciseName)}')">
-          🤖 Dopasuj automatycznie przez Gemini AI
-        </button>
-        <a href="https://www.youtube.com/results?search_query=ćwiczenie+${encodeURIComponent(exerciseName)}+technika" target="_blank" class="btn btn-secondary btn-sm" style="width: 100%; padding: 10px; text-decoration: none;">
+      <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
+        <a href="https://www.youtube.com/results?search_query=ćwiczenie+${encodeURIComponent(exerciseName)}+technika" target="_blank" class="btn btn-secondary btn-sm" style="width: 100%; padding: 8px; text-decoration: none;">
           ▶ Zobacz technikę na YouTube
         </a>
       </div>
     `;
-    // Automatically trigger Gemini matching if API key is present
     if (STATE.apiKey) {
       autoMatchGifWithGemini(exerciseName);
     }
@@ -599,9 +845,32 @@ function handleGifSearch(query) {
     return;
   }
 
-  const matches = STATE.exerciseGifs.filter(item => 
-    item.n.toLowerCase().includes(q) || item.s.includes(q.replace(/\s+/g, '-'))
-  ).slice(0, 10);
+  // Translate Polish words in search query so user can search in Polish OR English!
+  const qWords = q.split(/\s+/).filter(Boolean);
+  const expandedTokens = [];
+  qWords.forEach(w => {
+    expandedTokens.push(w);
+    if (PL_TO_EN_TOKENS[w]) {
+      PL_TO_EN_TOKENS[w].split(/\s+/).forEach(t => expandedTokens.push(t));
+    }
+  });
+
+  const matches = STATE.exerciseGifs
+    .map(item => {
+      const nameLower = item.n.toLowerCase();
+      let score = 0;
+      if (nameLower.includes(q) || item.s.includes(q.replace(/\s+/g, '-'))) score += 30;
+      for (const tok of expandedTokens) {
+        if (tok.length >= 2 && (nameLower.includes(tok) || item.s.includes(tok))) {
+          score += 10;
+        }
+      }
+      return { item, score };
+    })
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 15)
+    .map(x => x.item);
 
   if (matches.length === 0) {
     resultsBox.innerHTML = '<div style="padding: 8px; font-size: 12px; color: var(--text-muted);">Brak wyników w bazie.</div>';
@@ -610,8 +879,12 @@ function handleGifSearch(query) {
   }
 
   resultsBox.innerHTML = matches.map(m => `
-    <div onclick="selectCustomGif('${escapeHtml(m.s)}')" style="padding: 8px; border-bottom: 1px solid var(--border); cursor: pointer; text-align: left; font-size: 13px;">
-      <b>${escapeHtml(m.n)}</b> <span style="font-size: 11px; color: var(--text-muted);">(${escapeHtml(m.m)})</span>
+    <div onclick="selectCustomGif('${escapeHtml(m.s)}')" style="padding: 8px; border-bottom: 1px solid var(--border); cursor: pointer; text-align: left; font-size: 13px; display: flex; justify-content: space-between; align-items: center;">
+      <div>
+        <b>${escapeHtml(m.n)}</b>
+        <span style="font-size: 11px; color: var(--text-muted);"> (${escapeHtml(m.m)})</span>
+      </div>
+      <span style="font-size: 11px; color: var(--accent);">Wybierz</span>
     </div>
   `).join('');
   resultsBox.style.display = 'block';
@@ -621,21 +894,27 @@ function selectCustomGif(slug) {
   const match = STATE.exerciseGifs.find(item => item.s === slug);
   if (!match) return;
 
-  const savedMappings = JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}');
-  savedMappings[currentModalExerciseName] = slug;
-  localStorage.setItem('iron_custom_gif_map', JSON.stringify(savedMappings));
+  persistExerciseGifAssignment(currentModalExerciseName, match);
+  renderGifModalMatch(match, true);
+}
 
-  const img = document.getElementById('gif-modal-img');
-  const instr = document.getElementById('gif-modal-instructions');
-  const resultsBox = document.getElementById('gif-search-results');
-  if (resultsBox) resultsBox.style.display = 'none';
+function saveCustomGifUrl() {
+  const urlInput = document.getElementById('gif-custom-url-input');
+  const customUrl = (urlInput ? urlInput.value : '').trim();
+  if (!customUrl) return alert('Wklej poprawny link URL do animacji GIF!');
 
-  img.src = match.g;
-  img.style.display = 'block';
-  instr.innerHTML = `
-    <div style="color: var(--success); font-weight: 700; margin-bottom: 4px;">✅ Przypisano: ${escapeHtml(match.n)}</div>
-    ${(match.i || []).map(step => `<li style="margin-bottom: 3px; font-size: 12px;">${escapeHtml(step)}</li>`).join('')}
-  `;
+  // Check if this URL matches an existing ExerciseDB entry
+  const existing = (STATE.exerciseGifs || []).find(item => item.g === customUrl);
+  const gifObj = existing || {
+    s: 'custom-url',
+    n: currentModalExerciseName || 'Własna animacja GIF',
+    g: customUrl,
+    m: 'Własny link URL',
+    i: []
+  };
+
+  persistExerciseGifAssignment(currentModalExerciseName, gifObj);
+  renderGifModalMatch(gifObj, true);
 }
 
 function closeGifModal() {
@@ -889,11 +1168,15 @@ function startWorkout(planId) {
         restBeforeSeconds: null
       });
     }
+    const matchedGif = findExerciseGif(ex.name, ex);
     return {
       name: ex.name,
       muscle: ex.muscle || 'Inne',
       supersetGroup: ex.supersetGroup || '',
       loadType: loadType,
+      gifSlug: ex.gifSlug || (matchedGif ? matchedGif.s : ''),
+      gifUrl: ex.gifUrl || (matchedGif ? matchedGif.g : ''),
+      gifName: ex.gifName || (matchedGif ? matchedGif.n : ''),
       showExtraWeight: loadType === 'bodyweight' ? hasInitialWeight : true,
       sets
     };
@@ -1606,15 +1889,21 @@ function saveParsedPlan() {
       description: p.description || '',
       restSeconds: parseInt(p.restSeconds) || 90,
       supersetRestSeconds: parseInt(p.supersetRestSeconds) || 30,
-      exercises: (p.exercises || []).map(ex => ({
-        name: ex.name,
-        muscle: ex.muscle || 'Inne',
-        sets: parseInt(ex.sets) || 3,
-        reps: parseInt(ex.reps) || 10,
-        weight: parseFloat(ex.weight) || 0,
-        supersetGroup: ex.supersetGroup || '',
-        loadType: ex.loadType || 'standard'
-      }))
+      exercises: (p.exercises || []).map(ex => {
+        const matchedGif = findExerciseGif(ex.name, ex);
+        return {
+          name: ex.name,
+          muscle: ex.muscle || 'Inne',
+          sets: parseInt(ex.sets) || 3,
+          reps: parseInt(ex.reps) || 10,
+          weight: parseFloat(ex.weight) || 0,
+          supersetGroup: ex.supersetGroup || '',
+          loadType: ex.loadType || 'standard',
+          gifSlug: ex.gifSlug || (matchedGif ? matchedGif.s : ''),
+          gifUrl: ex.gifUrl || (matchedGif ? matchedGif.g : ''),
+          gifName: ex.gifName || (matchedGif ? matchedGif.n : '')
+        };
+      })
     });
   });
 
@@ -1657,7 +1946,7 @@ function openEditPlanModal(planId) {
   const listEl = document.getElementById('modal-exercises-list');
   listEl.innerHTML = '';
   (plan.exercises || []).forEach(ex => {
-    addModalExerciseRow(ex.name, ex.sets, ex.reps, ex.weight, ex.supersetGroup || '', ex.loadType || 'standard');
+    addModalExerciseRow(ex.name, ex.sets, ex.reps, ex.weight, ex.supersetGroup || '', ex.loadType || 'standard', ex);
   });
   if ((plan.exercises || []).length === 0) {
     addModalExerciseRow('', 3, 10, 0, '', 'standard');
@@ -1672,11 +1961,20 @@ function closePlanModal() {
   modal.style.display = 'none';
 }
 
-function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, supersetGroup = '', loadType = 'standard') {
+function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, supersetGroup = '', loadType = 'standard', exObj = null) {
   const listEl = document.getElementById('modal-exercises-list');
   const row = document.createElement('div');
   row.className = 'modal-ex-row';
   row.style.cssText = 'background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 10px; padding: 8px; margin-bottom: 8px;';
+
+  const matchedGif = name ? findExerciseGif(name, exObj) : null;
+  const initSlug = (exObj && exObj.gifSlug) || (matchedGif ? matchedGif.s : '');
+  const initUrl = (exObj && exObj.gifUrl) || (matchedGif ? matchedGif.g : '');
+  const initGifName = (exObj && exObj.gifName) || (matchedGif ? matchedGif.n : '');
+
+  if (initSlug) row.dataset.gifSlug = initSlug;
+  if (initUrl) row.dataset.gifUrl = initUrl;
+  if (initGifName) row.dataset.gifName = initGifName;
 
   const ssOptions = [
     { val: '', label: 'Pojedyncze (Izolacja)' },
@@ -1698,9 +1996,12 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
     ? '1 HANTEL (KG ×2)'
     : (loadType === 'bodyweight' ? '+DOŁOŻONO (KG)' : 'CIĘŻAR (KG)');
 
+  const hasGifAssigned = Boolean(initUrl);
+
   row.innerHTML = `
     <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 6px;">
       <input type="text" class="input-box modal-ex-name" style="text-align: left; font-size: 13px; flex: 1;" placeholder="Nazwa ćwiczenia (np. RDL, Back Squat)" value="${escapeHtml(name)}">
+      <button type="button" class="btn btn-sm btn-secondary modal-ex-gif-btn" style="font-size: 12px; padding: 6px 8px; width: auto; ${hasGifAssigned ? 'border-color: var(--success); color: var(--success);' : ''}" onclick="openGifModalFromPlanRow(this)" title="Podgląd / Zmień GIF dla tego ćwiczenia">🎬</button>
       <button type="button" style="background: none; border: none; color: var(--danger); font-size: 18px; padding: 0 6px; cursor: pointer;" onclick="this.closest('.modal-ex-row').remove()" title="Usuń ćwiczenie">✕</button>
     </div>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;">
@@ -1731,6 +2032,15 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
     </div>
   `;
   listEl.appendChild(row);
+}
+
+function openGifModalFromPlanRow(btnEl) {
+  const row = btnEl.closest('.modal-ex-row');
+  if (!row) return;
+  const nameInput = row.querySelector('.modal-ex-name');
+  const exName = nameInput ? nameInput.value.trim() : '';
+  if (!exName) return alert('Wpisz najpierw nazwę ćwiczenia!');
+  openGifModal(exName);
 }
 
 function handleModalLoadTypeChange(selectEl) {
@@ -1785,8 +2095,34 @@ function saveModalPlan() {
     const isWeightHidden = weightContainer && weightContainer.style.display === 'none';
     const weight = isWeightHidden ? 0 : (parseFloat(r.querySelector('.modal-ex-weight').value) || 0);
     const supersetGroup = r.querySelector('.modal-ex-ss').value || '';
+
     if (exName) {
-      exercises.push({ name: exName, sets, reps, weight, supersetGroup, loadType, muscle: 'Ogólne' });
+      const existingGifObj = {
+        gifSlug: r.dataset.gifSlug || '',
+        gifUrl: r.dataset.gifUrl || '',
+        gifName: r.dataset.gifName || ''
+      };
+      const matched = findExerciseGif(exName, existingGifObj);
+      const gifSlug = existingGifObj.gifSlug || (matched ? matched.s : '');
+      const gifUrl = existingGifObj.gifUrl || (matched ? matched.g : '');
+      const gifName = existingGifObj.gifName || (matched ? matched.n : '');
+
+      if (gifUrl) {
+        persistExerciseGifAssignment(exName, { s: gifSlug, g: gifUrl, n: gifName });
+      }
+
+      exercises.push({
+        name: exName,
+        sets,
+        reps,
+        weight,
+        supersetGroup,
+        loadType,
+        muscle: (matched && matched.m) || 'Ogólne',
+        gifSlug,
+        gifUrl,
+        gifName
+      });
     }
   });
 
@@ -3027,12 +3363,26 @@ function saveApiKey() {
 }
 
 function exportDataJson() {
+  // Enrich every exercise in STATE.plans with its resolved gifUrl & gifSlug before exporting
+  const enrichedPlans = (STATE.plans || []).map(p => ({
+    ...p,
+    exercises: (p.exercises || []).map(ex => {
+      const matched = findExerciseGif(ex.name, ex);
+      return {
+        ...ex,
+        gifSlug: ex.gifSlug || (matched ? matched.s : ''),
+        gifUrl: ex.gifUrl || (matched ? matched.g : ''),
+        gifName: ex.gifName || (matched ? matched.n : '')
+      };
+    })
+  }));
+
   const backup = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     exportedAt: new Date().toISOString(),
     userProfile: STATE.userProfile,
     bodyMeasurements: STATE.bodyMeasurements,
-    plans: STATE.plans,
+    plans: enrichedPlans,
     history: STATE.history,
     customGifMap: JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}'),
     coachThreads: STATE.coachThreads,
@@ -3054,7 +3404,13 @@ function importDataJson(event) {
     try {
       const data = JSON.parse(e.target.result);
 
-      // 0. Restore user profile & body measurements if present
+      // 0a. Restore custom GIF mappings first so plan exercises can use them immediately
+      if (data.customGifMap && typeof data.customGifMap === 'object') {
+        const currentMap = JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}');
+        localStorage.setItem('iron_custom_gif_map', JSON.stringify({ ...currentMap, ...data.customGifMap }));
+      }
+
+      // 0b. Restore user profile & body measurements if present
       if (data.userProfile && typeof data.userProfile === 'object') {
         STATE.userProfile = {
           weightKg: data.userProfile.weightKg || '',
@@ -3079,24 +3435,41 @@ function importDataJson(event) {
         renderBodyMeasurementsView();
       }
 
-      // 1. Safely normalize and import plans without breaking existing structure
+      // 1. Safely normalize and import plans (including direct gifUrl and gifSlug per exercise!)
       if (Array.isArray(data.plans)) {
+        const savedMappings = JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}');
         const normalizedPlans = data.plans.map((p, idx) => ({
           id: p.id || ('plan-imp-' + Date.now() + '-' + idx),
           name: p.name || 'Zaimportowany Plan',
           description: p.description || '',
           restSeconds: parseInt(p.restSeconds) || 90,
           supersetRestSeconds: parseInt(p.supersetRestSeconds) || 30,
-          exercises: Array.isArray(p.exercises) ? p.exercises.map(ex => ({
-            name: ex.name || 'Ćwiczenie',
-            muscle: ex.muscle || 'Inne',
-            sets: parseInt(ex.sets) || 3,
-            reps: parseInt(ex.reps) || 10,
-            weight: parseFloat(ex.weight) || 0,
-            supersetGroup: ex.supersetGroup || '',
-            loadType: ex.loadType || 'standard'
-          })) : []
+          exercises: Array.isArray(p.exercises) ? p.exercises.map(ex => {
+            const exName = ex.name || 'Ćwiczenie';
+            const gifSlug = ex.gifSlug || '';
+            const gifUrl = ex.gifUrl || '';
+            const gifName = ex.gifName || '';
+            if (gifUrl || gifSlug) {
+              const payload = { slug: gifSlug || 'custom-url', url: gifUrl, name: gifName || exName };
+              savedMappings[exName] = payload;
+              const normKey = normalizeExKey(exName);
+              if (normKey) savedMappings[normKey] = payload;
+            }
+            return {
+              name: exName,
+              muscle: ex.muscle || 'Inne',
+              sets: parseInt(ex.sets) || 3,
+              reps: parseInt(ex.reps) || 10,
+              weight: parseFloat(ex.weight) || 0,
+              supersetGroup: ex.supersetGroup || '',
+              loadType: ex.loadType || 'standard',
+              gifSlug,
+              gifUrl,
+              gifName
+            };
+          }) : []
         }));
+        localStorage.setItem('iron_custom_gif_map', JSON.stringify(savedMappings));
         STATE.plans = normalizedPlans;
         localStorage.setItem('iron_plans', JSON.stringify(STATE.plans));
       }

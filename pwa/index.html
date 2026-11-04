@@ -762,12 +762,15 @@
         </div>
       </div>
 
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; gap: 6px; flex-wrap: wrap;">
         <span style="font-weight: 700; font-size: 14px;">Ćwiczenia i Superserie</span>
-        <button class="btn btn-sm btn-secondary" onclick="addModalExerciseRow()">+ Ćwiczenie</button>
+        <div style="display: flex; gap: 6px;">
+          <button type="button" class="btn btn-sm btn-accent" style="font-size: 11px; padding: 5px 10px;" onclick="batchMatchModalPlanGifsWithGemini()">🤖 Auto-dopasuj GIFy AI</button>
+          <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 5px 10px;" onclick="addModalExerciseRow()">+ Ćwiczenie</button>
+        </div>
       </div>
       <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
-        Wybierz tę samą grupę (np. <b>SS A</b>) dla 2 lub więcej ćwiczeń, aby połączyć je w superserię.
+        Wybierz tę samą grupę (np. <b>SS A</b>) dla 2 lub więcej ćwiczeń, aby połączyć je w superserię. Kliknij <b>🎬</b> przy ćwiczeniu, aby sprawdzić lub zmienić GIF.
       </p>
 
       <div id="modal-exercises-list"></div>
@@ -787,23 +790,38 @@
         <button type="button" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;" onclick="closeGifModal()">✕</button>
       </div>
 
-      <div style="background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 12px; min-height: 200px; display: flex; align-items: center; justify-content: center;">
+      <div style="background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 10px; min-height: 200px; display: flex; align-items: center; justify-content: center;">
         <img id="gif-modal-img" src="" alt="Technika ćwiczenia" style="width: 100%; max-height: 320px; object-fit: contain; display: none;">
       </div>
 
-      <div id="gif-modal-instructions" style="text-align: left; font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 12px;"></div>
+      <div id="gif-modal-instructions" style="text-align: left; font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 10px;"></div>
 
-      <!-- Quick Search / Override GIF -->
-      <div style="background: var(--surface-elevated); border-radius: 10px; padding: 10px; margin-bottom: 14px; text-align: left;">
-        <label style="font-size: 11px; font-weight: 700; color: var(--text-muted); display: block; margin-bottom: 4px;">Zmień animację (wyszukaj w bazie 1300 ćwiczeń):</label>
-        <input type="text" id="gif-search-input" class="input-box" style="text-align: left; font-size: 13px;" placeholder="Wpisz np. squat, press, deadlift..." oninput="handleGifSearch(this.value)">
+      <div style="margin-bottom: 10px;">
+        <button type="button" class="btn btn-sm btn-accent" style="width: 100%; font-size: 12px; padding: 8px;" onclick="autoMatchGifWithGemini(currentModalExerciseName)">
+          🤖 Dopasuj lepiej tę animację przez Gemini AI
+        </button>
+      </div>
+
+      <!-- Quick Search / Override GIF (Polish & English) -->
+      <div style="background: var(--surface-elevated); border-radius: 10px; padding: 10px; margin-bottom: 10px; text-align: left;">
+        <label style="font-size: 11px; font-weight: 700; color: var(--text-muted); display: block; margin-bottom: 4px;">🔍 Zmień animację (szukaj po polsku lub ang. w bazie 1320 GIFów):</label>
+        <input type="text" id="gif-search-input" class="input-box" style="text-align: left; font-size: 13px;" placeholder="np. martwy ciąg, przysiad, squat, rdl, bench..." oninput="handleGifSearch(this.value)">
         <div id="gif-search-results" style="display: none; max-height: 160px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-top: 6px;"></div>
+      </div>
+
+      <!-- Direct GIF URL Link (Saved in Plan & JSON Export) -->
+      <div style="background: var(--surface-elevated); border-radius: 10px; padding: 10px; margin-bottom: 14px; text-align: left;">
+        <label style="font-size: 11px; font-weight: 700; color: var(--text-muted); display: block; margin-bottom: 4px;">🔗 Bezpośredni link do GIFa (zapisywany na stałe w planie i eksporcie JSON):</label>
+        <div style="display: flex; gap: 6px;">
+          <input type="url" id="gif-custom-url-input" class="input-box" style="text-align: left; font-size: 12px; flex: 1;" placeholder="https://.../animacja.gif">
+          <button type="button" class="btn btn-sm btn-primary" style="width: auto; font-size: 12px; padding: 0 12px;" onclick="saveCustomGifUrl()">💾 Zapisz</button>
+        </div>
       </div>
 
       <button class="btn btn-secondary" onclick="closeGifModal()">Zamknij</button>
     </div>
   </div>
 
-  <script src="app.js?v=18"></script>
+  <script src="app.js?v=19"></script>
 </body>
 </html>
