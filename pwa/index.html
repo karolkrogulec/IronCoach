@@ -153,6 +153,38 @@
       padding: 14px;
       margin-bottom: 14px;
     }
+    .superset-group-box {
+      border: 2px solid var(--accent);
+      border-radius: 16px;
+      padding: 12px;
+      margin-bottom: 18px;
+      background: rgba(0, 229, 255, 0.04);
+      box-shadow: 0 4px 20px rgba(0, 229, 255, 0.08);
+    }
+    .superset-group-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      padding: 4px 8px;
+      background: rgba(0, 229, 255, 0.12);
+      border-radius: 10px;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.3px;
+    }
+    .superset-group-box .exercise-block {
+      margin-bottom: 10px;
+      border-color: rgba(0, 229, 255, 0.25);
+    }
+    .superset-group-box .exercise-block:last-child {
+      margin-bottom: 0;
+    }
+    .exercise-block.next-in-superset {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 1px var(--primary);
+    }
     .exercise-header {
       display: flex;
       justify-content: space-between;
@@ -209,23 +241,63 @@
       color: #000;
     }
 
-    /* Rest Timer Floating Bar */
+    /* Big Rest Timer Floating Panel */
     #rest-timer-bar {
       display: none;
       position: fixed;
-      bottom: 74px;
-      left: 16px;
-      right: 16px;
-      background: #1e2530;
-      border: 1px solid var(--accent);
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-      border-radius: 14px;
-      padding: 12px 16px;
+      bottom: 72px;
+      left: 12px;
+      right: 12px;
+      max-width: 576px;
+      margin: 0 auto;
+      background: rgba(20, 25, 34, 0.98);
+      border: 2px solid var(--accent);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.75);
+      border-radius: 18px;
+      padding: 14px 18px;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      z-index: 150;
+      transition: background 0.25s, border-color 0.25s;
+    }
+    #rest-timer-bar.overtime {
+      background: rgba(48, 14, 18, 0.98);
+      border-color: var(--danger);
+      box-shadow: 0 0 28px rgba(255, 82, 82, 0.45);
+    }
+    .timer-label-row {
+      display: flex;
       align-items: center;
       justify-content: space-between;
-      z-index: 99;
+      width: 100%;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
-    .timer-text { font-size: 17px; font-weight: 800; color: var(--accent); }
+    .timer-big-seconds {
+      font-size: 54px;
+      font-weight: 900;
+      line-height: 1.05;
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -1px;
+      text-align: center;
+      padding: 4px 16px;
+      border-radius: 12px;
+    }
+    #rest-timer-bar.overtime .timer-big-seconds {
+      color: #fff;
+      background: var(--danger);
+      box-shadow: 0 0 18px rgba(255, 82, 82, 0.6);
+      animation: pulseOvertime 1s infinite alternate;
+    }
+    @keyframes pulseOvertime {
+      from { transform: scale(1); }
+      to { transform: scale(1.04); }
+    }
 
     /* Inputs */
     textarea.text-area {
@@ -275,15 +347,17 @@
     </div>
   </header>
 
-  <!-- Rest Timer Banner -->
+  <!-- Rest Timer Banner (Large Seconds Display + Overtime Mode) -->
   <div id="rest-timer-bar">
-    <div style="display: flex; align-items: center; gap: 8px;">
-      <span>⏱️</span>
-      <span class="timer-text" id="timer-display">90s</span>
+    <div class="timer-label-row">
+      <span id="timer-mode-label">⏱️ PRZERWA MIĘDZY SERIAMI</span>
+      <span id="timer-overtime-badge" style="display: none; color: var(--danger); font-weight: 800;">⚠️ PRZEKROCZONO CZAS!</span>
     </div>
-    <div style="display: flex; gap: 8px;">
-      <button class="btn btn-sm btn-secondary" onclick="addTimerSeconds(30)">+30s</button>
-      <button class="btn btn-sm btn-secondary" onclick="stopTimer()">Pomiń</button>
+    <div class="timer-big-seconds" id="timer-display">90s</div>
+    <div style="display: flex; gap: 8px; width: 100%; justify-content: center;">
+      <button class="btn btn-sm btn-secondary" style="flex: 1; font-size: 14px; padding: 10px;" onclick="addTimerSeconds(-15)">-15s</button>
+      <button class="btn btn-sm btn-secondary" style="flex: 1; font-size: 14px; padding: 10px;" onclick="addTimerSeconds(15)">+15s</button>
+      <button class="btn btn-sm btn-primary" style="flex: 1.5; font-size: 14px; padding: 10px;" onclick="stopTimer()">Gotowe / Pomiń</button>
     </div>
   </div>
 
@@ -332,10 +406,11 @@
           <span id="workout-plan-title">Trening</span>
           <button class="btn btn-sm btn-primary" onclick="finishCurrentWorkout()">Zakończ</button>
         </div>
-        <div style="display: flex; gap: 16px; font-size: 13px; color: var(--text-muted);">
+        <div style="display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--text-muted); align-items: center;">
           <span>Serii: <b id="workout-sets-counter" style="color: #fff;">0/0</b></span>
           <span>Tonaż: <b id="workout-volume-counter" style="color: var(--primary);">0 kg</b></span>
-          <span>Czas: <b id="workout-duration-counter" style="color: var(--accent);">0:00</b></span>
+          <span>Czas: <b id="workout-duration-counter" style="color: var(--accent); font-size: 15px;">0:00</b></span>
+          <span id="wake-lock-badge" style="font-size: 11px; color: var(--success); margin-left: auto;" title="Ekran nie wygasa podczas treningu">🔆 Ekran aktywny</span>
         </div>
       </div>
 
@@ -492,19 +567,33 @@
 
   <!-- MODAL: ADD / EDIT PLAN -->
   <div id="plan-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 200; align-items: center; justify-content: center; padding: 16px;">
-    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; max-width: 500px; width: 100%; max-height: 90vh; overflow-y: auto;">
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; max-width: 540px; width: 100%; max-height: 90vh; overflow-y: auto;">
       <h3 id="plan-modal-title" style="margin-bottom: 12px; font-size: 18px;">Nowy Plan Treningowy</h3>
       
       <label style="font-size: 12px; color: var(--text-muted);">Nazwa planu</label>
-      <input type="text" id="modal-plan-name" class="input-box" style="text-align: left; margin: 4px 0 12px;" placeholder="np. Push / Klatka + Triceps">
+      <input type="text" id="modal-plan-name" class="input-box" style="text-align: left; margin: 4px 0 10px;" placeholder="np. Push / Klatka + Triceps">
 
       <label style="font-size: 12px; color: var(--text-muted);">Opis (opcjonalnie)</label>
-      <input type="text" id="modal-plan-desc" class="input-box" style="text-align: left; margin: 4px 0 16px;" placeholder="np. Poniedziałek, siła">
+      <input type="text" id="modal-plan-desc" class="input-box" style="text-align: left; margin: 4px 0 12px;" placeholder="np. Poniedziałek, siła">
 
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-        <span style="font-weight: 700; font-size: 14px;">Ćwiczenia</span>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; background: var(--surface-elevated); padding: 10px; border-radius: 10px; border: 1px solid var(--border);">
+        <div>
+          <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">⏱️ Przerwa główna / po SS (s)</label>
+          <input type="number" step="5" id="modal-plan-rest" class="input-box" value="90" title="Przerwa między seriami pojedynczych ćwiczeń oraz po pełnym obwodzie superserii">
+        </div>
+        <div>
+          <label style="font-size: 11px; color: var(--accent); display: block; margin-bottom: 4px;">⚡ Krótka przerwa w SS (s)</label>
+          <input type="number" step="5" id="modal-plan-ss-rest" class="input-box" value="30" title="Krótka przerwa przy przejściu między ćwiczeniami wewnątrz superserii">
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+        <span style="font-weight: 700; font-size: 14px;">Ćwiczenia i Superserie</span>
         <button class="btn btn-sm btn-secondary" onclick="addModalExerciseRow()">+ Ćwiczenie</button>
       </div>
+      <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
+        Wybierz tę samą grupę (np. <b>SS A</b>) dla 2 lub więcej ćwiczeń, aby połączyć je w superserię.
+      </p>
 
       <div id="modal-exercises-list"></div>
 
@@ -540,6 +629,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=11"></script>
+  <script src="app.js?v=12"></script>
 </body>
 </html>
