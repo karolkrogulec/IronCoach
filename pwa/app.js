@@ -62,9 +62,32 @@ async function loadExerciseGifsDatabase() {
     const res = await fetch('./exercises_db.json');
     if (res.ok) {
       STATE.exerciseGifs = await res.json();
+      syncPlansGifsWithDatabase();
+      renderPlans();
     }
   } catch (e) {
     console.warn('Failed to load local exercise GIFs db', e);
+  }
+}
+
+function syncPlansGifsWithDatabase() {
+  if (!Array.isArray(STATE.plans) || STATE.plans.length === 0) return;
+  let updated = false;
+  STATE.plans.forEach(plan => {
+    (plan.exercises || []).forEach(ex => {
+      if (!ex.gifUrl) {
+        const m = findExerciseGif(ex.name, ex);
+        if (m && m.g) {
+          ex.gifSlug = m.s || '';
+          ex.gifUrl = m.g || '';
+          ex.gifName = m.n || ex.name;
+          updated = true;
+        }
+      }
+    });
+  });
+  if (updated) {
+    localStorage.setItem('iron_plans', JSON.stringify(STATE.plans));
   }
 }
 
@@ -629,17 +652,69 @@ function findExerciseGif(name, exerciseObj = null) {
   return null;
 }
 
+let currentModalExerciseName = '';
+let currentEditingModalRow = null;
+let currentEditingPlanRef = null;
+
+function updateModalRowGifPreview(row, gifObj) {
+  if (!row) return;
+  const slug = (gifObj && (gifObj.s || gifObj.slug || gifObj.gifSlug)) || '';
+  const url = (gifObj && (gifObj.g || gifObj.url || gifObj.gifUrl)) || '';
+  const gName = (gifObj && (gifObj.n || gifObj.name || gifObj.gifName)) || '';
+
+  row.dataset.gifSlug = slug;
+  row.dataset.gifUrl = url;
+  row.dataset.gifName = gName;
+
+  const thumb = row.querySelector('.modal-ex-gif-thumb');
+  const emptyIcon = row.querySelector('.modal-ex-gif-empty');
+  const titleEl = row.querySelector('.modal-ex-gif-title');
+  const gifBtn = row.querySelector('.modal-ex-gif-btn');
+
+  if (url) {
+    if (thumb) {
+      thumb.src = url;
+      thumb.style.display = 'block';
+    }
+    if (emptyIcon) emptyIcon.style.display = 'none';
+    if (titleEl) {
+      titleEl.textContent = `🎬 ${gName || 'Przypisany GIF'}`;
+      titleEl.style.color = 'var(--success)';
+    }
+    if (gifBtn) {
+      gifBtn.textContent = '🎬 Zmień GIF';
+      gifBtn.style.borderColor = 'var(--success)';
+      gifBtn.style.color = 'var(--success)';
+    }
+  } else {
+    if (thumb) {
+      thumb.src = '';
+      thumb.style.display = 'none';
+    }
+    if (emptyIcon) emptyIcon.style.display = 'flex';
+    if (titleEl) {
+      titleEl.textContent = 'Brak przypisanego GIFa';
+      titleEl.style.color = 'var(--text-muted)';
+    }
+    if (gifBtn) {
+      gifBtn.textContent = '🎬 Ustaw GIF';
+      gifBtn.style.borderColor = 'var(--accent)';
+      gifBtn.style.color = 'var(--accent)';
+    }
+  }
+}
+
 // Persist GIF assignment (both slug and direct URL) in localStorage, STATE.plans, STATE.activeWorkout, and Plan Modal
 function persistExerciseGifAssignment(exerciseName, gifObj) {
   if (!exerciseName || !gifObj) return;
   const normKey = normalizeExKey(exerciseName);
   const rawLower = String(exerciseName).toLowerCase().trim();
   const payload = {
-    slug: gifObj.s || 'custom-url',
-    url: gifObj.g || '',
-    name: gifObj.n || exerciseName,
-    muscle: gifObj.m || '',
-    instructions: gifObj.i || []
+    slug: gifObj.s || gifObj.slug || 'custom-url',
+    url: gifObj.g || gifObj.url || '',
+    name: gifObj.n || gifObj.name || exerciseName,
+    muscle: gifObj.m || gifObj.muscle || '',
+    instructions: gifObj.i || gifObj.instructions || []
   };
 
   // 1. Save in iron_custom_gif_map under raw, lowercase, and normalized keys
@@ -649,11 +724,21 @@ function persistExerciseGifAssignment(exerciseName, gifObj) {
   if (normKey) savedMappings[normKey] = payload;
   localStorage.setItem('iron_custom_gif_map', JSON.stringify(savedMappings));
 
-  // 2. Save directly on matching exercises in STATE.plans
+  // 2. Save directly on matching exercises in STATE.plans (and specific plan exercise if opened from Plan Card)
   let plansUpdated = false;
+  if (currentEditingPlanRef) {
+    const targetPlan = (STATE.plans || []).find(p => p.id === currentEditingPlanRef.planId);
+    if (targetPlan && targetPlan.exercises && targetPlan.exercises[currentEditingPlanRef.exIdx]) {
+      const targetEx = targetPlan.exercises[currentEditingPlanRef.exIdx];
+      targetEx.gifSlug = payload.slug;
+      targetEx.gifUrl = payload.url;
+      targetEx.gifName = payload.name;
+      plansUpdated = true;
+    }
+  }
   (STATE.plans || []).forEach(plan => {
     (plan.exercises || []).forEach(ex => {
-      if (ex.name === exerciseName || normalizeExKey(ex.name) === normKey) {
+      if (ex.name === exerciseName || (normKey && normalizeExKey(ex.name) === normKey)) {
         ex.gifSlug = payload.slug;
         ex.gifUrl = payload.url;
         ex.gifName = payload.name;
@@ -663,13 +748,14 @@ function persistExerciseGifAssignment(exerciseName, gifObj) {
   });
   if (plansUpdated) {
     localStorage.setItem('iron_plans', JSON.stringify(STATE.plans));
+    renderPlans();
   }
 
   // 3. Save on STATE.activeWorkout if active
   if (STATE.activeWorkout && Array.isArray(STATE.activeWorkout.exercises)) {
     let activeUpdated = false;
     STATE.activeWorkout.exercises.forEach(ex => {
-      if (ex.name === exerciseName || normalizeExKey(ex.name) === normKey) {
+      if (ex.name === exerciseName || (normKey && normalizeExKey(ex.name) === normKey)) {
         ex.gifSlug = payload.slug;
         ex.gifUrl = payload.url;
         ex.gifName = payload.name;
@@ -681,18 +767,16 @@ function persistExerciseGifAssignment(exerciseName, gifObj) {
     }
   }
 
-  // 4. Update any open row in the Plan Editor modal (#modal-exercises-list)
+  // 4. Update currently edited row in Plan Editor modal + any matching rows
+  if (currentEditingModalRow) {
+    currentEditingModalRow.dataset.gifLocked = '1';
+    updateModalRowGifPreview(currentEditingModalRow, payload);
+  }
   document.querySelectorAll('#modal-exercises-list .modal-ex-row').forEach(row => {
     const nameInput = row.querySelector('.modal-ex-name');
-    if (nameInput && (nameInput.value.trim() === exerciseName || normalizeExKey(nameInput.value) === normKey)) {
-      row.dataset.gifSlug = payload.slug;
-      row.dataset.gifUrl = payload.url;
-      row.dataset.gifName = payload.name;
-      const gifBtn = row.querySelector('.modal-ex-gif-btn');
-      if (gifBtn) {
-        gifBtn.style.borderColor = 'var(--success)';
-        gifBtn.style.color = 'var(--success)';
-      }
+    if (nameInput && (nameInput.value.trim() === exerciseName || (normKey && normalizeExKey(nameInput.value) === normKey))) {
+      row.dataset.gifLocked = '1';
+      updateModalRowGifPreview(row, payload);
     }
   });
 }
@@ -780,8 +864,6 @@ async function batchMatchModalPlanGifsWithGemini() {
   alert(`✅ Agent AI dopasował i zapisał na stałe linki do GIFów dla ${matchedCount}/${names.length} ćwiczeń! Kliknij "Zapisz Plan", aby zachować.`);
 }
 
-let currentModalExerciseName = '';
-
 function renderGifModalMatch(match, justSaved = false) {
   const img = document.getElementById('gif-modal-img');
   const instr = document.getElementById('gif-modal-instructions');
@@ -795,7 +877,7 @@ function renderGifModalMatch(match, justSaved = false) {
     if (urlInput) urlInput.value = match.g;
     instr.innerHTML = `
       <div style="color: ${justSaved ? 'var(--success)' : 'var(--primary)'}; font-weight: 700; margin-bottom: 4px;">
-        ${justSaved ? '✅ Zapisano na stałe w planie i eksporcie: ' : '🎬 '}${escapeHtml(match.n)}
+        ${justSaved ? '✅ Przypisano do ćwiczenia w planie (i eksporcie JSON): ' : '🎬 '}${escapeHtml(match.n)}
       </div>
       ${match.m ? `<div style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">Partia: ${escapeHtml(match.m)}</div>` : ''}
       ${(match.i || []).map(step => `<li style="margin-bottom: 3px; font-size: 12px;">${escapeHtml(step)}</li>`).join('')}
@@ -803,9 +885,9 @@ function renderGifModalMatch(match, justSaved = false) {
   }
 }
 
-function openGifModal(exerciseName) {
+function openGifModal(exerciseName, existingExObj = null) {
   currentModalExerciseName = exerciseName;
-  const match = findExerciseGif(exerciseName);
+  const match = findExerciseGif(exerciseName, existingExObj);
   const modal = document.getElementById('gif-preview-modal');
   const title = document.getElementById('gif-modal-title');
   const img = document.getElementById('gif-modal-img');
@@ -822,7 +904,7 @@ function openGifModal(exerciseName) {
     img.style.display = 'none';
     if (urlInput) urlInput.value = '';
     instr.innerHTML = `
-      <p style="color: var(--text-muted); margin: 10px 0; font-size: 13px;">Nie dopasowano jeszcze animacji dla tej nazwy.</p>
+      <p style="color: var(--text-muted); margin: 10px 0; font-size: 13px;">Nie przypisano jeszcze animacji GIF dla tej nazwy. Wyszukaj poniżej (po polsku lub angielsku) lub wklej bezpośredni link.</p>
       <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
         <a href="https://www.youtube.com/results?search_query=ćwiczenie+${encodeURIComponent(exerciseName)}+technika" target="_blank" class="btn btn-secondary btn-sm" style="width: 100%; padding: 8px; text-decoration: none;">
           ▶ Zobacz technikę na YouTube
@@ -835,6 +917,15 @@ function openGifModal(exerciseName) {
   }
 
   modal.style.display = 'flex';
+}
+
+function openGifModalForPlanExercise(planId, exIdx) {
+  const plan = (STATE.plans || []).find(p => p.id === planId);
+  if (!plan || !plan.exercises || !plan.exercises[exIdx]) return;
+  const ex = plan.exercises[exIdx];
+  currentEditingModalRow = null;
+  currentEditingPlanRef = { planId, exIdx };
+  openGifModal(ex.name, ex);
 }
 
 function handleGifSearch(query) {
@@ -922,6 +1013,8 @@ function closeGifModal() {
   modal.style.display = 'none';
   const img = document.getElementById('gif-modal-img');
   img.src = '';
+  currentEditingModalRow = null;
+  currentEditingPlanRef = null;
 }
 
 // ============================================================================
@@ -929,7 +1022,9 @@ function closeGifModal() {
 // ============================================================================
 function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(console.error);
+    navigator.serviceWorker.register('./sw.js').then(reg => {
+      try { reg.update(); } catch (e) {}
+    }).catch(console.error);
   }
 }
 
@@ -980,19 +1075,59 @@ function renderPlans() {
   container.innerHTML = STATE.plans.map(plan => {
     const restSec = plan.restSeconds || 90;
     const ssRestSec = plan.supersetRestSeconds || 30;
-    const hasSupersets = (plan.exercises || []).some(e => e.supersetGroup);
+    const exercises = plan.exercises || [];
+    const hasSupersets = exercises.some(e => e.supersetGroup);
+
+    const exListHtml = exercises.map((ex, exIdx) => {
+      const matched = findExerciseGif(ex.name, ex);
+      const gifUrl = ex.gifUrl || (matched ? matched.g : '');
+      const gifName = ex.gifName || (matched ? matched.n : '');
+      const hasGif = Boolean(gifUrl);
+      const ssTag = ex.supersetGroup ? `<span style="color: var(--accent); font-weight: 700; font-size: 11px;">[${escapeHtml(ex.supersetGroup)}]</span> ` : '';
+      const loadInfo = ex.loadType === 'bodyweight'
+        ? (ex.weight > 0 ? `+${ex.weight}kg` : 'Masa ciała')
+        : (ex.loadType === 'dual_dumbbell' ? `2×${ex.weight || 0}kg` : `${ex.weight || 0}kg`);
+
+      return `
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1;">
+            ${hasGif
+              ? `<img src="${escapeHtml(gifUrl)}" alt="GIF" onclick="openGifModalForPlanExercise('${plan.id}', ${exIdx})" style="width: 34px; height: 34px; border-radius: 6px; object-fit: cover; background: #fff; border: 1px solid rgba(0,230,118,0.4); cursor: pointer; flex-shrink: 0;">`
+              : `<div onclick="openGifModalForPlanExercise('${plan.id}', ${exIdx})" style="width: 34px; height: 34px; border-radius: 6px; background: rgba(255,255,255,0.05); border: 1px dashed var(--border); display: flex; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; flex-shrink: 0;">🎬</div>`
+            }
+            <div style="min-width: 0; flex: 1;">
+              <div style="font-size: 12px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                ${ssTag}${escapeHtml(ex.name)}
+              </div>
+              <div style="font-size: 10px; color: ${hasGif ? 'var(--success)' : 'var(--text-muted)'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                ${ex.sets || 3}×${ex.reps || 10} (${loadInfo}) • ${hasGif ? `🎬 ${escapeHtml(gifName || 'Przypisany GIF')}` : '⚠️ Brak przypisanego GIFa'}
+              </div>
+            </div>
+          </div>
+          <button type="button" class="btn btn-sm btn-secondary" style="width: auto; padding: 4px 8px; font-size: 11px; flex-shrink: 0; ${hasGif ? 'border-color: rgba(0,230,118,0.4); color: var(--success);' : 'border-color: var(--accent); color: var(--accent);'}" onclick="openGifModalForPlanExercise('${plan.id}', ${exIdx})">
+            🎬 ${hasGif ? 'Zmień GIF' : 'Ustaw GIF'}
+          </button>
+        </div>
+      `;
+    }).join('');
+
     return `
       <div class="card">
         <div class="card-title">
           <span>${escapeHtml(plan.name)}</span>
           <button class="btn btn-sm btn-primary" onclick="startWorkout('${plan.id}')">▶ Start</button>
         </div>
-        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 6px;">
-          ${(plan.exercises || []).length} ćwiczeń • Przerwa: ${restSec}s ${hasSupersets ? `(w SS: ${ssRestSec}s)` : ''}
+        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 8px;">
+          ${exercises.length} ćwiczeń • Przerwa: ${restSec}s ${hasSupersets ? `(w SS: ${ssRestSec}s)` : ''}
           ${plan.description ? ' • ' + escapeHtml(plan.description) : ''}
         </p>
+        ${exercises.length > 0 ? `
+          <div style="display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px;">
+            ${exListHtml}
+          </div>
+        ` : ''}
         <div style="display: flex; gap: 8px; justify-content: flex-end;">
-          <button class="btn btn-sm btn-secondary" onclick="openEditPlanModal('${plan.id}')">✏️ Edytuj</button>
+          <button class="btn btn-sm btn-secondary" onclick="openEditPlanModal('${plan.id}')">✏️ Edytuj plan i GIFy</button>
           <button class="btn btn-sm btn-secondary" style="color: var(--danger); border-color: rgba(255,82,82,0.3);" onclick="deletePlan('${plan.id}')">🗑️ Usuń</button>
         </div>
       </div>
@@ -1975,6 +2110,7 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
   if (initSlug) row.dataset.gifSlug = initSlug;
   if (initUrl) row.dataset.gifUrl = initUrl;
   if (initGifName) row.dataset.gifName = initGifName;
+  if (exObj && exObj.gifUrl) row.dataset.gifLocked = '1';
 
   const ssOptions = [
     { val: '', label: 'Pojedyncze (Izolacja)' },
@@ -2000,10 +2136,27 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
 
   row.innerHTML = `
     <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 6px;">
-      <input type="text" class="input-box modal-ex-name" style="text-align: left; font-size: 13px; flex: 1;" placeholder="Nazwa ćwiczenia (np. RDL, Back Squat)" value="${escapeHtml(name)}">
-      <button type="button" class="btn btn-sm btn-secondary modal-ex-gif-btn" style="font-size: 12px; padding: 6px 8px; width: auto; ${hasGifAssigned ? 'border-color: var(--success); color: var(--success);' : ''}" onclick="openGifModalFromPlanRow(this)" title="Podgląd / Zmień GIF dla tego ćwiczenia">🎬</button>
+      <input type="text" class="input-box modal-ex-name" style="text-align: left; font-size: 13px; flex: 1;" placeholder="Nazwa ćwiczenia (np. RDL, Back Squat)" value="${escapeHtml(name)}" oninput="handleModalExNameInput(this)">
       <button type="button" style="background: none; border: none; color: var(--danger); font-size: 18px; padding: 0 6px; cursor: pointer;" onclick="this.closest('.modal-ex-row').remove()" title="Usuń ćwiczenie">✕</button>
     </div>
+
+    <!-- Dedicated GIF Assignment Bar inside Plan Editor Row -->
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 6px 8px; margin-bottom: 6px;">
+      <div style="display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; cursor: pointer;" onclick="openGifModalFromPlanRow(this)">
+        <img class="modal-ex-gif-thumb" src="${hasGifAssigned ? escapeHtml(initUrl) : ''}" alt="GIF" style="width: 38px; height: 38px; border-radius: 6px; object-fit: cover; background: #fff; border: 1px solid var(--success); flex-shrink: 0; ${hasGifAssigned ? 'display: block;' : 'display: none;'}">
+        <div class="modal-ex-gif-empty" style="width: 38px; height: 38px; border-radius: 6px; background: rgba(255,255,255,0.05); border: 1px dashed var(--border); align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; ${hasGifAssigned ? 'display: none;' : 'display: flex;'}">🎬</div>
+        <div style="min-width: 0; flex: 1;">
+          <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px;">Animacja GIF w planie:</div>
+          <div class="modal-ex-gif-title" style="font-size: 12px; font-weight: 700; color: ${hasGifAssigned ? 'var(--success)' : 'var(--text-muted)'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+            ${hasGifAssigned ? `🎬 ${escapeHtml(initGifName || 'Przypisany GIF')}` : 'Brak przypisanego GIFa'}
+          </div>
+        </div>
+      </div>
+      <button type="button" class="btn btn-sm btn-secondary modal-ex-gif-btn" style="font-size: 11px; padding: 6px 10px; width: auto; flex-shrink: 0; ${hasGifAssigned ? 'border-color: var(--success); color: var(--success);' : 'border-color: var(--accent); color: var(--accent);'}" onclick="openGifModalFromPlanRow(this)">
+        ${hasGifAssigned ? '🎬 Zmień GIF' : '🎬 Ustaw GIF'}
+      </button>
+    </div>
+
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;">
       <select class="input-box modal-ex-ss" style="font-size: 11px; padding: 6px 4px; color: var(--accent);">
         ${ssOptions.map(o => `<option value="${o.val}" ${supersetGroup === o.val ? 'selected' : ''}>${o.label}</option>`).join('')}
@@ -2034,13 +2187,28 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
   listEl.appendChild(row);
 }
 
+function handleModalExNameInput(inputEl) {
+  const row = inputEl.closest('.modal-ex-row');
+  if (!row || row.dataset.gifLocked === '1') return;
+  const exName = inputEl.value.trim();
+  const matched = exName ? findExerciseGif(exName) : null;
+  updateModalRowGifPreview(row, matched);
+}
+
 function openGifModalFromPlanRow(btnEl) {
   const row = btnEl.closest('.modal-ex-row');
   if (!row) return;
   const nameInput = row.querySelector('.modal-ex-name');
   const exName = nameInput ? nameInput.value.trim() : '';
-  if (!exName) return alert('Wpisz najpierw nazwę ćwiczenia!');
-  openGifModal(exName);
+  if (!exName) return alert('Wpisz najpierw nazwę ćwiczenia w tym wierszu!');
+  currentEditingModalRow = row;
+  currentEditingPlanRef = null;
+  const rowGifObj = {
+    gifSlug: row.dataset.gifSlug || '',
+    gifUrl: row.dataset.gifUrl || '',
+    gifName: row.dataset.gifName || ''
+  };
+  openGifModal(exName, rowGifObj);
 }
 
 function handleModalLoadTypeChange(selectEl) {
