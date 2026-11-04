@@ -88,16 +88,19 @@
       display: flex;
       flex-direction: column;
       align-items: center;
+      justify-content: center;
+      flex: 1;
       gap: 3px;
       color: var(--text-muted);
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 600;
       cursor: pointer;
       border: none;
       background: none;
-      padding: 6px 12px;
+      padding: 6px 2px;
       border-radius: 8px;
       transition: all 0.2s;
+      white-space: nowrap;
     }
     .nav-item.active { color: var(--primary); }
     .nav-item svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; }
@@ -457,7 +460,51 @@
     </div>
   </section>
 
-  <!-- VIEW: COACH REPORT & CHAT -->
+  <!-- VIEW: AI WORKOUT ANALYSIS (SEPARATE OPTION) -->
+  <section id="view-analysis" class="view">
+    <div class="container">
+      <!-- Active User Profile Context Banner for AI Analysis -->
+      <div class="card" style="padding: 12px 14px; margin-bottom: 12px; border-color: rgba(0, 229, 255, 0.35); background: rgba(0, 229, 255, 0.05);">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+          <div style="font-size: 12px; line-height: 1.4;">
+            <div style="font-weight: 800; color: var(--accent); margin-bottom: 2px;">👤 Profil brany pod uwagę w Analizie AI:</div>
+            <div id="analysis-profile-summary" style="color: var(--text);">Nie ustawiono wagi/wzrostu/celu — uzupełnij w Opcjach</div>
+          </div>
+          <button class="btn btn-sm btn-secondary" style="white-space: nowrap; font-size: 11px; padding: 6px 10px;" onclick="showView('settings')">✏️ Zmień</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>📊 Analiza Treningu AI</span>
+          <span class="badge badge-cyan">Raport Sesji</span>
+        </div>
+
+        <!-- Session Selector to inspect or regenerate AI analysis for any workout -->
+        <div id="analysis-session-bar" style="display: flex; gap: 6px; margin-bottom: 12px; align-items: center;">
+          <select id="analysis-session-select" class="input-box" style="text-align: left; font-size: 12px; flex: 1; padding: 8px;" onchange="selectAnalysisSession(this.value)">
+            <option value="">Brak zapisanych treningów</option>
+          </select>
+          <button type="button" class="btn btn-sm btn-accent" style="width: auto; font-size: 11px; padding: 8px 10px; white-space: nowrap;" onclick="regenerateCurrentAnalysis()">
+            🔄 Analizuj ponownie
+          </button>
+        </div>
+
+        <div id="coach-loading" style="display: none; padding: 14px; text-align: center; color: var(--accent);">
+          Gemini analizuje tonaż, powtórzenia, przerwy i Twój cel... 🏋️‍♂️
+        </div>
+        <div id="coach-report-content" class="coach-bubble" style="display: none;"></div>
+
+        <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end;">
+          <button type="button" class="btn btn-sm btn-secondary" style="color: var(--accent); border-color: rgba(0,229,255,0.35);" onclick="showView('coach')">
+            💬 Przejdź do rozmowy z Trenerem AI →
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VIEW: COACH CHAT (SEPARATE OPTION) -->
   <section id="view-coach" class="view">
     <div class="container">
       <!-- Active User Profile Context Banner for AI Coach -->
@@ -469,17 +516,6 @@
           </div>
           <button class="btn btn-sm btn-secondary" style="white-space: nowrap; font-size: 11px; padding: 6px 10px;" onclick="showView('settings')">✏️ Zmień</button>
         </div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">
-          <span>🧠 Trener Gemini AI</span>
-          <span class="badge badge-cyan">Raport Sesji</span>
-        </div>
-        <div id="coach-loading" style="display: none; padding: 14px; text-align: center; color: var(--accent);">
-          Gemini analizuje tonaż, powtórzenia, przerwy i Twój cel... 🏋️‍♂️
-        </div>
-        <div id="coach-report-content" class="coach-bubble" style="display: none;"></div>
       </div>
 
       <!-- Interactive Coach Chat (Multi-Thread Support) -->
@@ -508,8 +544,8 @@
 
         <!-- Chat messages container -->
         <div id="coach-chat-messages" style="
-          max-height: 380px;
-          min-height: 180px;
+          max-height: 52vh;
+          min-height: 240px;
           overflow-y: auto;
           background: #0d0f13;
           border: 1px solid var(--border);
@@ -730,8 +766,12 @@
       <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
       Keep
     </button>
+    <button class="nav-item" onclick="showView('analysis')">
+      <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+      Analiza AI
+    </button>
     <button class="nav-item" onclick="showView('coach')">
-      <svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+      <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
       Trener AI
     </button>
     <button class="nav-item" onclick="showView('settings')">
@@ -796,6 +836,13 @@
 
       <div id="gif-modal-instructions" style="text-align: left; font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 10px;"></div>
 
+      <!-- Always-visible YouTube technique button -->
+      <div style="margin-bottom: 10px;">
+        <a id="gif-youtube-btn" href="https://www.youtube.com" target="_blank" class="btn btn-sm btn-secondary" style="width: 100%; font-size: 12px; padding: 9px; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; color: #ff5252; border-color: rgba(255, 82, 82, 0.45); background: rgba(255, 82, 82, 0.08); font-weight: 700;">
+          ▶️ Sprawdź technikę na YouTube
+        </a>
+      </div>
+
       <div style="margin-bottom: 10px;">
         <button type="button" class="btn btn-sm btn-accent" style="width: 100%; font-size: 12px; padding: 8px;" onclick="autoMatchGifWithGemini(currentModalExerciseName)">
           🤖 Dopasuj lepiej tę animację przez Gemini AI
@@ -828,6 +875,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=21"></script>
+  <script src="app.js?v=22"></script>
 </body>
 </html>

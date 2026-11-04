@@ -894,9 +894,14 @@ function openGifModal(exerciseName, existingExObj = null) {
   const instr = document.getElementById('gif-modal-instructions');
   const searchInput = document.getElementById('gif-search-input');
   const urlInput = document.getElementById('gif-custom-url-input');
+  const ytBtn = document.getElementById('gif-youtube-btn');
   if (searchInput) searchInput.value = '';
 
   title.textContent = exerciseName;
+  if (ytBtn) {
+    ytBtn.href = `https://www.youtube.com/results?search_query=${encodeURIComponent('ćwiczenie ' + exerciseName + ' technika')}`;
+    ytBtn.innerHTML = `▶️ Sprawdź technikę „${escapeHtml(exerciseName)}” na YouTube`;
+  }
 
   if (match && match.g) {
     renderGifModalMatch(match, false);
@@ -904,12 +909,7 @@ function openGifModal(exerciseName, existingExObj = null) {
     img.style.display = 'none';
     if (urlInput) urlInput.value = '';
     instr.innerHTML = `
-      <p style="color: var(--text-muted); margin: 10px 0; font-size: 13px;">Nie przypisano jeszcze animacji GIF dla tej nazwy. Wyszukaj poniżej (po polsku lub angielsku) lub wklej bezpośredni link.</p>
-      <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
-        <a href="https://www.youtube.com/results?search_query=ćwiczenie+${encodeURIComponent(exerciseName)}+technika" target="_blank" class="btn btn-secondary btn-sm" style="width: 100%; padding: 8px; text-decoration: none;">
-          ▶ Zobacz technikę na YouTube
-        </a>
-      </div>
+      <p style="color: var(--text-muted); margin: 10px 0; font-size: 13px;">Nie przypisano jeszcze animacji GIF dla tej nazwy. Wyszukaj poniżej (po polsku lub angielsku), sprawdź na YouTube lub wklej bezpośredni link.</p>
     `;
     if (STATE.apiKey) {
       autoMatchGifWithGemini(exerciseName);
@@ -1038,7 +1038,7 @@ function showView(viewName) {
   const target = document.getElementById(`view-${viewName}`);
   if (target) target.classList.add('active');
 
-  const navMap = { 'home': 0, 'body': 1, 'import-keep': 2, 'coach': 3, 'settings': 4 };
+  const navMap = { 'home': 0, 'body': 1, 'import-keep': 2, 'analysis': 3, 'coach': 4, 'settings': 5 };
   const navBtns = document.querySelectorAll('.bottom-nav .nav-item');
   if (navMap[viewName] !== undefined && navBtns[navMap[viewName]]) {
     navBtns[navMap[viewName]].classList.add('active');
@@ -1046,8 +1046,11 @@ function showView(viewName) {
 
   if (viewName === 'body') {
     renderBodyMeasurementsView();
-  } else if (viewName === 'coach') {
+  } else if (viewName === 'analysis') {
     refreshCoachReportBox();
+  } else if (viewName === 'coach') {
+    renderCoachThreadsBar();
+    renderCoachChat();
   }
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1199,6 +1202,36 @@ function deleteTestWorkoutFromCoach(sessionId) {
   }
 }
 
+function renderAnalysisSessionSelector() {
+  const sel = document.getElementById('analysis-session-select');
+  if (!sel) return;
+
+  if (!Array.isArray(STATE.history) || STATE.history.length === 0) {
+    sel.innerHTML = `<option value="">Brak zapisanych treningów w historii</option>`;
+    return;
+  }
+
+  sel.innerHTML = STATE.history.map(s => {
+    const dt = new Date(s.endTime || Date.now()).toLocaleString('pl-PL', {
+      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+    });
+    const statusIcon = s.coachFeedback ? '✅' : (isWorkoutShortOrTest(s) ? '⏭️' : '📄');
+    const selectedAttr = s.id === STATE.currentCoachReportSessionId ? 'selected' : '';
+    return `<option value="${s.id}" ${selectedAttr}>${statusIcon} ${escapeHtml(s.planName || 'Trening')} (${dt} • ${s.totalVolumeKg || 0}kg)</option>`;
+  }).join('');
+}
+
+function selectAnalysisSession(sessionId) {
+  if (!sessionId) return;
+  viewHistoryReport(sessionId);
+}
+
+function regenerateCurrentAnalysis() {
+  const targetId = STATE.currentCoachReportSessionId || (STATE.history[0] && STATE.history[0].id);
+  if (!targetId) return alert('Brak zapisanego treningu do analizy!');
+  forceCoachAnalysis(targetId);
+}
+
 function refreshCoachReportBox() {
   const loading = document.getElementById('coach-loading');
   const reportBox = document.getElementById('coach-report-content');
@@ -1212,7 +1245,7 @@ function refreshCoachReportBox() {
     }
   }
 
-  // If no active report session is selected (or it was just deleted), pick the latest session with feedback or clear the box
+  // If no active report session is selected (or it was just deleted), pick the latest session with feedback or latest session
   if (!STATE.currentCoachReportSessionId) {
     if (loading) loading.style.display = 'none';
     const latestWithFeedback = STATE.history.find(s => s.coachFeedback);
@@ -1220,18 +1253,41 @@ function refreshCoachReportBox() {
       STATE.currentCoachReportSessionId = latestWithFeedback.id;
       reportBox.innerHTML = formatMarkdown(latestWithFeedback.coachFeedback);
       reportBox.style.display = 'block';
+    } else if (STATE.history.length > 0) {
+      const latest = STATE.history[0];
+      STATE.currentCoachReportSessionId = latest.id;
+      if (isWorkoutShortOrTest(latest)) {
+        renderSkippedShortWorkoutNotice(latest);
+      } else {
+        reportBox.innerHTML = `
+          <div style="text-align: left;">
+            <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 10px;">Trening <b>${escapeHtml(latest.planName)}</b> nie ma jeszcze wygenerowanego raportu AI.</p>
+            <button class="btn btn-sm btn-accent" style="width: auto;" onclick="forceCoachAnalysis('${latest.id}')">✨ Wygeneruj analizę AI dla tej sesji</button>
+          </div>
+        `;
+        reportBox.style.display = 'block';
+      }
     } else {
       reportBox.innerHTML = `<span style="color: var(--text-muted); font-size: 13px;">Brak aktywnego raportu sesji. Zakończ trening lub kliknij <b>📄 Raport AI</b> przy treningu na Pulpicie.</span>`;
       reportBox.style.display = 'block';
     }
+  } else {
+    const activeSession = STATE.history.find(s => s.id === STATE.currentCoachReportSessionId);
+    if (activeSession && activeSession.coachFeedback && (!loading || loading.style.display === 'none')) {
+      reportBox.innerHTML = formatMarkdown(activeSession.coachFeedback);
+      reportBox.style.display = 'block';
+    }
   }
+
+  renderAnalysisSessionSelector();
 }
 
 function viewHistoryReport(sessionId) {
   const session = STATE.history.find(s => s.id === sessionId);
   if (!session) return;
   STATE.currentCoachReportSessionId = session.id;
-  showView('coach');
+  showView('analysis');
+  renderAnalysisSessionSelector();
   const loading = document.getElementById('coach-loading');
   const reportBox = document.getElementById('coach-report-content');
   if (loading) loading.style.display = 'none';
@@ -1486,6 +1542,7 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
           ${loadBadgeHtml}
           ${nextBadge}
           <button class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="openGifModal('${escapeHtml(ex.name)}')">🎬 GIF</button>
+          <a href="https://www.youtube.com/results?search_query=${encodeURIComponent('ćwiczenie ' + ex.name + ' technika')}" target="_blank" class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px; text-decoration: none; color: #ff5252; border-color: rgba(255,82,82,0.35);">▶️ YT</a>
           ${extraWeightToggleBtn}
         </div>
         <button class="btn btn-sm btn-secondary" onclick="addSetToExercise(${exIdx})">+ Seria</button>
@@ -1831,7 +1888,7 @@ async function finishCurrentWorkout() {
   renderRecentWorkouts();
 
   STATE.currentCoachReportSessionId = session.id;
-  showView('coach');
+  showView('analysis');
   if (isWorkoutShortOrTest(session)) {
     renderSkippedShortWorkoutNotice(session);
   } else {
@@ -3138,6 +3195,7 @@ Używaj czytelnego formatowania punktowego.`;
     }
     session.coachFeedback = feedback;
     localStorage.setItem('iron_history', JSON.stringify(STATE.history));
+    renderAnalysisSessionSelector();
     if (STATE.currentCoachReportSessionId === session.id) {
       reportBox.innerHTML = formatMarkdown(feedback);
       reportBox.style.display = 'block';
@@ -3505,18 +3563,21 @@ function updateProfileSummaryUI() {
     }
   }
 
-  const coachSummary = document.getElementById('coach-profile-summary');
-  if (coachSummary) {
-    const parts = [];
-    if (w > 0) parts.push(`Waga: <b>${w} kg</b>`);
-    if (h > 0) parts.push(`Wzrost: <b>${h} cm</b>`);
-    if (p.goal) parts.push(`Cel: <b>${escapeHtml(p.goal)}</b>`);
-    if (p.goalNotes) parts.push(`Uwagi: <i>${escapeHtml(p.goalNotes)}</i>`);
+  const parts = [];
+  if (w > 0) parts.push(`Waga: <b>${w} kg</b>`);
+  if (h > 0) parts.push(`Wzrost: <b>${h} cm</b>`);
+  if (p.goal) parts.push(`Cel: <b>${escapeHtml(p.goal)}</b>`);
+  if (p.goalNotes) parts.push(`Uwagi: <i>${escapeHtml(p.goalNotes)}</i>`);
 
-    coachSummary.innerHTML = parts.length > 0
-      ? parts.join(' • ')
-      : 'Nie podano jeszcze wagi i wzrostu — kliknij "Zmień", aby uzupełnić profil';
-  }
+  const summaryHtml = parts.length > 0
+    ? parts.join(' • ')
+    : 'Nie podano jeszcze wagi i wzrostu — kliknij "Zmień", aby uzupełnić profil';
+
+  const coachSummary = document.getElementById('coach-profile-summary');
+  if (coachSummary) coachSummary.innerHTML = summaryHtml;
+
+  const analysisSummary = document.getElementById('analysis-profile-summary');
+  if (analysisSummary) analysisSummary.innerHTML = summaryHtml;
 }
 
 function loadApiKey() {
