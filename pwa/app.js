@@ -1,4 +1,4 @@
-// IronCoach AI - Mobile PWA Engine (v17)
+// IronCoach AI - Mobile PWA Engine (v18)
 
 const STATE = {
   plans: JSON.parse(localStorage.getItem('iron_plans')) || [
@@ -30,6 +30,7 @@ const STATE = {
   coachChat: JSON.parse(localStorage.getItem('iron_coach_chat')) || [],
   coachThreads: JSON.parse(localStorage.getItem('iron_coach_threads')) || [],
   activeCoachThreadId: localStorage.getItem('iron_active_coach_thread_id') || null,
+  currentCoachReportSessionId: null,
   userProfile: JSON.parse(localStorage.getItem('iron_user_profile')) || {
     weightKg: '',
     heightCm: '',
@@ -52,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderRecentWorkouts();
   checkActiveWorkout();
   initCoachThreads();
+  refreshCoachReportBox();
   setupWakeLockVisibilityListener();
 });
 
@@ -667,6 +669,8 @@ function showView(viewName) {
 
   if (viewName === 'body') {
     renderBodyMeasurementsView();
+  } else if (viewName === 'coach') {
+    refreshCoachReportBox();
   }
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -759,16 +763,57 @@ function renderRecentWorkouts() {
   }).join('');
 }
 
-function deleteHistorySession(sessionId) {
-  if (!confirm('Czy na pewno chcesz usunąć ten zapis treningu?')) return;
+function deleteHistorySession(sessionId, skipConfirm = false) {
+  if (!skipConfirm && !confirm('Czy na pewno chcesz usunąć ten zapis treningu?')) return false;
   STATE.history = STATE.history.filter(s => s.id !== sessionId);
   localStorage.setItem('iron_history', JSON.stringify(STATE.history));
+  if (STATE.currentCoachReportSessionId === sessionId) {
+    STATE.currentCoachReportSessionId = null;
+  }
   renderRecentWorkouts();
+  refreshCoachReportBox();
+  return true;
+}
+
+function deleteTestWorkoutFromCoach(sessionId) {
+  const deleted = deleteHistorySession(sessionId, false);
+  if (deleted) {
+    showView('home');
+  }
+}
+
+function refreshCoachReportBox() {
+  const loading = document.getElementById('coach-loading');
+  const reportBox = document.getElementById('coach-report-content');
+  if (!reportBox) return;
+
+  // Check if currentCoachReportSessionId still exists in STATE.history
+  if (STATE.currentCoachReportSessionId) {
+    const activeSession = STATE.history.find(s => s.id === STATE.currentCoachReportSessionId);
+    if (!activeSession) {
+      STATE.currentCoachReportSessionId = null;
+    }
+  }
+
+  // If no active report session is selected (or it was just deleted), pick the latest session with feedback or clear the box
+  if (!STATE.currentCoachReportSessionId) {
+    if (loading) loading.style.display = 'none';
+    const latestWithFeedback = STATE.history.find(s => s.coachFeedback);
+    if (latestWithFeedback) {
+      STATE.currentCoachReportSessionId = latestWithFeedback.id;
+      reportBox.innerHTML = formatMarkdown(latestWithFeedback.coachFeedback);
+      reportBox.style.display = 'block';
+    } else {
+      reportBox.innerHTML = `<span style="color: var(--text-muted); font-size: 13px;">Brak aktywnego raportu sesji. Zakończ trening lub kliknij <b>📄 Raport AI</b> przy treningu na Pulpicie.</span>`;
+      reportBox.style.display = 'block';
+    }
+  }
 }
 
 function viewHistoryReport(sessionId) {
   const session = STATE.history.find(s => s.id === sessionId);
   if (!session) return;
+  STATE.currentCoachReportSessionId = session.id;
   showView('coach');
   const loading = document.getElementById('coach-loading');
   const reportBox = document.getElementById('coach-report-content');
@@ -796,6 +841,7 @@ function renderSkippedShortWorkoutNotice(session) {
   const reportBox = document.getElementById('coach-report-content');
   if (loading) loading.style.display = 'none';
   if (!reportBox) return;
+  STATE.currentCoachReportSessionId = session.id;
   const durStr = formatDuration(session.durationSeconds || 0);
   reportBox.innerHTML = `
     <div style="text-align: left;">
@@ -805,7 +851,7 @@ function renderSkippedShortWorkoutNotice(session) {
       </p>
       <div style="display: flex; gap: 8px; flex-wrap: wrap;">
         <button class="btn btn-sm btn-accent" style="width: auto;" onclick="forceCoachAnalysis('${session.id}')">✨ Wygeneruj analizę AI mimo to</button>
-        <button class="btn btn-sm btn-secondary" style="width: auto; color: var(--danger);" onclick="deleteHistorySession('${session.id}'); showView('home');">🗑️ Usuń ten testowy trening</button>
+        <button class="btn btn-sm btn-secondary" style="width: auto; color: var(--danger);" onclick="deleteTestWorkoutFromCoach('${session.id}')">🗑️ Usuń ten testowy trening</button>
       </div>
     </div>
   `;
@@ -815,6 +861,7 @@ function renderSkippedShortWorkoutNotice(session) {
 function forceCoachAnalysis(sessionId) {
   const session = STATE.history.find(s => s.id === sessionId);
   if (!session) return;
+  STATE.currentCoachReportSessionId = session.id;
   triggerCoachAnalysis(session);
 }
 
@@ -1362,6 +1409,7 @@ async function finishCurrentWorkout() {
   checkActiveWorkout();
   renderRecentWorkouts();
 
+  STATE.currentCoachReportSessionId = session.id;
   showView('coach');
   if (isWorkoutShortOrTest(session)) {
     renderSkippedShortWorkoutNotice(session);
@@ -2534,6 +2582,7 @@ ${restsSummary}`;
 }
 
 async function triggerCoachAnalysis(session) {
+  STATE.currentCoachReportSessionId = session.id;
   const loading = document.getElementById('coach-loading');
   const reportBox = document.getElementById('coach-report-content');
   loading.style.display = 'block';
@@ -2574,13 +2623,23 @@ Używaj czytelnego formatowania punktowego.`;
 
   try {
     const feedback = await callGemini(prompt, 'smart');
+    // Only save and display if session still exists in history
+    const stillExists = STATE.history.some(s => s.id === session.id);
+    if (!stillExists) {
+      refreshCoachReportBox();
+      return;
+    }
     session.coachFeedback = feedback;
     localStorage.setItem('iron_history', JSON.stringify(STATE.history));
-    reportBox.innerHTML = formatMarkdown(feedback);
-    reportBox.style.display = 'block';
+    if (STATE.currentCoachReportSessionId === session.id) {
+      reportBox.innerHTML = formatMarkdown(feedback);
+      reportBox.style.display = 'block';
+    }
   } catch (err) {
-    reportBox.innerHTML = `<p style="color: var(--danger);">Nie udało się pobrać raportu trenera: ${err.message}</p>`;
-    reportBox.style.display = 'block';
+    if (STATE.currentCoachReportSessionId === session.id) {
+      reportBox.innerHTML = `<p style="color: var(--danger);">Nie udało się pobrać raportu trenera: ${err.message}</p>`;
+      reportBox.style.display = 'block';
+    }
   } finally {
     loading.style.display = 'none';
   }
