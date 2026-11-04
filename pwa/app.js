@@ -1,59 +1,4 @@
-// IronCoach AI - Mobile PWA Engine (v12)
-
-// Default initial Fitdays scan pre-loaded from Karol's scale report (21/10/2026 08:40)
-const INITIAL_FITDAYS_SCAN = {
-  id: 'scan-fitdays-20261021',
-  timestamp: new Date('2026-10-21T08:40:00').getTime(),
-  dateLabel: '21.10.2026, 08:40',
-  source: 'Fitdays',
-  weightKg: 88.1,
-  bmi: 25.7,
-  bodyFatPct: 17.5,
-  fatMassKg: 15.4,
-  ffmKg: 72.7,
-  muscleMassKg: 67.8,
-  muscleRatePct: 77.0,
-  skeletalMusclePct: 47.5,
-  boneMassKg: 4.9,
-  proteinMassKg: 14.5,
-  proteinPct: 16.5,
-  waterMassKg: 53.3,
-  bodyWaterPct: 60.5,
-  subcutaneousFatPct: 12.5,
-  visceralFat: 8.0,
-  bmrKcal: 1940,
-  bodyAge: 38,
-  whr: 0.86,
-  idealWeightKg: 75.3,
-  obesityLevel: 'Wysoka',
-  bodyType: 'Tłuszcz mięśniowy',
-  segmentalFat: {
-    leftArm: { kg: 0.9, pct: 100.7, status: 'Standardowy' },
-    rightArm: { kg: 0.8, pct: 103.2, status: 'Standardowy' },
-    trunk: { kg: 7.8, pct: 126.1, status: 'Standardowy' },
-    leftLeg: { kg: 2.4, pct: 107.2, status: 'Standardowy' },
-    rightLeg: { kg: 2.4, pct: 106.7, status: 'Standardowy' }
-  },
-  segmentalMuscle: {
-    leftArm: { kg: 4.3, pct: 116.0, status: 'Wysoki' },
-    rightArm: { kg: 4.2, pct: 114.0, status: 'Standardowy' },
-    trunk: { kg: 31.1, pct: 106.0, status: 'Standardowy' },
-    leftLeg: { kg: 12.0, pct: 110.1, status: 'Wysoki' },
-    rightLeg: { kg: 12.0, pct: 110.0, status: 'Wysoki' }
-  },
-  weightControl: {
-    targetWeightKg: 84.1,
-    weightControlKg: -4.0,
-    fatControlKg: -4.0,
-    muscleControlKg: 0.0
-  },
-  waistCm: null,
-  beltCm: null,
-  chestCm: null,
-  shouldersCm: null,
-  bicepsCm: null,
-  thighCm: null
-};
+// IronCoach AI - Mobile PWA Engine (v16)
 
 const STATE = {
   plans: JSON.parse(localStorage.getItem('iron_plans')) || [
@@ -84,12 +29,12 @@ const STATE = {
   exerciseGifs: [],
   coachChat: JSON.parse(localStorage.getItem('iron_coach_chat')) || [],
   userProfile: JSON.parse(localStorage.getItem('iron_user_profile')) || {
-    weightKg: 88.1,
-    heightCm: 185,
+    weightKg: '',
+    heightCm: '',
     goal: 'Budowa masy mięśniowej (Hipertrofia)',
     goalNotes: ''
   },
-  bodyMeasurements: JSON.parse(localStorage.getItem('iron_body_measurements')) || [INITIAL_FITDAYS_SCAN],
+  bodyMeasurements: JSON.parse(localStorage.getItem('iron_body_measurements')) || [],
   selectedBodyMeasurementId: null
 };
 
@@ -1775,22 +1720,28 @@ function saveModalPlan() {
 // BODY MEASUREMENTS, FITDAYS SMART SCALE IMPORT, CHARTS & CIRCUMFERENCES
 // ============================================================================
 function initBodyMeasurements() {
-  if (!Array.isArray(STATE.bodyMeasurements) || STATE.bodyMeasurements.length === 0) {
-    STATE.bodyMeasurements = [JSON.parse(JSON.stringify(INITIAL_FITDAYS_SCAN))];
-    localStorage.setItem('iron_body_measurements', JSON.stringify(STATE.bodyMeasurements));
+  if (!Array.isArray(STATE.bodyMeasurements)) {
+    STATE.bodyMeasurements = [];
   }
+
+  // Clean up legacy pre-seeded scan if it was stored in localStorage from v15
+  const hadHardcodedScan = STATE.bodyMeasurements.some(m => m.id === 'scan-fitdays-20261021');
+  if (hadHardcodedScan) {
+    STATE.bodyMeasurements = STATE.bodyMeasurements.filter(m => m.id !== 'scan-fitdays-20261021');
+    localStorage.setItem('iron_body_measurements', JSON.stringify(STATE.bodyMeasurements));
+
+    // Also clear default 88.1/185 from userProfile if no other measurements exist
+    if (STATE.bodyMeasurements.length === 0 && STATE.userProfile && STATE.userProfile.weightKg == 88.1 && STATE.userProfile.heightCm == 185) {
+      STATE.userProfile.weightKg = '';
+      STATE.userProfile.heightCm = '';
+      localStorage.setItem('iron_user_profile', JSON.stringify(STATE.userProfile));
+      loadUserProfile();
+    }
+  }
+
   // Ensure sorted newest first
   STATE.bodyMeasurements.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-  // If userProfile weight/height are empty, populate from latest scale measurement
-  const latestWithWeight = STATE.bodyMeasurements.find(m => m.weightKg);
-  if (latestWithWeight && !STATE.userProfile.weightKg) {
-    STATE.userProfile.weightKg = latestWithWeight.weightKg;
-    if (!STATE.userProfile.heightCm && latestWithWeight.bmi) {
-      STATE.userProfile.heightCm = Math.round(Math.sqrt(latestWithWeight.weightKg / latestWithWeight.bmi) * 100);
-    }
-    localStorage.setItem('iron_user_profile', JSON.stringify(STATE.userProfile));
-  }
   renderBodyMeasurementsView();
 }
 
@@ -1836,28 +1787,29 @@ function renderLatestScaleReport() {
 
   const dateStr = entry.dateLabel || new Date(entry.timestamp || Date.now()).toLocaleString('pl-PL');
 
+  const st = entry.statuses || {};
   const metricsRows = [
-    { label: 'Waga', val: entry.weightKg != null ? `${entry.weightKg} kg` : null, status: entry.weightKg > 85 ? 'Wysoki' : 'Standardowy' },
-    { label: 'BMI', val: entry.bmi != null ? `${entry.bmi}` : null, status: entry.bmi >= 25 ? 'Wysoki' : 'Standardowy' },
-    { label: 'Tkanka tłuszczowa', val: entry.bodyFatPct != null ? `${entry.bodyFatPct}%` : null, status: 'Standardowy' },
-    { label: 'Masa tłuszczowa', val: entry.fatMassKg != null ? `${entry.fatMassKg} kg` : null, status: 'Standardowy' },
-    { label: 'Beztłuszczowa masa ciała (FFM)', val: entry.ffmKg != null ? `${entry.ffmKg} kg` : null, status: '' },
-    { label: 'Masa mięśniowa', val: entry.muscleMassKg != null ? `${entry.muscleMassKg} kg` : null, status: 'Doskonałe' },
-    { label: 'Wskaźnik mięśniowy', val: entry.muscleRatePct != null ? `${entry.muscleRatePct}%` : null, status: 'Doskonałe' },
-    { label: 'Mięśnie szkieletowe', val: entry.skeletalMusclePct != null ? `${entry.skeletalMusclePct}%` : null, status: 'Doskonałe' },
-    { label: 'Masa kostna', val: entry.boneMassKg != null ? `${entry.boneMassKg} kg` : null, status: 'Doskonałe' },
-    { label: 'Masa białkowa', val: entry.proteinMassKg != null ? `${entry.proteinMassKg} kg` : null, status: 'Doskonałe' },
-    { label: 'Białko', val: entry.proteinPct != null ? `${entry.proteinPct}%` : null, status: 'Doskonałe' },
-    { label: 'Masa wody', val: entry.waterMassKg != null ? `${entry.waterMassKg} kg` : null, status: 'Doskonałe' },
-    { label: 'Woda w organizmie', val: entry.bodyWaterPct != null ? `${entry.bodyWaterPct}%` : null, status: 'Doskonałe' },
-    { label: 'Tłuszcz podskórny', val: entry.subcutaneousFatPct != null ? `${entry.subcutaneousFatPct}%` : null, status: 'Standardowy' },
-    { label: 'Tłuszcz trzewny (wisceralny)', val: entry.visceralFat != null ? `${entry.visceralFat}` : null, status: 'Standardowy' },
-    { label: 'BMR (Przemiana materii)', val: entry.bmrKcal != null ? `${entry.bmrKcal} kcal` : null, status: '' },
-    { label: 'Wiek ciała', val: entry.bodyAge != null ? `${entry.bodyAge} lat` : null, status: 'Doskonałe' },
-    { label: 'WHR (Talia/Biodra)', val: entry.whr != null ? `${entry.whr}` : null, status: 'Standardowy' },
-    { label: 'Idealna masa ciała', val: entry.idealWeightKg != null ? `${entry.idealWeightKg} kg` : null, status: '' },
-    { label: 'Poziom otyłości', val: entry.obesityLevel || null, status: '' },
-    { label: 'Typ ciała', val: entry.bodyType || null, status: '' }
+    { label: 'Waga', val: entry.weightKg != null ? `${entry.weightKg} kg` : null, status: st.weightKg || '' },
+    { label: 'BMI', val: entry.bmi != null ? `${entry.bmi}` : null, status: st.bmi || '' },
+    { label: 'Tkanka tłuszczowa', val: entry.bodyFatPct != null ? `${entry.bodyFatPct}%` : null, status: st.bodyFatPct || '' },
+    { label: 'Masa tłuszczowa', val: entry.fatMassKg != null ? `${entry.fatMassKg} kg` : null, status: st.fatMassKg || '' },
+    { label: 'Beztłuszczowa masa ciała (FFM)', val: entry.ffmKg != null ? `${entry.ffmKg} kg` : null, status: st.ffmKg || '' },
+    { label: 'Masa mięśniowa', val: entry.muscleMassKg != null ? `${entry.muscleMassKg} kg` : null, status: st.muscleMassKg || '' },
+    { label: 'Wskaźnik mięśniowy', val: entry.muscleRatePct != null ? `${entry.muscleRatePct}%` : null, status: st.muscleRatePct || '' },
+    { label: 'Mięśnie szkieletowe', val: entry.skeletalMusclePct != null ? `${entry.skeletalMusclePct}%` : null, status: st.skeletalMusclePct || '' },
+    { label: 'Masa kostna', val: entry.boneMassKg != null ? `${entry.boneMassKg} kg` : null, status: st.boneMassKg || '' },
+    { label: 'Masa białkowa', val: entry.proteinMassKg != null ? `${entry.proteinMassKg} kg` : null, status: st.proteinMassKg || '' },
+    { label: 'Białko', val: entry.proteinPct != null ? `${entry.proteinPct}%` : null, status: st.proteinPct || '' },
+    { label: 'Masa wody', val: entry.waterMassKg != null ? `${entry.waterMassKg} kg` : null, status: st.waterMassKg || '' },
+    { label: 'Woda w organizmie', val: entry.bodyWaterPct != null ? `${entry.bodyWaterPct}%` : null, status: st.bodyWaterPct || '' },
+    { label: 'Tłuszcz podskórny', val: entry.subcutaneousFatPct != null ? `${entry.subcutaneousFatPct}%` : null, status: st.subcutaneousFatPct || '' },
+    { label: 'Tłuszcz trzewny (wisceralny)', val: entry.visceralFat != null ? `${entry.visceralFat}` : null, status: st.visceralFat || '' },
+    { label: 'BMR (Przemiana materii)', val: entry.bmrKcal != null ? `${entry.bmrKcal} kcal` : null, status: st.bmrKcal || '' },
+    { label: 'Wiek ciała', val: entry.bodyAge != null ? `${entry.bodyAge} lat` : null, status: st.bodyAge || '' },
+    { label: 'WHR (Talia/Biodra)', val: entry.whr != null ? `${entry.whr}` : null, status: st.whr || '' },
+    { label: 'Idealna masa ciała', val: entry.idealWeightKg != null ? `${entry.idealWeightKg} kg` : null, status: st.idealWeightKg || '' },
+    { label: 'Poziom otyłości', val: entry.obesityLevel || null, status: st.obesityLevel || '' },
+    { label: 'Typ ciała', val: entry.bodyType || null, status: st.bodyType || '' }
   ].filter(r => r.val !== null);
 
   // Segmental Fat & Muscle HTML
@@ -1991,53 +1943,71 @@ async function importScaleReportFile(event) {
   if (loadingEl) loadingEl.style.display = 'block';
 
   const prompt = `
-Jesteś ekspertem analizy składu ciała. Odczytaj z przesłanego raportu wagi (np. Fitdays) WSZYSTKIE parametry i zwróć je WYŁĄCZNIE jako poprawny obiekt JSON bez znaczników markdown:
+Jesteś ekspertem analizy składu ciała. Odczytaj z przesłanego raportu wagi (np. Fitdays) WSZYSTKIE parametry widoczne w dokumencie i zwróć je WYŁĄCZNIE jako poprawny obiekt JSON bez znaczników markdown (jeśli jakiegoś pola nie ma w pliku, wpisz null):
 {
-  "dateLabel": "DD.MM.YYYY, HH:MM (odczytaj z nagłówka dokumentu)",
-  "isoDate": "YYYY-MM-DDTHH:MM:00 (odczytaj z nagłówka lub użyj dzisiejszej daty)",
-  "weightKg": 88.1,
-  "bmi": 25.7,
-  "bodyFatPct": 17.5,
-  "fatMassKg": 15.4,
-  "ffmKg": 72.7,
-  "muscleMassKg": 67.8,
-  "muscleRatePct": 77.0,
-  "skeletalMusclePct": 47.5,
-  "boneMassKg": 4.9,
-  "proteinMassKg": 14.5,
-  "proteinPct": 16.5,
-  "waterMassKg": 53.3,
-  "bodyWaterPct": 60.5,
-  "subcutaneousFatPct": 12.5,
-  "visceralFat": 8.0,
-  "bmrKcal": 1940,
-  "bodyAge": 38,
-  "whr": 0.86,
-  "idealWeightKg": 75.3,
-  "obesityLevel": "Wysoka",
-  "bodyType": "Tłuszcz mięśniowy",
+  "dateLabel": "DD.MM.YYYY, HH:MM (odczytaj dokładną datę i godzinę z nagłówka dokumentu)",
+  "isoDate": "YYYY-MM-DDTHH:MM:00 (odczytaj z nagłówka dokumentu w formacie ISO)",
+  "weightKg": null,
+  "bmi": null,
+  "bodyFatPct": null,
+  "fatMassKg": null,
+  "ffmKg": null,
+  "muscleMassKg": null,
+  "muscleRatePct": null,
+  "skeletalMusclePct": null,
+  "boneMassKg": null,
+  "proteinMassKg": null,
+  "proteinPct": null,
+  "waterMassKg": null,
+  "bodyWaterPct": null,
+  "subcutaneousFatPct": null,
+  "visceralFat": null,
+  "bmrKcal": null,
+  "bodyAge": null,
+  "whr": null,
+  "idealWeightKg": null,
+  "obesityLevel": null,
+  "bodyType": null,
+  "statuses": {
+    "weightKg": "odczytaj ocenę z prawej kolumny np. Wysoki / Standardowy / Doskonałe / Niski lub pusty string",
+    "bmi": "",
+    "bodyFatPct": "",
+    "fatMassKg": "",
+    "muscleMassKg": "",
+    "muscleRatePct": "",
+    "skeletalMusclePct": "",
+    "boneMassKg": "",
+    "proteinMassKg": "",
+    "proteinPct": "",
+    "waterMassKg": "",
+    "bodyWaterPct": "",
+    "subcutaneousFatPct": "",
+    "visceralFat": "",
+    "bodyAge": "",
+    "whr": ""
+  },
   "segmentalFat": {
-    "leftArm": { "kg": 0.9, "pct": 100.7, "status": "Standardowy" },
-    "rightArm": { "kg": 0.8, "pct": 103.2, "status": "Standardowy" },
-    "trunk": { "kg": 7.8, "pct": 126.1, "status": "Standardowy" },
-    "leftLeg": { "kg": 2.4, "pct": 107.2, "status": "Standardowy" },
-    "rightLeg": { "kg": 2.4, "pct": 106.7, "status": "Standardowy" }
+    "leftArm": { "kg": null, "pct": null, "status": "" },
+    "rightArm": { "kg": null, "pct": null, "status": "" },
+    "trunk": { "kg": null, "pct": null, "status": "" },
+    "leftLeg": { "kg": null, "pct": null, "status": "" },
+    "rightLeg": { "kg": null, "pct": null, "status": "" }
   },
   "segmentalMuscle": {
-    "leftArm": { "kg": 4.3, "pct": 116.0, "status": "Wysoki" },
-    "rightArm": { "kg": 4.2, "pct": 114.0, "status": "Standardowy" },
-    "trunk": { "kg": 31.1, "pct": 106.0, "status": "Standardowy" },
-    "leftLeg": { "kg": 12.0, "pct": 110.1, "status": "Wysoki" },
-    "rightLeg": { "kg": 12.0, "pct": 110.0, "status": "Wysoki" }
+    "leftArm": { "kg": null, "pct": null, "status": "" },
+    "rightArm": { "kg": null, "pct": null, "status": "" },
+    "trunk": { "kg": null, "pct": null, "status": "" },
+    "leftLeg": { "kg": null, "pct": null, "status": "" },
+    "rightLeg": { "kg": null, "pct": null, "status": "" }
   },
   "weightControl": {
-    "targetWeightKg": 84.1,
-    "weightControlKg": -4.0,
-    "fatControlKg": -4.0,
-    "muscleControlKg": 0.0
+    "targetWeightKg": null,
+    "weightControlKg": null,
+    "fatControlKg": null,
+    "muscleControlKg": null
   }
 }
-Zwróć wyłącznie czysty JSON.`;
+Zwróć wyłącznie czysty JSON z liczbami odczytanymi z załączonego pliku.`;
 
   try {
     let rawResponse = '';
@@ -2092,6 +2062,7 @@ Zwróć wyłącznie czysty JSON.`;
       idealWeightKg: parseFloat(parsed.idealWeightKg) || null,
       obesityLevel: parsed.obesityLevel || null,
       bodyType: parsed.bodyType || null,
+      statuses: parsed.statuses || null,
       segmentalFat: parsed.segmentalFat || null,
       segmentalMuscle: parsed.segmentalMuscle || null,
       weightControl: parsed.weightControl || null,
@@ -2387,7 +2358,7 @@ function buildCoachProfileAndPlansContext() {
   const latestCirc = STATE.bodyMeasurements.find(m => m.waistCm || m.beltCm || m.chestCm || m.shouldersCm || m.bicepsCm || m.thighCm) || {};
 
   const weightVal = parseFloat(p.weightKg) || parseFloat(latestScale.weightKg) || 0;
-  const heightVal = parseFloat(p.heightCm) || 185;
+  const heightVal = parseFloat(p.heightCm) || 0;
   let bmiStr = '';
   if (weightVal > 0 && heightVal > 0) {
     const bmi = (weightVal / Math.pow(heightVal / 100, 2)).toFixed(1);
