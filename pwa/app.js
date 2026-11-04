@@ -1038,13 +1038,15 @@ function showView(viewName) {
   const target = document.getElementById(`view-${viewName}`);
   if (target) target.classList.add('active');
 
-  const navMap = { 'home': 0, 'body': 1, 'import-keep': 2, 'analysis': 3, 'coach': 4, 'settings': 5 };
+  const navMap = { 'home': 0, 'body': 1, 'analysis': 2, 'coach': 3 };
   const navBtns = document.querySelectorAll('.bottom-nav .nav-item');
   if (navMap[viewName] !== undefined && navBtns[navMap[viewName]]) {
     navBtns[navMap[viewName]].classList.add('active');
   }
 
-  if (viewName === 'body') {
+  if (viewName === 'home') {
+    renderHomeKpis();
+  } else if (viewName === 'body') {
     renderBodyMeasurementsView();
   } else if (viewName === 'analysis') {
     refreshCoachReportBox();
@@ -1054,6 +1056,25 @@ function showView(viewName) {
   }
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function renderHomeKpis() {
+  const workoutsEl = document.getElementById('home-kpi-workouts');
+  const volumeEl = document.getElementById('home-kpi-volume');
+  const weightEl = document.getElementById('home-kpi-weight');
+
+  if (workoutsEl) {
+    workoutsEl.textContent = String((STATE.history || []).length);
+  }
+  if (volumeEl) {
+    const latestSession = (STATE.history || [])[0];
+    volumeEl.textContent = latestSession ? `${latestSession.totalVolumeKg || 0} kg` : '0 kg';
+  }
+  if (weightEl) {
+    const latestScale = (STATE.bodyMeasurements || []).find(m => m.weightKg);
+    const w = (latestScale && latestScale.weightKg) || (STATE.userProfile && STATE.userProfile.weightKg);
+    weightEl.textContent = w ? `${w} kg` : 'Ustaw';
+  }
 }
 
 function checkSharedParams() {
@@ -1069,12 +1090,34 @@ function checkSharedParams() {
 // ============================================================================
 // DASHBOARD: PLANS & WORKOUT HISTORY
 // ============================================================================
+const expandedPlanPreviews = new Set();
+
+function togglePlanExercisesPreview(planId) {
+  if (expandedPlanPreviews.has(planId)) {
+    expandedPlanPreviews.delete(planId);
+  } else {
+    expandedPlanPreviews.add(planId);
+  }
+  renderPlans();
+}
+
 function renderPlans() {
   const container = document.getElementById('plans-list');
   if (!container) return;
+  renderHomeKpis();
 
   if (STATE.plans.length === 0) {
-    container.innerHTML = `<p style="color: var(--text-muted); font-size: 14px;">Brak planów. Zaimportuj notatkę z Keep lub kliknij 'Nowy Plan'!</p>`;
+    container.innerHTML = `
+      <div class="card" style="text-align: center; padding: 24px 16px;">
+        <div style="font-size: 28px; margin-bottom: 6px;">📋</div>
+        <div style="font-weight: 700; font-size: 15px; margin-bottom: 4px;">Brak planów treningowych</div>
+        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 14px;">Stwórz własny plan lub wklej swoją notatkę z Google Keep.</p>
+        <div style="display: flex; gap: 8px; justify-content: center;">
+          <button class="btn btn-sm btn-accent" onclick="showView('import-keep')">📥 Import z Keep</button>
+          <button class="btn btn-sm btn-primary" onclick="openNewPlanModal()">➕ Nowy Plan</button>
+        </div>
+      </div>
+    `;
     return;
   }
 
@@ -1083,12 +1126,16 @@ function renderPlans() {
     const ssRestSec = plan.supersetRestSeconds || 30;
     const exercises = plan.exercises || [];
     const hasSupersets = exercises.some(e => e.supersetGroup);
+    const isExpanded = expandedPlanPreviews.has(plan.id);
 
+    // Count how many exercises already have an assigned GIF
+    let gifAssignedCount = 0;
     const exListHtml = exercises.map((ex, exIdx) => {
       const matched = findExerciseGif(ex.name, ex);
       const gifUrl = ex.gifUrl || (matched ? matched.g : '');
       const gifName = ex.gifName || (matched ? matched.n : '');
       const hasGif = Boolean(gifUrl);
+      if (hasGif) gifAssignedCount++;
       const ssTag = ex.supersetGroup ? `<span style="color: var(--accent); font-weight: 700; font-size: 11px;">[${escapeHtml(ex.supersetGroup)}]</span> ` : '';
       const loadInfo = ex.loadType === 'bodyweight'
         ? (ex.weight > 0 ? `+${ex.weight}kg` : 'Masa ciała')
@@ -1106,35 +1153,52 @@ function renderPlans() {
                 ${ssTag}${escapeHtml(ex.name)}
               </div>
               <div style="font-size: 10px; color: ${hasGif ? 'var(--success)' : 'var(--text-muted)'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                ${ex.sets || 3}×${ex.reps || 10} (${loadInfo}) • ${hasGif ? `🎬 ${escapeHtml(gifName || 'Przypisany GIF')}` : '⚠️ Brak przypisanego GIFa'}
+                ${ex.sets || 3}×${ex.reps || 10} (${loadInfo}) • ${hasGif ? `🎬 ${escapeHtml(gifName || 'Przypisany GIF')}` : '⚠️ Brak GIFa'}
               </div>
             </div>
           </div>
           <button type="button" class="btn btn-sm btn-secondary" style="width: auto; padding: 4px 8px; font-size: 11px; flex-shrink: 0; ${hasGif ? 'border-color: rgba(0,230,118,0.4); color: var(--success);' : 'border-color: var(--accent); color: var(--accent);'}" onclick="openGifModalForPlanExercise('${plan.id}', ${exIdx})">
-            🎬 ${hasGif ? 'Zmień GIF' : 'Ustaw GIF'}
+            🎬 ${hasGif ? 'Zmień' : 'Ustaw'}
           </button>
         </div>
       `;
     }).join('');
 
+    // Compact summary of first 3 exercise names when collapsed
+    const compactExSummary = exercises.slice(0, 3).map(e => escapeHtml(e.name)).join(' • ') + (exercises.length > 3 ? ` (+${exercises.length - 3})` : '');
+
     return `
-      <div class="card">
-        <div class="card-title">
-          <span>${escapeHtml(plan.name)}</span>
-          <button class="btn btn-sm btn-primary" onclick="startWorkout('${plan.id}')">▶ Start</button>
+      <div class="card" style="padding: 14px; margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 6px;">
+          <div style="min-width: 0; flex: 1;">
+            <div style="font-size: 16px; font-weight: 800; color: var(--text);">${escapeHtml(plan.name)}</div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+              <b>${exercises.length}</b> ćw. • ⏱️ ${restSec}s ${hasSupersets ? `/ ⚡ SS ${ssRestSec}s` : ''} • <span style="color: ${gifAssignedCount === exercises.length ? 'var(--success)' : 'var(--accent)'};">🎬 GIFy: ${gifAssignedCount}/${exercises.length}</span>
+            </div>
+          </div>
+          <button class="btn btn-sm btn-primary" style="padding: 8px 16px; font-size: 13px; flex-shrink: 0;" onclick="startWorkout('${plan.id}')">▶ Start</button>
         </div>
-        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 8px;">
-          ${exercises.length} ćwiczeń • Przerwa: ${restSec}s ${hasSupersets ? `(w SS: ${ssRestSec}s)` : ''}
-          ${plan.description ? ' • ' + escapeHtml(plan.description) : ''}
-        </p>
-        ${exercises.length > 0 ? `
-          <div style="display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px;">
+
+        ${!isExpanded && exercises.length > 0 ? `
+          <div style="font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 10px; padding: 5px 8px; background: rgba(255,255,255,0.03); border-radius: 6px;">
+            ${compactExSummary}
+          </div>
+        ` : ''}
+
+        ${isExpanded && exercises.length > 0 ? `
+          <div style="display: flex; flex-direction: column; gap: 5px; margin: 10px 0;">
             ${exListHtml}
           </div>
         ` : ''}
-        <div style="display: flex; gap: 8px; justify-content: flex-end;">
-          <button class="btn btn-sm btn-secondary" onclick="openEditPlanModal('${plan.id}')">✏️ Edytuj plan i GIFy</button>
-          <button class="btn btn-sm btn-secondary" style="color: var(--danger); border-color: rgba(255,82,82,0.3);" onclick="deletePlan('${plan.id}')">🗑️ Usuń</button>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.06);">
+          <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 5px 10px; color: var(--accent); border-color: rgba(0,229,255,0.28);" onclick="togglePlanExercisesPreview('${plan.id}')">
+            🎬 ${isExpanded ? 'Ukryj ćwiczenia i GIFy ▴' : `Ćwiczenia i GIFy (${exercises.length}) ▾`}
+          </button>
+          <div style="display: flex; gap: 6px;">
+            <button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 5px 10px;" onclick="openEditPlanModal('${plan.id}')">✏️ Edytuj</button>
+            <button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 5px 8px; color: var(--danger); border-color: rgba(255,82,82,0.3);" onclick="deletePlan('${plan.id}')" title="Usuń plan">🗑️</button>
+          </div>
         </div>
       </div>
     `;
@@ -1154,6 +1218,7 @@ function formatDuration(totalSeconds) {
 
 function renderRecentWorkouts() {
   const container = document.getElementById('recent-workouts-list');
+  renderHomeKpis();
   if (!container) return;
 
   if (STATE.history.length === 0) {
@@ -1161,22 +1226,29 @@ function renderRecentWorkouts() {
     return;
   }
 
-  container.innerHTML = STATE.history.slice(0, 15).map(session => {
+  container.innerHTML = STATE.history.slice(0, 10).map(session => {
     const durSec = session.durationSeconds || (session.endTime && session.startTime ? Math.round((session.endTime - session.startTime) / 1000) : 0);
     const durText = durSec > 0 ? `⏱️ ${formatDuration(durSec)}` : '';
-    const avgRestText = session.avgRestSeconds ? ` • Śr. przerwa: ${session.avgRestSeconds}s` : '';
+    const avgRestText = session.avgRestSeconds ? ` • Przerwa: ${session.avgRestSeconds}s` : '';
+    const hasAi = Boolean(session.coachFeedback);
     return `
-      <div class="card">
-        <div class="card-title" style="font-size: 15px;">
-          <span>${escapeHtml(session.planName || 'Trening')}</span>
-          <span class="badge badge-cyan">${session.totalVolumeKg || 0} kg</span>
-        </div>
-        <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 8px;">
-          ${new Date(session.endTime || Date.now()).toLocaleString('pl-PL')} • ${session.completedSets || 0} serii ${durText ? ' • ' + durText : ''}${avgRestText}
-        </p>
-        <div style="display: flex; gap: 8px; justify-content: flex-end;">
-          <button class="btn btn-sm btn-secondary" onclick="viewHistoryReport('${session.id}')">📄 Raport AI</button>
-          <button class="btn btn-sm btn-secondary" style="color: var(--danger); border-color: rgba(255,82,82,0.3);" onclick="deleteHistorySession('${session.id}')">Usuń</button>
+      <div class="card" style="padding: 12px 14px; margin-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+          <div style="min-width: 0; flex: 1;">
+            <div style="font-size: 14px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              ${escapeHtml(session.planName || 'Trening')}
+            </div>
+            <div style="color: var(--text-muted); font-size: 11px; margin-top: 2px;">
+              ${new Date(session.endTime || Date.now()).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} • <b>${session.completedSets || 0}</b> serii ${durText ? ' • ' + durText : ''}${avgRestText}
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+            <span class="badge badge-cyan" style="font-size: 11px;">${session.totalVolumeKg || 0} kg</span>
+            <button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 5px 9px; ${hasAi ? 'border-color: rgba(0,230,118,0.4); color: var(--success);' : ''}" onclick="viewHistoryReport('${session.id}')">
+              ${hasAi ? '📊 Raport AI' : '✨ Analizuj'}
+            </button>
+            <button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 5px 8px; color: var(--danger); border-color: rgba(255,82,82,0.3);" onclick="deleteHistorySession('${session.id}')" title="Usuń sesję">🗑️</button>
+          </div>
         </div>
       </div>
     `;
@@ -1202,12 +1274,76 @@ function deleteTestWorkoutFromCoach(sessionId) {
   }
 }
 
+function renderAnalysisSessionOverview(session) {
+  const box = document.getElementById('analysis-session-overview');
+  if (!box) return;
+  if (!session) {
+    box.innerHTML = '';
+    return;
+  }
+
+  const durSec = session.durationSeconds || (session.endTime && session.startTime ? Math.round((session.endTime - session.startTime) / 1000) : 0);
+  // Group sets by exercise name
+  const exMap = new Map();
+  (session.sets || []).forEach(s => {
+    const key = s.exercise || 'Ćwiczenie';
+    if (!exMap.has(key)) {
+      exMap.set(key, { count: 0, maxW: 0, vol: 0, repsTotal: 0, loadType: s.loadType });
+    }
+    const item = exMap.get(key);
+    item.count++;
+    const effW = s.effectiveWeight != null ? s.effectiveWeight : (s.loadType === 'dual_dumbbell' ? (s.weight || 0) * 2 : (s.weight || 0));
+    if (effW > item.maxW) item.maxW = effW;
+    item.vol += effW * (s.reps || 0);
+    item.repsTotal += (s.reps || 0);
+  });
+
+  const exRowsHtml = Array.from(exMap.entries()).map(([name, info]) => `
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,0.05);">
+      <span style="font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 58%;">${escapeHtml(name)}</span>
+      <span style="color: var(--text-muted); font-size: 11px;">
+        <b>${info.count}</b> ser. (${info.repsTotal} powt.) • ${info.maxW > 0 ? `max <b>${info.maxW}kg</b> • <span style="color: var(--primary);">${Math.round(info.vol)}kg</span>` : `<span style="color: var(--success);">Masa ciała</span>`}
+      </span>
+    </div>
+  `).join('');
+
+  box.innerHTML = `
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px;">
+      <div style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 8px 4px; text-align: center;">
+        <div style="font-size: 14px; font-weight: 800; color: var(--primary);">${session.totalVolumeKg || 0} kg</div>
+        <div style="font-size: 9px; color: var(--text-muted); text-transform: uppercase;">Tonaż</div>
+      </div>
+      <div style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 8px 4px; text-align: center;">
+        <div style="font-size: 14px; font-weight: 800; color: var(--accent);">${formatDuration(durSec)}</div>
+        <div style="font-size: 9px; color: var(--text-muted); text-transform: uppercase;">Czas</div>
+      </div>
+      <div style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 8px 4px; text-align: center;">
+        <div style="font-size: 14px; font-weight: 800; color: var(--text);">${session.completedSets || 0}</div>
+        <div style="font-size: 9px; color: var(--text-muted); text-transform: uppercase;">Serie</div>
+      </div>
+      <div style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 8px 4px; text-align: center;">
+        <div style="font-size: 14px; font-weight: 800; color: var(--success);">${session.avgRestSeconds || 0}s</div>
+        <div style="font-size: 9px; color: var(--text-muted); text-transform: uppercase;">Śr. przerwa</div>
+      </div>
+    </div>
+    ${exRowsHtml ? `
+      <details style="background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
+        <summary style="padding: 7px 10px; font-size: 11px; font-weight: 700; color: var(--text-muted); cursor: pointer;">
+          📋 Podsumowanie ćwiczeń w tej sesji (${exMap.size})
+        </summary>
+        <div>${exRowsHtml}</div>
+      </details>
+    ` : ''}
+  `;
+}
+
 function renderAnalysisSessionSelector() {
   const sel = document.getElementById('analysis-session-select');
   if (!sel) return;
 
   if (!Array.isArray(STATE.history) || STATE.history.length === 0) {
     sel.innerHTML = `<option value="">Brak zapisanych treningów w historii</option>`;
+    renderAnalysisSessionOverview(null);
     return;
   }
 
@@ -1219,6 +1355,9 @@ function renderAnalysisSessionSelector() {
     const selectedAttr = s.id === STATE.currentCoachReportSessionId ? 'selected' : '';
     return `<option value="${s.id}" ${selectedAttr}>${statusIcon} ${escapeHtml(s.planName || 'Trening')} (${dt} • ${s.totalVolumeKg || 0}kg)</option>`;
   }).join('');
+
+  const activeSession = STATE.history.find(s => s.id === STATE.currentCoachReportSessionId) || STATE.history[0];
+  renderAnalysisSessionOverview(activeSession);
 }
 
 function selectAnalysisSession(sessionId) {
@@ -1533,19 +1672,39 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
     ? 'KG (1 HANTEL ×2)'
     : (isBodyweightWithLoad ? '+KG (DOŁOŻONE)' : 'KG');
 
+  const matchedGif = findExerciseGif(ex.name, ex);
+  const gifUrl = ex.gifUrl || (matchedGif ? matchedGif.g : '');
+
   return `
     <div class="exercise-block ${isNextInSuperset ? 'next-in-superset' : ''}">
-      <div class="exercise-header">
-        <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-          ${ssTag}
-          <span class="exercise-title">${escapeHtml(ex.name)}</span>
-          ${loadBadgeHtml}
-          ${nextBadge}
-          <button class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="openGifModal('${escapeHtml(ex.name)}')">🎬 GIF</button>
-          <a href="https://www.youtube.com/results?search_query=${encodeURIComponent('ćwiczenie ' + ex.name + ' technika')}" target="_blank" class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px; text-decoration: none; color: #ff5252; border-color: rgba(255,82,82,0.35);">▶️ YT</a>
+      <div class="exercise-header" style="flex-direction: column; align-items: stretch; gap: 8px; margin-bottom: 10px;">
+        <!-- Row 1: Thumbnail + Title + Badges + Add Set -->
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1;">
+            ${gifUrl
+              ? `<img src="${escapeHtml(gifUrl)}" alt="GIF" onclick="openGifModal('${escapeHtml(ex.name)}')" style="width: 38px; height: 38px; border-radius: 8px; object-fit: cover; background: #fff; border: 1px solid rgba(0,229,255,0.4); cursor: pointer; flex-shrink: 0;">`
+              : `<div onclick="openGifModal('${escapeHtml(ex.name)}')" style="width: 38px; height: 38px; border-radius: 8px; background: var(--surface-elevated); border: 1px dashed var(--border); display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; flex-shrink: 0;">🎬</div>`
+            }
+            <div style="min-width: 0; flex: 1;">
+              <div style="display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
+                ${ssTag}
+                <span class="exercise-title" style="font-size: 15px; line-height: 1.25;">${escapeHtml(ex.name)}</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 3px;">
+                ${loadBadgeHtml}
+                ${nextBadge}
+              </div>
+            </div>
+          </div>
+          <button class="btn btn-sm btn-secondary" style="padding: 6px 10px; font-size: 12px; flex-shrink: 0;" onclick="addSetToExercise(${exIdx})">+ Seria</button>
+        </div>
+
+        <!-- Row 2: Clean Action Toolbar (GIF, YouTube, Bodyweight extra load) -->
+        <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+          <button class="btn btn-sm btn-secondary" style="padding: 4px 10px; font-size: 11px; flex: 1;" onclick="openGifModal('${escapeHtml(ex.name)}')">🎬 Technika GIF</button>
+          <a href="https://www.youtube.com/results?search_query=${encodeURIComponent('ćwiczenie ' + ex.name + ' technika')}" target="_blank" class="btn btn-sm btn-secondary" style="padding: 4px 10px; font-size: 11px; flex: 1; text-decoration: none; color: #ff5252; border-color: rgba(255,82,82,0.35);">▶️ YouTube</a>
           ${extraWeightToggleBtn}
         </div>
-        <button class="btn btn-sm btn-secondary" onclick="addSetToExercise(${exIdx})">+ Seria</button>
       </div>
       <div style="display: grid; grid-template-columns: ${gridCols}; gap: 8px; margin-bottom: 6px; font-size: 11px; color: var(--text-muted);">
         <span>SER</span>
@@ -2412,11 +2571,28 @@ function initBodyMeasurements() {
   renderBodyMeasurementsView();
 }
 
+function switchBodySubTab(tabName) {
+  const tabs = ['charts', 'scale', 'history'];
+  tabs.forEach(t => {
+    const viewEl = document.getElementById(`body-subview-${t}`);
+    const btnEl = document.getElementById(`body-subtab-btn-${t}`);
+    if (viewEl) viewEl.style.display = t === tabName ? 'block' : 'none';
+    if (btnEl) {
+      if (t === tabName) btnEl.classList.add('active');
+      else btnEl.classList.remove('active');
+    }
+  });
+  if (tabName === 'charts') {
+    renderBodyChart();
+  }
+}
+
 function renderBodyMeasurementsView() {
   renderLatestScaleReport();
   populateCircumferenceInputs();
   renderBodyChart();
   renderBodyHistoryList();
+  renderHomeKpis();
 }
 
 function getSelectedOrLatestScaleEntry() {
@@ -2960,7 +3136,7 @@ function renderBodyHistoryList() {
   const countEl = document.getElementById('body-history-count');
   if (!listEl) return;
 
-  if (countEl) countEl.textContent = `${STATE.bodyMeasurements.length} wpisów`;
+  if (countEl) countEl.textContent = `${STATE.bodyMeasurements.length}`;
 
   if (STATE.bodyMeasurements.length === 0) {
     listEl.innerHTML = `<p style="color: var(--text-muted); font-size: 13px;">Brak zapisanych pomiarów.</p>`;
@@ -3003,6 +3179,7 @@ function selectBodyMeasurement(id) {
   STATE.selectedBodyMeasurementId = id;
   renderLatestScaleReport();
   renderBodyHistoryList();
+  switchBodySubTab('scale');
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -3354,6 +3531,13 @@ function renderCoachThreadsBar() {
       </button>
     `;
   }).join('');
+}
+
+function prefillCoachPrompt(promptText) {
+  const inputEl = document.getElementById('coach-question-input');
+  if (!inputEl) return;
+  inputEl.value = promptText;
+  askCoachQuestion();
 }
 
 async function askCoachQuestion() {
