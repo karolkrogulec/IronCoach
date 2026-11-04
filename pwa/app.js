@@ -1,5 +1,60 @@
 // IronCoach AI - Mobile PWA Engine (v12)
 
+// Default initial Fitdays scan pre-loaded from Karol's scale report (21/10/2026 08:40)
+const INITIAL_FITDAYS_SCAN = {
+  id: 'scan-fitdays-20261021',
+  timestamp: new Date('2026-10-21T08:40:00').getTime(),
+  dateLabel: '21.10.2026, 08:40',
+  source: 'Fitdays',
+  weightKg: 88.1,
+  bmi: 25.7,
+  bodyFatPct: 17.5,
+  fatMassKg: 15.4,
+  ffmKg: 72.7,
+  muscleMassKg: 67.8,
+  muscleRatePct: 77.0,
+  skeletalMusclePct: 47.5,
+  boneMassKg: 4.9,
+  proteinMassKg: 14.5,
+  proteinPct: 16.5,
+  waterMassKg: 53.3,
+  bodyWaterPct: 60.5,
+  subcutaneousFatPct: 12.5,
+  visceralFat: 8.0,
+  bmrKcal: 1940,
+  bodyAge: 38,
+  whr: 0.86,
+  idealWeightKg: 75.3,
+  obesityLevel: 'Wysoka',
+  bodyType: 'Tłuszcz mięśniowy',
+  segmentalFat: {
+    leftArm: { kg: 0.9, pct: 100.7, status: 'Standardowy' },
+    rightArm: { kg: 0.8, pct: 103.2, status: 'Standardowy' },
+    trunk: { kg: 7.8, pct: 126.1, status: 'Standardowy' },
+    leftLeg: { kg: 2.4, pct: 107.2, status: 'Standardowy' },
+    rightLeg: { kg: 2.4, pct: 106.7, status: 'Standardowy' }
+  },
+  segmentalMuscle: {
+    leftArm: { kg: 4.3, pct: 116.0, status: 'Wysoki' },
+    rightArm: { kg: 4.2, pct: 114.0, status: 'Standardowy' },
+    trunk: { kg: 31.1, pct: 106.0, status: 'Standardowy' },
+    leftLeg: { kg: 12.0, pct: 110.1, status: 'Wysoki' },
+    rightLeg: { kg: 12.0, pct: 110.0, status: 'Wysoki' }
+  },
+  weightControl: {
+    targetWeightKg: 84.1,
+    weightControlKg: -4.0,
+    fatControlKg: -4.0,
+    muscleControlKg: 0.0
+  },
+  waistCm: null,
+  beltCm: null,
+  chestCm: null,
+  shouldersCm: null,
+  bicepsCm: null,
+  thighCm: null
+};
+
 const STATE = {
   plans: JSON.parse(localStorage.getItem('iron_plans')) || [
     {
@@ -29,11 +84,13 @@ const STATE = {
   exerciseGifs: [],
   coachChat: JSON.parse(localStorage.getItem('iron_coach_chat')) || [],
   userProfile: JSON.parse(localStorage.getItem('iron_user_profile')) || {
-    weightKg: '',
-    heightCm: '',
+    weightKg: 88.1,
+    heightCm: 185,
     goal: 'Budowa masy mięśniowej (Hipertrofia)',
     goalNotes: ''
-  }
+  },
+  bodyMeasurements: JSON.parse(localStorage.getItem('iron_body_measurements')) || [INITIAL_FITDAYS_SCAN],
+  selectedBodyMeasurementId: null
 };
 
 // Initialize
@@ -41,6 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
   registerServiceWorker();
   checkSharedParams();
   loadApiKey();
+  initBodyMeasurements();
   loadUserProfile();
   loadExerciseGifsDatabase();
   renderPlans();
@@ -654,10 +712,14 @@ function showView(viewName) {
   const target = document.getElementById(`view-${viewName}`);
   if (target) target.classList.add('active');
 
-  const navMap = { 'home': 0, 'import-keep': 1, 'coach': 2, 'settings': 3 };
+  const navMap = { 'home': 0, 'body': 1, 'import-keep': 2, 'coach': 3, 'settings': 4 };
   const navBtns = document.querySelectorAll('.bottom-nav .nav-item');
   if (navMap[viewName] !== undefined && navBtns[navMap[viewName]]) {
     navBtns[navMap[viewName]].classList.add('active');
+  }
+
+  if (viewName === 'body') {
+    renderBodyMeasurementsView();
   }
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1309,9 +1371,9 @@ async function finishCurrentWorkout() {
 }
 
 // ============================================================================
-// GEMINI AI INTEGRATION
+// GEMINI AI INTEGRATION (Supports Text & Multimodal Image/PDF)
 // ============================================================================
-async function callGemini(prompt, preferredTier = 'fast') {
+async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
   const key = STATE.apiKey.trim();
   if (!key) {
     alert('Podaj klucz Gemini API w zakładce Ustawienia!');
@@ -1349,6 +1411,16 @@ async function callGemini(prompt, preferredTier = 'fast') {
       : ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-1.5-pro-latest'];
   }
 
+  const parts = [{ text: prompt }];
+  if (inlineData && inlineData.data && inlineData.mimeType) {
+    parts.push({
+      inlineData: {
+        mimeType: inlineData.mimeType,
+        data: inlineData.data
+      }
+    });
+  }
+
   let lastError = null;
 
   for (const model of modelsToTry) {
@@ -1358,7 +1430,7 @@ async function callGemini(prompt, preferredTier = 'fast') {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }]
+          contents: [{ parts: parts }]
         })
       });
 
@@ -1700,23 +1772,685 @@ function saveModalPlan() {
 }
 
 // ============================================================================
-// COACH AI ANALYSIS & CONVERSATIONAL CHAT (Includes Profile, Goal, Duration, Rests & LoadTypes)
+// BODY MEASUREMENTS, FITDAYS SMART SCALE IMPORT, CHARTS & CIRCUMFERENCES
+// ============================================================================
+function initBodyMeasurements() {
+  if (!Array.isArray(STATE.bodyMeasurements) || STATE.bodyMeasurements.length === 0) {
+    STATE.bodyMeasurements = [JSON.parse(JSON.stringify(INITIAL_FITDAYS_SCAN))];
+    localStorage.setItem('iron_body_measurements', JSON.stringify(STATE.bodyMeasurements));
+  }
+  // Ensure sorted newest first
+  STATE.bodyMeasurements.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+  // If userProfile weight/height are empty, populate from latest scale measurement
+  const latestWithWeight = STATE.bodyMeasurements.find(m => m.weightKg);
+  if (latestWithWeight && !STATE.userProfile.weightKg) {
+    STATE.userProfile.weightKg = latestWithWeight.weightKg;
+    if (!STATE.userProfile.heightCm && latestWithWeight.bmi) {
+      STATE.userProfile.heightCm = Math.round(Math.sqrt(latestWithWeight.weightKg / latestWithWeight.bmi) * 100);
+    }
+    localStorage.setItem('iron_user_profile', JSON.stringify(STATE.userProfile));
+  }
+  renderBodyMeasurementsView();
+}
+
+function renderBodyMeasurementsView() {
+  renderLatestScaleReport();
+  populateCircumferenceInputs();
+  renderBodyChart();
+  renderBodyHistoryList();
+}
+
+function getSelectedOrLatestScaleEntry() {
+  if (STATE.selectedBodyMeasurementId) {
+    const found = STATE.bodyMeasurements.find(m => m.id === STATE.selectedBodyMeasurementId);
+    if (found) return found;
+  }
+  return STATE.bodyMeasurements.find(m => m.weightKg || m.bodyFatPct || m.muscleMassKg) || STATE.bodyMeasurements[0] || null;
+}
+
+function statusBadgeHtml(statusText) {
+  if (!statusText) return '';
+  const s = String(statusText).toLowerCase();
+  let bg = 'rgba(0, 229, 255, 0.14)';
+  let col = 'var(--accent)';
+  if (s.includes('doskona') || s.includes('norm') || s.includes('optym')) {
+    bg = 'rgba(0, 230, 118, 0.16)';
+    col = 'var(--success)';
+  } else if (s.includes('wysok') || s.includes('nisk') || s.includes('otył')) {
+    bg = 'rgba(255, 82, 82, 0.18)';
+    col = 'var(--danger)';
+  }
+  return `<span style="padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 700; background: ${bg}; color: ${col};">${escapeHtml(statusText)}</span>`;
+}
+
+function renderLatestScaleReport() {
+  const container = document.getElementById('scale-latest-report-container');
+  if (!container) return;
+
+  const entry = getSelectedOrLatestScaleEntry();
+  if (!entry) {
+    container.innerHTML = `<p style="color: var(--text-muted); font-size: 13px;">Brak zaimportowanych raportów z wagi.</p>`;
+    return;
+  }
+
+  const dateStr = entry.dateLabel || new Date(entry.timestamp || Date.now()).toLocaleString('pl-PL');
+
+  const metricsRows = [
+    { label: 'Waga', val: entry.weightKg != null ? `${entry.weightKg} kg` : null, status: entry.weightKg > 85 ? 'Wysoki' : 'Standardowy' },
+    { label: 'BMI', val: entry.bmi != null ? `${entry.bmi}` : null, status: entry.bmi >= 25 ? 'Wysoki' : 'Standardowy' },
+    { label: 'Tkanka tłuszczowa', val: entry.bodyFatPct != null ? `${entry.bodyFatPct}%` : null, status: 'Standardowy' },
+    { label: 'Masa tłuszczowa', val: entry.fatMassKg != null ? `${entry.fatMassKg} kg` : null, status: 'Standardowy' },
+    { label: 'Beztłuszczowa masa ciała (FFM)', val: entry.ffmKg != null ? `${entry.ffmKg} kg` : null, status: '' },
+    { label: 'Masa mięśniowa', val: entry.muscleMassKg != null ? `${entry.muscleMassKg} kg` : null, status: 'Doskonałe' },
+    { label: 'Wskaźnik mięśniowy', val: entry.muscleRatePct != null ? `${entry.muscleRatePct}%` : null, status: 'Doskonałe' },
+    { label: 'Mięśnie szkieletowe', val: entry.skeletalMusclePct != null ? `${entry.skeletalMusclePct}%` : null, status: 'Doskonałe' },
+    { label: 'Masa kostna', val: entry.boneMassKg != null ? `${entry.boneMassKg} kg` : null, status: 'Doskonałe' },
+    { label: 'Masa białkowa', val: entry.proteinMassKg != null ? `${entry.proteinMassKg} kg` : null, status: 'Doskonałe' },
+    { label: 'Białko', val: entry.proteinPct != null ? `${entry.proteinPct}%` : null, status: 'Doskonałe' },
+    { label: 'Masa wody', val: entry.waterMassKg != null ? `${entry.waterMassKg} kg` : null, status: 'Doskonałe' },
+    { label: 'Woda w organizmie', val: entry.bodyWaterPct != null ? `${entry.bodyWaterPct}%` : null, status: 'Doskonałe' },
+    { label: 'Tłuszcz podskórny', val: entry.subcutaneousFatPct != null ? `${entry.subcutaneousFatPct}%` : null, status: 'Standardowy' },
+    { label: 'Tłuszcz trzewny (wisceralny)', val: entry.visceralFat != null ? `${entry.visceralFat}` : null, status: 'Standardowy' },
+    { label: 'BMR (Przemiana materii)', val: entry.bmrKcal != null ? `${entry.bmrKcal} kcal` : null, status: '' },
+    { label: 'Wiek ciała', val: entry.bodyAge != null ? `${entry.bodyAge} lat` : null, status: 'Doskonałe' },
+    { label: 'WHR (Talia/Biodra)', val: entry.whr != null ? `${entry.whr}` : null, status: 'Standardowy' },
+    { label: 'Idealna masa ciała', val: entry.idealWeightKg != null ? `${entry.idealWeightKg} kg` : null, status: '' },
+    { label: 'Poziom otyłości', val: entry.obesityLevel || null, status: '' },
+    { label: 'Typ ciała', val: entry.bodyType || null, status: '' }
+  ].filter(r => r.val !== null);
+
+  // Segmental Fat & Muscle HTML
+  const sf = entry.segmentalFat;
+  const sm = entry.segmentalMuscle;
+  let segmentalHtml = '';
+  if (sf || sm) {
+    const renderSegRow = (name, obj) => {
+      if (!obj) return '';
+      return `
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 12px;">
+          <span style="color: var(--text-muted);">${name}</span>
+          <span><b>${obj.kg != null ? obj.kg + ' kg' : ''}</b> ${obj.pct != null ? `(${obj.pct}%)` : ''}</span>
+          ${statusBadgeHtml(obj.status || '')}
+        </div>
+      `;
+    };
+
+    segmentalHtml = `
+      <div style="margin-top: 14px; display: grid; grid-template-columns: 1fr; gap: 10px;">
+        ${sf ? `
+          <div style="background: var(--surface-elevated); padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);">
+            <div style="font-weight: 800; font-size: 13px; color: var(--primary); margin-bottom: 6px;">🦵 Segmentowa analiza tłuszczu (Kończyny i Tułów)</div>
+            ${renderSegRow('Lewa ręka (L)', sf.leftArm)}
+            ${renderSegRow('Prawa ręka (R)', sf.rightArm)}
+            ${renderSegRow('Tułów', sf.trunk)}
+            ${renderSegRow('Lewa noga (L)', sf.leftLeg)}
+            ${renderSegRow('Prawa noga (R)', sf.rightLeg)}
+          </div>
+        ` : ''}
+        ${sm ? `
+          <div style="background: var(--surface-elevated); padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);">
+            <div style="font-weight: 800; font-size: 13px; color: var(--accent); margin-bottom: 6px;">💪 Równowaga mięśniowa (Kończyny i Tułów)</div>
+            ${renderSegRow('Lewa ręka (L)', sm.leftArm)}
+            ${renderSegRow('Prawa ręka (R)', sm.rightArm)}
+            ${renderSegRow('Tułów', sm.trunk)}
+            ${renderSegRow('Lewa noga (L)', sm.leftLeg)}
+            ${renderSegRow('Prawa noga (R)', sm.rightLeg)}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  // Weight Control HTML
+  const wc = entry.weightControl;
+  let weightControlHtml = '';
+  if (wc && (wc.targetWeightKg != null || wc.fatControlKg != null)) {
+    weightControlHtml = `
+      <div style="margin-top: 10px; background: rgba(0, 229, 255, 0.06); padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(0, 229, 255, 0.25);">
+        <div style="font-weight: 800; font-size: 13px; color: var(--accent); margin-bottom: 6px;">🎯 Kontrola wagi (Fitdays)</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 12px;">
+          <div>Zalecana waga docelowa: <b>${wc.targetWeightKg ?? '-'} kg</b></div>
+          <div>Kontrola wagi: <b>${wc.weightControlKg > 0 ? '+' : ''}${wc.weightControlKg ?? '-'} kg</b></div>
+          <div>Kontrola tłuszczu: <b style="color: var(--primary);">${wc.fatControlKg > 0 ? '+' : ''}${wc.fatControlKg ?? '-'} kg</b></div>
+          <div>Kontrola mięśni: <b style="color: var(--success);">${wc.muscleControlKg > 0 ? '+' : ''}${wc.muscleControlKg ?? '-'} kg</b></div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Circumferences attached to this entry (if any)
+  const circItems = [
+    entry.waistCm ? `Talia: <b>${entry.waistCm} cm</b>` : null,
+    entry.beltCm ? `Pas: <b>${entry.beltCm} cm</b>` : null,
+    entry.chestCm ? `Klatka: <b>${entry.chestCm} cm</b>` : null,
+    entry.shouldersCm ? `Ramiona: <b>${entry.shouldersCm} cm</b>` : null,
+    entry.bicepsCm ? `Biceps: <b>${entry.bicepsCm} cm</b>` : null,
+    entry.thighCm ? `Udo: <b>${entry.thighCm} cm</b>` : null
+  ].filter(Boolean);
+
+  container.innerHTML = `
+    <div style="background: var(--surface-elevated); border-radius: 12px; padding: 12px; border: 1px solid var(--border);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <span style="font-size: 12px; color: var(--text-muted);">📅 Pomiar z dnia: <b style="color: var(--text);">${escapeHtml(dateStr)}</b></span>
+        <span class="badge">${escapeHtml(entry.source || 'Waga / Pomiar')}</span>
+      </div>
+
+      <!-- Top 3 Hero KPIs like Fitdays Header -->
+      ${entry.weightKg != null ? `
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; text-align: center; background: #12151b; padding: 12px 8px; border-radius: 10px; margin-bottom: 12px; border: 1px solid var(--border);">
+          <div>
+            <div style="font-size: 20px; font-weight: 900; color: var(--primary);">${entry.weightKg} <span style="font-size: 12px;">kg</span></div>
+            <div style="font-size: 11px; color: var(--text-muted);">Waga</div>
+          </div>
+          <div style="border-left: 1px solid var(--border); border-right: 1px solid var(--border);">
+            <div style="font-size: 20px; font-weight: 900; color: var(--text);">${entry.bmi ?? '-'}</div>
+            <div style="font-size: 11px; color: var(--text-muted);">BMI</div>
+          </div>
+          <div>
+            <div style="font-size: 20px; font-weight: 900; color: var(--accent);">${entry.bodyFatPct ?? '-'}<span style="font-size: 12px;">%</span></div>
+            <div style="font-size: 11px; color: var(--text-muted);">Tkanka tłuszcz.</div>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Full Indicators Table -->
+      ${metricsRows.length > 0 ? `
+        <div style="max-height: 340px; overflow-y: auto; padding-right: 4px;">
+          ${metricsRows.map(r => `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 4px; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13px;">
+              <span style="color: var(--text-muted);">${escapeHtml(r.label)}</span>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <b style="color: var(--text);">${escapeHtml(String(r.val))}</b>
+                ${statusBadgeHtml(r.status)}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+
+      ${segmentalHtml}
+      ${weightControlHtml}
+
+      ${circItems.length > 0 ? `
+        <div style="margin-top: 10px; padding: 8px 10px; background: rgba(255, 179, 0, 0.08); border-radius: 8px; font-size: 12px;">
+          <div style="font-weight: 700; color: var(--primary); margin-bottom: 4px;">📏 Zapisane obwody w tym pomiarze:</div>
+          <div>${circItems.join(' • ')}</div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// Import Fitdays image/PDF/CSV report using Gemini Vision
+async function importScaleReportFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const loadingEl = document.getElementById('scale-import-loading');
+  if (loadingEl) loadingEl.style.display = 'block';
+
+  const prompt = `
+Jesteś ekspertem analizy składu ciała. Odczytaj z przesłanego raportu wagi (np. Fitdays) WSZYSTKIE parametry i zwróć je WYŁĄCZNIE jako poprawny obiekt JSON bez znaczników markdown:
+{
+  "dateLabel": "DD.MM.YYYY, HH:MM (odczytaj z nagłówka dokumentu)",
+  "isoDate": "YYYY-MM-DDTHH:MM:00 (odczytaj z nagłówka lub użyj dzisiejszej daty)",
+  "weightKg": 88.1,
+  "bmi": 25.7,
+  "bodyFatPct": 17.5,
+  "fatMassKg": 15.4,
+  "ffmKg": 72.7,
+  "muscleMassKg": 67.8,
+  "muscleRatePct": 77.0,
+  "skeletalMusclePct": 47.5,
+  "boneMassKg": 4.9,
+  "proteinMassKg": 14.5,
+  "proteinPct": 16.5,
+  "waterMassKg": 53.3,
+  "bodyWaterPct": 60.5,
+  "subcutaneousFatPct": 12.5,
+  "visceralFat": 8.0,
+  "bmrKcal": 1940,
+  "bodyAge": 38,
+  "whr": 0.86,
+  "idealWeightKg": 75.3,
+  "obesityLevel": "Wysoka",
+  "bodyType": "Tłuszcz mięśniowy",
+  "segmentalFat": {
+    "leftArm": { "kg": 0.9, "pct": 100.7, "status": "Standardowy" },
+    "rightArm": { "kg": 0.8, "pct": 103.2, "status": "Standardowy" },
+    "trunk": { "kg": 7.8, "pct": 126.1, "status": "Standardowy" },
+    "leftLeg": { "kg": 2.4, "pct": 107.2, "status": "Standardowy" },
+    "rightLeg": { "kg": 2.4, "pct": 106.7, "status": "Standardowy" }
+  },
+  "segmentalMuscle": {
+    "leftArm": { "kg": 4.3, "pct": 116.0, "status": "Wysoki" },
+    "rightArm": { "kg": 4.2, "pct": 114.0, "status": "Standardowy" },
+    "trunk": { "kg": 31.1, "pct": 106.0, "status": "Standardowy" },
+    "leftLeg": { "kg": 12.0, "pct": 110.1, "status": "Wysoki" },
+    "rightLeg": { "kg": 12.0, "pct": 110.0, "status": "Wysoki" }
+  },
+  "weightControl": {
+    "targetWeightKg": 84.1,
+    "weightControlKg": -4.0,
+    "fatControlKg": -4.0,
+    "muscleControlKg": 0.0
+  }
+}
+Zwróć wyłącznie czysty JSON.`;
+
+  try {
+    let rawResponse = '';
+    if (file.type.startsWith('image/') || file.type === 'application/pdf') {
+      const base64Data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const res = String(reader.result || '');
+          resolve(res.split(',')[1] || '');
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      rawResponse = await callGemini(prompt, 'fast', {
+        mimeType: file.type || 'image/jpeg',
+        data: base64Data
+      });
+    } else {
+      const textContent = await file.text();
+      rawResponse = await callGemini(prompt + '\n\nDane tekstowe z pliku:\n' + textContent, 'fast');
+    }
+
+    const cleaned = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+
+    const parsedTime = parsed.isoDate ? new Date(parsed.isoDate).getTime() : Date.now();
+    const validTimestamp = !isNaN(parsedTime) && parsedTime > 1000000000000 ? parsedTime : Date.now();
+
+    const newEntry = {
+      id: 'scan-' + Date.now(),
+      timestamp: validTimestamp,
+      dateLabel: parsed.dateLabel || new Date(validTimestamp).toLocaleString('pl-PL'),
+      source: 'Fitdays (Import)',
+      weightKg: parseFloat(parsed.weightKg) || null,
+      bmi: parseFloat(parsed.bmi) || null,
+      bodyFatPct: parseFloat(parsed.bodyFatPct) || null,
+      fatMassKg: parseFloat(parsed.fatMassKg) || null,
+      ffmKg: parseFloat(parsed.ffmKg) || null,
+      muscleMassKg: parseFloat(parsed.muscleMassKg) || null,
+      muscleRatePct: parseFloat(parsed.muscleRatePct) || null,
+      skeletalMusclePct: parseFloat(parsed.skeletalMusclePct) || null,
+      boneMassKg: parseFloat(parsed.boneMassKg) || null,
+      proteinMassKg: parseFloat(parsed.proteinMassKg) || null,
+      proteinPct: parseFloat(parsed.proteinPct) || null,
+      waterMassKg: parseFloat(parsed.waterMassKg) || null,
+      bodyWaterPct: parseFloat(parsed.bodyWaterPct) || null,
+      subcutaneousFatPct: parseFloat(parsed.subcutaneousFatPct) || null,
+      visceralFat: parseFloat(parsed.visceralFat) || null,
+      bmrKcal: parseInt(parsed.bmrKcal) || null,
+      bodyAge: parseInt(parsed.bodyAge) || null,
+      whr: parseFloat(parsed.whr) || null,
+      idealWeightKg: parseFloat(parsed.idealWeightKg) || null,
+      obesityLevel: parsed.obesityLevel || null,
+      bodyType: parsed.bodyType || null,
+      segmentalFat: parsed.segmentalFat || null,
+      segmentalMuscle: parsed.segmentalMuscle || null,
+      weightControl: parsed.weightControl || null,
+      waistCm: null,
+      beltCm: null,
+      chestCm: null,
+      shouldersCm: null,
+      bicepsCm: null,
+      thighCm: null
+    };
+
+    STATE.bodyMeasurements.unshift(newEntry);
+    STATE.bodyMeasurements.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    STATE.selectedBodyMeasurementId = newEntry.id;
+    localStorage.setItem('iron_body_measurements', JSON.stringify(STATE.bodyMeasurements));
+
+    // Also update current weight in userProfile if present
+    if (newEntry.weightKg) {
+      STATE.userProfile.weightKg = newEntry.weightKg;
+      localStorage.setItem('iron_user_profile', JSON.stringify(STATE.userProfile));
+      loadUserProfile();
+    }
+
+    renderBodyMeasurementsView();
+    alert(`✅ Pomyślnie zaimportowano raport z wagi (${newEntry.weightKg || ''} kg, BF: ${newEntry.bodyFatPct || ''}% )!`);
+  } catch (err) {
+    alert('Błąd podczas odczytu pliku z wagi: ' + err.message);
+  } finally {
+    if (loadingEl) loadingEl.style.display = 'none';
+    event.target.value = '';
+  }
+}
+
+function populateCircumferenceInputs() {
+  const latestWithCirc = STATE.bodyMeasurements.find(
+    m => m.waistCm || m.beltCm || m.chestCm || m.shouldersCm || m.bicepsCm || m.thighCm
+  );
+  if (!latestWithCirc) return;
+
+  const setIfEmpty = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && !el.value && val != null) el.value = val;
+  };
+  setIfEmpty('circ-waist', latestWithCirc.waistCm);
+  setIfEmpty('circ-belt', latestWithCirc.beltCm);
+  setIfEmpty('circ-chest', latestWithCirc.chestCm);
+  setIfEmpty('circ-shoulders', latestWithCirc.shouldersCm);
+  setIfEmpty('circ-biceps', latestWithCirc.bicepsCm);
+  setIfEmpty('circ-thigh', latestWithCirc.thighCm);
+}
+
+function saveBodyCircumferences() {
+  const waistCm = parseFloat(document.getElementById('circ-waist')?.value) || null;
+  const beltCm = parseFloat(document.getElementById('circ-belt')?.value) || null;
+  const chestCm = parseFloat(document.getElementById('circ-chest')?.value) || null;
+  const shouldersCm = parseFloat(document.getElementById('circ-shoulders')?.value) || null;
+  const bicepsCm = parseFloat(document.getElementById('circ-biceps')?.value) || null;
+  const thighCm = parseFloat(document.getElementById('circ-thigh')?.value) || null;
+
+  if (!waistCm && !beltCm && !chestCm && !shouldersCm && !bicepsCm && !thighCm) {
+    return alert('Wpisz przynajmniej jeden obwód (w cm)!');
+  }
+
+  const now = Date.now();
+  const newEntry = {
+    id: 'circ-' + now,
+    timestamp: now,
+    dateLabel: new Date(now).toLocaleString('pl-PL'),
+    source: 'Pomiar obwodów (cm)',
+    weightKg: parseFloat(STATE.userProfile?.weightKg) || null,
+    waistCm,
+    beltCm,
+    chestCm,
+    shouldersCm,
+    bicepsCm,
+    thighCm
+  };
+
+  // Also attach to the selected/latest scale report if it has no circumferences yet so the user sees them together
+  const firstEntry = STATE.bodyMeasurements[0];
+  if (firstEntry && !firstEntry.waistCm && !firstEntry.bicepsCm && !firstEntry.chestCm) {
+    firstEntry.waistCm = waistCm;
+    firstEntry.beltCm = beltCm;
+    firstEntry.chestCm = chestCm;
+    firstEntry.shouldersCm = shouldersCm;
+    firstEntry.bicepsCm = bicepsCm;
+    firstEntry.thighCm = thighCm;
+  }
+
+  STATE.bodyMeasurements.unshift(newEntry);
+  STATE.bodyMeasurements.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  localStorage.setItem('iron_body_measurements', JSON.stringify(STATE.bodyMeasurements));
+
+  // Switch chart metric to the first entered circumference so user immediately sees it on the chart
+  const chartSelect = document.getElementById('body-chart-metric');
+  if (chartSelect && !chartSelect.value.endsWith('Cm')) {
+    if (waistCm) chartSelect.value = 'waistCm';
+    else if (bicepsCm) chartSelect.value = 'bicepsCm';
+    else if (chestCm) chartSelect.value = 'chestCm';
+  }
+
+  renderBodyMeasurementsView();
+
+  const statusEl = document.getElementById('circ-save-status');
+  if (statusEl) {
+    statusEl.style.display = 'block';
+    setTimeout(() => { statusEl.style.display = 'none'; }, 3500);
+  }
+}
+
+// Render interactive SVG Line Chart for any selected body metric over time
+function renderBodyChart() {
+  const container = document.getElementById('body-chart-container');
+  const selectEl = document.getElementById('body-chart-metric');
+  const deltaBadge = document.getElementById('chart-delta-badge');
+  if (!container || !selectEl) return;
+
+  const metricKey = selectEl.value || 'weightKg';
+  const metricLabel = selectEl.options[selectEl.selectedIndex]?.text || metricKey;
+
+  // Gather chronological points (oldest -> newest)
+  const points = [...STATE.bodyMeasurements]
+    .filter(m => m[metricKey] != null && !isNaN(parseFloat(m[metricKey])))
+    .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+    .map(m => ({
+      val: parseFloat(m[metricKey]),
+      ts: m.timestamp || Date.now(),
+      dateShort: new Date(m.timestamp || Date.now()).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' })
+    }));
+
+  if (points.length === 0) {
+    if (deltaBadge) deltaBadge.textContent = 'Brak danych';
+    container.innerHTML = `
+      <div style="text-align: center; color: var(--text-muted); padding: 36px 12px; font-size: 13px;">
+        Brak zapisanych pomiarów dla wskaźnika: <b>${escapeHtml(metricLabel)}</b>.<br>
+        Dodaj obwody powyżej lub zaimportuj raport z wagi!
+      </div>
+    `;
+    return;
+  }
+
+  const firstVal = points[0].val;
+  const lastVal = points[points.length - 1].val;
+  const diff = +(lastVal - firstVal).toFixed(2);
+  if (deltaBadge) {
+    if (points.length === 1) {
+      deltaBadge.textContent = `Aktualnie: ${lastVal}`;
+    } else {
+      const sign = diff > 0 ? '+' : '';
+      deltaBadge.textContent = `Zmiana: ${sign}${diff} (od ${points[0].dateShort})`;
+    }
+  }
+
+  const width = 500;
+  const height = 180;
+  const padLeft = 42;
+  const padRight = 24;
+  const padTop = 26;
+  const padBottom = 32;
+  const plotW = width - padLeft - padRight;
+  const plotH = height - padTop - padBottom;
+
+  const vals = points.map(p => p.val);
+  let minVal = Math.min(...vals);
+  let maxVal = Math.max(...vals);
+  if (minVal === maxVal) {
+    minVal = minVal - 2;
+    maxVal = maxVal + 2;
+  } else {
+    const margin = (maxVal - minVal) * 0.15;
+    minVal -= margin;
+    maxVal += margin;
+  }
+
+  const coords = points.map((p, idx) => {
+    const x = points.length === 1
+      ? padLeft + plotW / 2
+      : padLeft + (idx / (points.length - 1)) * plotW;
+    const y = padTop + plotH - ((p.val - minVal) / (maxVal - minVal)) * plotH;
+    return { ...p, x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 };
+  });
+
+  const polylinePoints = coords.map(c => `${c.x},${c.y}`).join(' ');
+  const areaPoints = coords.length > 1
+    ? `${coords[0].x},${padTop + plotH} ${polylinePoints} ${coords[coords.length - 1].x},${padTop + plotH}`
+    : '';
+
+  container.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" style="width: 100%; height: auto; display: block; overflow: visible;">
+      <defs>
+        <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#00E5FF" stop-opacity="0.32"/>
+          <stop offset="100%" stop-color="#00E5FF" stop-opacity="0.0"/>
+        </linearGradient>
+      </defs>
+
+      <!-- Horizontal reference lines -->
+      <line x1="${padLeft}" y1="${padTop}" x2="${width - padRight}" y2="${padTop}" stroke="#242832" stroke-dasharray="4 4" stroke-width="1"/>
+      <line x1="${padLeft}" y1="${padTop + plotH / 2}" x2="${width - padRight}" y2="${padTop + plotH / 2}" stroke="#242832" stroke-dasharray="4 4" stroke-width="1"/>
+      <line x1="${padLeft}" y1="${padTop + plotH}" x2="${width - padRight}" y2="${padTop + plotH}" stroke="#2C323E" stroke-width="1"/>
+
+      <!-- Y-axis labels -->
+      <text x="${padLeft - 6}" y="${padTop + 4}" fill="#8E99A8" font-size="10" text-anchor="end">${maxVal.toFixed(1)}</text>
+      <text x="${padLeft - 6}" y="${padTop + plotH / 2 + 4}" fill="#8E99A8" font-size="10" text-anchor="end">${((maxVal + minVal) / 2).toFixed(1)}</text>
+      <text x="${padLeft - 6}" y="${padTop + plotH + 4}" fill="#8E99A8" font-size="10" text-anchor="end">${minVal.toFixed(1)}</text>
+
+      <!-- Area & Line -->
+      ${areaPoints ? `<polygon points="${areaPoints}" fill="url(#chartGrad)"/>` : ''}
+      ${coords.length > 1 ? `<polyline fill="none" stroke="#00E5FF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${polylinePoints}"/>` : ''}
+
+      <!-- Points & Value Labels -->
+      ${coords.map((c, i) => {
+        const showLabel = coords.length <= 8 || i === 0 || i === coords.length - 1 || i % Math.ceil(coords.length / 6) === 0;
+        return `
+          <circle cx="${c.x}" cy="${c.y}" r="5" fill="#FFB300" stroke="#101216" stroke-width="2"/>
+          ${showLabel ? `
+            <text x="${c.x}" y="${c.y - 10}" fill="#F0F3F8" font-size="11" font-weight="700" text-anchor="middle">${c.val}</text>
+            <text x="${c.x}" y="${padTop + plotH + 18}" fill="#8E99A8" font-size="10" text-anchor="middle">${c.dateShort}</text>
+          ` : ''}
+        `;
+      }).join('')}
+    </svg>
+  `;
+}
+
+function renderBodyHistoryList() {
+  const listEl = document.getElementById('body-history-list');
+  const countEl = document.getElementById('body-history-count');
+  if (!listEl) return;
+
+  if (countEl) countEl.textContent = `${STATE.bodyMeasurements.length} wpisów`;
+
+  if (STATE.bodyMeasurements.length === 0) {
+    listEl.innerHTML = `<p style="color: var(--text-muted); font-size: 13px;">Brak zapisanych pomiarów.</p>`;
+    return;
+  }
+
+  listEl.innerHTML = STATE.bodyMeasurements.map(m => {
+    const dStr = m.dateLabel || new Date(m.timestamp || Date.now()).toLocaleString('pl-PL');
+    const tags = [];
+    if (m.weightKg) tags.push(`⚖️ <b>${m.weightKg} kg</b>`);
+    if (m.bodyFatPct) tags.push(`BF: <b>${m.bodyFatPct}%</b>`);
+    if (m.muscleMassKg) tags.push(`Mięśnie: <b>${m.muscleMassKg} kg</b>`);
+    if (m.waistCm) tags.push(`Talia: <b>${m.waistCm} cm</b>`);
+    if (m.beltCm) tags.push(`Pas: <b>${m.beltCm} cm</b>`);
+    if (m.chestCm) tags.push(`Klatka: <b>${m.chestCm} cm</b>`);
+    if (m.shouldersCm) tags.push(`Ramiona: <b>${m.shouldersCm} cm</b>`);
+    if (m.bicepsCm) tags.push(`Biceps: <b>${m.bicepsCm} cm</b>`);
+    if (m.thighCm) tags.push(`Udo: <b>${m.thighCm} cm</b>`);
+
+    const isSelected = STATE.selectedBodyMeasurementId === m.id;
+    return `
+      <div style="background: var(--surface-elevated); border: 1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+          <span style="font-size: 12px; font-weight: 700; color: var(--primary);">${escapeHtml(dStr)}</span>
+          <span style="font-size: 11px; color: var(--text-muted);">${escapeHtml(m.source || '')}</span>
+        </div>
+        <div style="font-size: 12px; color: var(--text); margin-bottom: 8px; line-height: 1.5;">
+          ${tags.join(' • ') || 'Zapis pomiaru'}
+        </div>
+        <div style="display: flex; gap: 6px; justify-content: flex-end;">
+          ${m.bodyFatPct || m.muscleMassKg ? `<button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 8px;" onclick="selectBodyMeasurement('${m.id}')">👁️ Pokaż w tabeli</button>` : ''}
+          <button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 8px; color: var(--danger);" onclick="deleteBodyMeasurement('${m.id}')">Usuń</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function selectBodyMeasurement(id) {
+  STATE.selectedBodyMeasurementId = id;
+  renderLatestScaleReport();
+  renderBodyHistoryList();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function deleteBodyMeasurement(id) {
+  if (!confirm('Czy na pewno chcesz usunąć ten pomiar z historii?')) return;
+  STATE.bodyMeasurements = STATE.bodyMeasurements.filter(m => m.id !== id);
+  if (STATE.selectedBodyMeasurementId === id) {
+    STATE.selectedBodyMeasurementId = null;
+  }
+  localStorage.setItem('iron_body_measurements', JSON.stringify(STATE.bodyMeasurements));
+  renderBodyMeasurementsView();
+}
+
+// ============================================================================
+// COACH AI ANALYSIS & CONVERSATIONAL CHAT (Includes Profile, Fitdays Scan, Circumferences, Duration, Rests & LoadTypes)
 // ============================================================================
 function buildCoachProfileAndPlansContext() {
   const p = STATE.userProfile || {};
-  const weightVal = parseFloat(p.weightKg) || 0;
-  const heightVal = parseFloat(p.heightCm) || 0;
+  const latestScale = STATE.bodyMeasurements.find(m => m.weightKg && (m.bodyFatPct || m.muscleMassKg)) || STATE.bodyMeasurements[0] || {};
+  const latestCirc = STATE.bodyMeasurements.find(m => m.waistCm || m.beltCm || m.chestCm || m.shouldersCm || m.bicepsCm || m.thighCm) || {};
+
+  const weightVal = parseFloat(p.weightKg) || parseFloat(latestScale.weightKg) || 0;
+  const heightVal = parseFloat(p.heightCm) || 185;
   let bmiStr = '';
   if (weightVal > 0 && heightVal > 0) {
     const bmi = (weightVal / Math.pow(heightVal / 100, 2)).toFixed(1);
     bmiStr = ` (BMI: ${bmi})`;
   }
 
+  // Build detailed Fitdays body composition report for LLM
+  let fitdaysContext = 'Brak szczegółowego raportu z wagi.';
+  if (latestScale && (latestScale.bodyFatPct || latestScale.muscleMassKg)) {
+    const sf = latestScale.segmentalFat || {};
+    const sm = latestScale.segmentalMuscle || {};
+    const wc = latestScale.weightControl || {};
+    fitdaysContext = [
+      `Data pomiaru z wagi Fitdays: ${latestScale.dateLabel || ''}`,
+      `• Waga: ${latestScale.weightKg} kg | BMI: ${latestScale.bmi} | Tkanka tłuszczowa: ${latestScale.bodyFatPct}% (Masa tłuszczowa: ${latestScale.fatMassKg} kg)`,
+      `• Beztłuszczowa masa ciała (FFM): ${latestScale.ffmKg} kg | Masa mięśniowa: ${latestScale.muscleMassKg} kg (Wskaźnik mięśniowy: ${latestScale.muscleRatePct}%)`,
+      `• Mięśnie szkieletowe: ${latestScale.skeletalMusclePct}% | Masa kostna: ${latestScale.boneMassKg} kg`,
+      `• Masa białkowa: ${latestScale.proteinMassKg} kg (Białko: ${latestScale.proteinPct}%) | Masa wody: ${latestScale.waterMassKg} kg (Woda: ${latestScale.bodyWaterPct}%)`,
+      `• Tłuszcz podskórny: ${latestScale.subcutaneousFatPct}% | Tłuszcz trzewny (wisceralny): ${latestScale.visceralFat}`,
+      `• BMR (Podstawowa przemiana materii): ${latestScale.bmrKcal} kcal | Wiek metaboliczny ciała: ${latestScale.bodyAge} lat | WHR: ${latestScale.whr}`,
+      `• Idealna masa ciała wg wagi: ${latestScale.idealWeightKg} kg | Typ sylwetki: ${latestScale.bodyType || 'Tłuszcz mięśniowy'}`,
+      sf.trunk ? `• Segmentowa analiza tłuszczu: Lewa ręka ${sf.leftArm?.kg}kg (${sf.leftArm?.pct}%), Prawa ręka ${sf.rightArm?.kg}kg (${sf.rightArm?.pct}%), Tułów ${sf.trunk?.kg}kg (${sf.trunk?.pct}%), Lewa noga ${sf.leftLeg?.kg}kg (${sf.leftLeg?.pct}%), Prawa noga ${sf.rightLeg?.kg}kg (${sf.rightLeg?.pct}%)` : null,
+      sm.trunk ? `• Segmentowa równowaga mięśniowa: Lewa ręka ${sm.leftArm?.kg}kg (${sm.leftArm?.pct}% - ${sm.leftArm?.status}), Prawa ręka ${sm.rightArm?.kg}kg (${sm.rightArm?.pct}% - ${sm.rightArm?.status}), Tułów ${sm.trunk?.kg}kg (${sm.trunk?.pct}%), Lewa noga ${sm.leftLeg?.kg}kg (${sm.leftLeg?.pct}% - ${sm.leftLeg?.status}), Prawa noga ${sm.rightLeg?.kg}kg (${sm.rightLeg?.pct}% - ${sm.rightLeg?.status})` : null,
+      wc.targetWeightKg ? `• Zalecenia kontroli wagi Fitdays: Docelowa waga ${wc.targetWeightKg}kg (Kontrola tłuszczu: ${wc.fatControlKg}kg, Kontrola mięśni: ${wc.muscleControlKg}kg)` : null
+    ].filter(Boolean).join('\n');
+  }
+
+  // Build circumferences summary for LLM
+  const circParts = [
+    latestCirc.waistCm ? `Talia: ${latestCirc.waistCm} cm` : null,
+    latestCirc.beltCm ? `Pas: ${latestCirc.beltCm} cm` : null,
+    latestCirc.chestCm ? `Klatka piersiowa: ${latestCirc.chestCm} cm` : null,
+    latestCirc.shouldersCm ? `Ramiona/Barki: ${latestCirc.shouldersCm} cm` : null,
+    latestCirc.bicepsCm ? `Biceps: ${latestCirc.bicepsCm} cm` : null,
+    latestCirc.thighCm ? `Udo: ${latestCirc.thighCm} cm` : null
+  ].filter(Boolean);
+  const circContext = circParts.length > 0
+    ? `Ostatnie obwody ciała (${latestCirc.dateLabel || ''}): ${circParts.join(', ')}`
+    : 'Brak wpisanych obwodów centymetrem.';
+
+  // Build historical trend of body measurements (up to last 6 entries)
+  const bodyTrendContext = STATE.bodyMeasurements.slice(0, 6).map(m => {
+    const items = [];
+    if (m.weightKg) items.push(`waga ${m.weightKg}kg`);
+    if (m.bodyFatPct) items.push(`BF ${m.bodyFatPct}%`);
+    if (m.muscleMassKg) items.push(`mięśnie ${m.muscleMassKg}kg`);
+    if (m.waistCm) items.push(`talia ${m.waistCm}cm`);
+    if (m.beltCm) items.push(`pas ${m.beltCm}cm`);
+    if (m.chestCm) items.push(`klatka ${m.chestCm}cm`);
+    if (m.shouldersCm) items.push(`ramiona ${m.shouldersCm}cm`);
+    if (m.bicepsCm) items.push(`biceps ${m.bicepsCm}cm`);
+    if (m.thighCm) items.push(`udo ${m.thighCm}cm`);
+    return `- ${m.dateLabel || new Date(m.timestamp).toLocaleDateString('pl-PL')}: ${items.join(', ')}`;
+  }).join('\n');
+
   const profileSection = [
     `• Waga użytkownika: ${weightVal > 0 ? weightVal + ' kg' : 'nie podano'}`,
     `• Wzrost użytkownika: ${heightVal > 0 ? heightVal + ' cm' + bmiStr : 'nie podano'}`,
     `• Główny cel treningowy: ${p.goal || 'Budowa masy mięśniowej (Hipertrofia)'}`,
-    p.goalNotes ? `• Dodatkowe priorytety / uwagi / kontuzje: ${p.goalNotes}` : null
+    p.goalNotes ? `• Dodatkowe priorytety / uwagi / kontuzje: ${p.goalNotes}` : null,
+    `\n=== PEŁNY RAPORT SKŁADU CIAŁA Z WAGI (FITDAYS) ===\n${fitdaysContext}`,
+    `\n=== OBWODY CIAŁA (CM) ===\n${circContext}`,
+    `\n=== HISTORIA ZMIAN PARAMETRÓW CIAŁA I OBWODÓW W CZASIE ===\n${bodyTrendContext}`
   ].filter(Boolean).join('\n');
 
   const plansSection = (STATE.plans && STATE.plans.length > 0)
@@ -1791,9 +2525,9 @@ async function triggerCoachAnalysis(session) {
 
   const prompt = `
 Działasz jako doświadczony, zaawansowany trener personalny i fizjolog sportowy w aplikacji IronCoach.
-Przeanalizuj zakończony trening użytkownika, biorąc pod uwagę WSZYSTKIE poniższe dane: jego wagę, wzrost, cel treningowy, superserie, ćwiczenia z masą własnego ciała, ćwiczenia z dwoma hantlami (tonaż liczony podwójnie), czas trwania całego treningu oraz czasy poszczególnych przerw (w tym przekroczenia czasu przerwy).
+Przeanalizuj zakończony trening użytkownika, biorąc pod uwagę WSZYSTKIE poniższe dane: jego wagę, wzrost, cel treningowy, pełny raport składu ciała z wagi Fitdays (21 wskaźników + analiza segmentowa tłuszczu i równowagi mięśniowej kończyn/tułowia), obwody ciała (talia, pas, klatka, ramiona, biceps, udo), historię zmian składu ciała w czasie, superserie, ćwiczenia z masą własnego ciała, ćwiczenia z dwoma hantlami (tonaż liczony podwójnie), czas trwania całego treningu oraz czasy poszczególnych przerw (w tym przekroczenia czasu przerwy).
 
-=== PROFIL I CEL UŻYTKOWNIKA ===
+=== PROFIL, SKŁAD CIAŁA (FITDAYS), OBWODY I CEL UŻYTKOWNIKA ===
 ${profileSection}
 
 === SZCZEGÓŁY ZAKOŃCZONEGO TRENINGU ===
@@ -1806,9 +2540,9 @@ ${prevWorkouts}
 ${plansSection}
 
 Przygotuj pogłębioną, spersonalizowaną analizę w języku polskim:
-1. 📊 Ocena sesji pod kątem celu użytkownika (${STATE.userProfile?.goal || 'Hipertrofia'}) oraz jego parametrów (waga/wzrost): oceń objętość, tonaż (w tym ćwiczenia z masą własnego ciała i 2x hantle), gęstość treningową (całkowity czas sesji) oraz dyscyplinę przerw między ćwiczeniami i wewnątrz superserii.
+1. 📊 Ocena sesji pod kątem celu użytkownika (${STATE.userProfile?.goal || 'Hipertrofia'}) oraz jego składu ciała Fitdays i obwodów: oceń objętość, tonaż (w tym ćwiczenia z masą własnego ciała i 2x hantle), gęstość treningową (całkowity czas sesji) oraz dyscyplinę przerw między ćwiczeniami i wewnątrz superserii. Odnieś się też do ewentualnych dysproporcji segmentowych z raportu wagi.
 2. 🎯 Konkretna periodyzacja i progresywne przeładowanie na kolejny trening: wskaż dokładnie do jakich ćwiczeń dodać ciężar (lub dołożyć ciężar w ćwiczeniach z masą ciała), gdzie dodać powtórzenia, a gdzie zmodyfikować czas przerw.
-3. ⚡ Praktyczne wskazówki biomechaniczne, żywieniowe (dopasowane do wagi i celu) oraz regeneracyjne.
+3. ⚡ Praktyczne wskazówki biomechaniczne, żywieniowe (dopasowane do BMR, % tkanki tłuszczowej, masy mięśniowej i celu) oraz regeneracyjne.
 Używaj czytelnego formatowania punktowego.`;
 
   try {
@@ -1863,9 +2597,9 @@ async function askCoachQuestion() {
 
   const fullPrompt = `
 Jesteś doświadczonym, empatycznym trenerem personalnym i fizjologiem w aplikacji IronCoach.
-Rozmawiasz z użytkownikiem w trybie ciągłego czatu. Zawsze bierz pod uwagę jego wagę, wzrost, cel treningowy, strukturę planów (superserie, ćwiczenia z masą ciała, ćwiczenia 2x hantle) oraz pełne dane z jego ostatnich treningów (czas trwania, tonaż, rzeczywiste przerwy między seriami).
+Rozmawiasz z użytkownikiem w trybie ciągłego czatu. Zawsze bierz pod uwagę jego wagę, wzrost, cel treningowy, pełny raport składu ciała z wagi Fitdays (21 wskaźników, BMR, % tkanki tłuszczowej, masa mięśniowa, segmentowa analiza kończyn i tułowia), obwody ciała (talia, pas, klatka, ramiona, biceps, udo), historię zmian pomiarów w czasie, strukturę planów (superserie, ćwiczenia z masą ciała, ćwiczenia 2x hantle) oraz pełne dane z jego ostatnich treningów (czas trwania, tonaż, rzeczywiste przerwy między seriami).
 
-=== PROFIL I CEL TRENINGOWY UŻYTKOWNIKA ===
+=== PROFIL, SKŁAD CIAŁA (FITDAYS), OBWODY I CEL UŻYTKOWNIKA ===
 ${profileSection}
 
 === AKTUALNE PLANY TRENINGOWE ===
@@ -2034,9 +2768,10 @@ function saveApiKey() {
 
 function exportDataJson() {
   const backup = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     exportedAt: new Date().toISOString(),
     userProfile: STATE.userProfile,
+    bodyMeasurements: STATE.bodyMeasurements,
     plans: STATE.plans,
     history: STATE.history,
     customGifMap: JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}'),
@@ -2057,7 +2792,7 @@ function importDataJson(event) {
     try {
       const data = JSON.parse(e.target.result);
 
-      // 0. Restore user profile if present
+      // 0. Restore user profile & body measurements if present
       if (data.userProfile && typeof data.userProfile === 'object') {
         STATE.userProfile = {
           weightKg: data.userProfile.weightKg || '',
@@ -2067,6 +2802,19 @@ function importDataJson(event) {
         };
         localStorage.setItem('iron_user_profile', JSON.stringify(STATE.userProfile));
         loadUserProfile();
+      }
+
+      if (Array.isArray(data.bodyMeasurements)) {
+        const mergedMeasurements = [...STATE.bodyMeasurements];
+        data.bodyMeasurements.forEach(item => {
+          const idx = mergedMeasurements.findIndex(x => x.id === item.id);
+          if (idx !== -1) mergedMeasurements[idx] = item;
+          else mergedMeasurements.push(item);
+        });
+        mergedMeasurements.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        STATE.bodyMeasurements = mergedMeasurements;
+        localStorage.setItem('iron_body_measurements', JSON.stringify(STATE.bodyMeasurements));
+        renderBodyMeasurementsView();
       }
 
       // 1. Safely normalize and import plans without breaking existing structure

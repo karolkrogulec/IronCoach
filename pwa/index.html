@@ -515,6 +515,116 @@
     </div>
   </section>
 
+  <!-- VIEW: BODY MEASUREMENTS & FITDAYS SCALE -->
+  <section id="view-body" class="view">
+    <div class="container">
+      <!-- 1. Scale Import & Full Fitdays Report -->
+      <div class="card" style="border-color: rgba(0, 229, 255, 0.35);">
+        <div class="card-title">
+          <span>⚖️ Parametry z Wagi (Fitdays)</span>
+          <span class="badge badge-cyan">Gemini Vision</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 12px;">
+          Wgraj zrzut ekranu / zdjęcie / plik PDF lub CSV wygenerowany przez Twoją wagę domową. AI odczyta wszystkie wskaźniki, analizę segmentową kończyn oraz kontrolę wagi i dopisze je do historii.
+        </p>
+
+        <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+          <button class="btn btn-accent" onclick="document.getElementById('scale-file-input').click()">
+            📥 Importuj plik z wagi (Zdjęcie / PDF / CSV)
+          </button>
+          <input type="file" id="scale-file-input" style="display: none;" accept="image/*,.pdf,.csv,.txt" onchange="importScaleReportFile(event)">
+        </div>
+
+        <div id="scale-import-loading" style="display: none; text-align: center; padding: 14px; color: var(--accent); background: var(--surface-elevated); border-radius: 10px; margin-bottom: 12px;">
+          ⏳ Gemini Vision odczytuje wszystkie parametry i analizę segmentową z raportu wagi...
+        </div>
+
+        <!-- Full Fitdays Report Container -->
+        <div id="scale-latest-report-container"></div>
+      </div>
+
+      <!-- 2. Body Circumferences Input -->
+      <div class="card">
+        <div class="card-title">
+          <span>📏 Obwody Ciała (cm)</span>
+          <span class="badge">Pomiar centymetrem</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 12px;">
+          Dopisz swoje aktualne obwody. Zostaną zapisane w historii z dzisiejszą datą, wyświetlone na wykresach i przekazane Trenerowi AI.
+        </p>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Talia (cm)</label>
+            <input type="number" step="0.5" id="circ-waist" class="input-box" placeholder="np. 84">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Pas (cm)</label>
+            <input type="number" step="0.5" id="circ-belt" class="input-box" placeholder="np. 88">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Klatka (cm)</label>
+            <input type="number" step="0.5" id="circ-chest" class="input-box" placeholder="np. 108">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Ramiona/Barki (cm)</label>
+            <input type="number" step="0.5" id="circ-shoulders" class="input-box" placeholder="np. 126">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Biceps (cm)</label>
+            <input type="number" step="0.5" id="circ-biceps" class="input-box" placeholder="np. 40.5">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Udo (cm)</label>
+            <input type="number" step="0.5" id="circ-thigh" class="input-box" placeholder="np. 61">
+          </div>
+        </div>
+
+        <button class="btn btn-primary" onclick="saveBodyCircumferences()">💾 Zapisz Obwody</button>
+        <p id="circ-save-status" style="color: var(--success); font-size: 13px; margin-top: 8px; display: none;">✅ Obwody zostały zapisane w historii!</p>
+      </div>
+
+      <!-- 3. Time-Series Charts -->
+      <div class="card">
+        <div class="card-title">
+          <span>📈 Wykres Zmian w Czasie</span>
+          <span id="chart-delta-badge" class="badge badge-cyan"></span>
+        </div>
+        <select id="body-chart-metric" class="input-box" style="text-align: left; font-size: 13px; margin-bottom: 12px;" onchange="renderBodyChart()">
+          <optgroup label="Wskaźniki z wagi (Fitdays)">
+            <option value="weightKg">⚖️ Waga (kg)</option>
+            <option value="bodyFatPct">🔥 Tkanka tłuszczowa (%)</option>
+            <option value="muscleMassKg">💪 Masa mięśniowa (kg)</option>
+            <option value="skeletalMusclePct">🦴 Mięśnie szkieletowe (%)</option>
+            <option value="ffmKg">⚡ Beztłuszczowa masa ciała FFM (kg)</option>
+            <option value="visceralFat">🫀 Tłuszcz trzewny (poziom)</option>
+            <option value="bodyWaterPct">💧 Woda w organizmie (%)</option>
+            <option value="bmrKcal">🔋 BMR - Przemiana materii (kcal)</option>
+          </optgroup>
+          <optgroup label="Obwody ciała (cm)">
+            <option value="waistCm">📏 Obwód: Talia (cm)</option>
+            <option value="beltCm">📏 Obwód: Pas (cm)</option>
+            <option value="chestCm">📏 Obwód: Klatka piersiowa (cm)</option>
+            <option value="shouldersCm">📏 Obwód: Ramiona / Barki (cm)</option>
+            <option value="bicepsCm">📏 Obwód: Biceps (cm)</option>
+            <option value="thighCm">📏 Obwód: Udo (cm)</option>
+          </optgroup>
+        </select>
+
+        <div id="body-chart-container" style="background: #0d0f13; border: 1px solid var(--border); border-radius: 12px; padding: 12px; min-height: 190px;"></div>
+      </div>
+
+      <!-- 4. Measurement History List -->
+      <div class="card">
+        <div class="card-title">
+          <span>📜 Historia Pomiarów Ciała</span>
+          <span id="body-history-count" class="badge">0 wpisów</span>
+        </div>
+        <div id="body-history-list"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- VIEW: SETTINGS -->
   <section id="view-settings" class="view">
     <div class="container">
@@ -598,6 +708,10 @@
       <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
       Pulpit
     </button>
+    <button class="nav-item" onclick="showView('body')">
+      <svg viewBox="0 0 24 24"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>
+      Pomiary
+    </button>
     <button class="nav-item" onclick="showView('import-keep')">
       <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
       Keep
@@ -676,6 +790,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=14"></script>
+  <script src="app.js?v=15"></script>
 </body>
 </html>
