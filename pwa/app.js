@@ -1996,7 +1996,7 @@ function renderSupersetGroupCard(groupMembers, ssGroup, restSS, restMain) {
             ${isRoundDone ? '✅' : (isActiveRound ? '⚡' : '🔄')} OBWÓD ${sIdx + 1} z ${maxSets}
           </span>
           <span style="font-size: 10px; color: var(--text-muted);">
-            ${isRoundDone ? 'Obwód ukończony' : `⚡ ${restSS}s zmiana • ⏱️ ${restMain}s po obwodzie`}
+            ${isRoundDone ? 'Obwód ukończony' : `⏱️ ${restSS}s odpoczynku w SS • ⏱️ ${restMain}s po obwodzie`}
           </span>
         </div>
         ${itemsInThisRoundHtml}
@@ -2009,7 +2009,7 @@ function renderSupersetGroupCard(groupMembers, ssGroup, restSS, restMain) {
       <div class="superset-group-header" style="flex-direction: column; align-items: stretch; gap: 8px; margin-bottom: 10px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <span style="font-size: 14px; font-weight: 800; color: var(--accent);">🔗 SUPERSERIA ${escapeHtml(ssGroup)} (${exCount} ćwiczenia na przemian)</span>
-          <span class="badge" style="background: rgba(0,229,255,0.14); color: var(--accent); font-size: 10px;">⚡ ${restSS}s / ⏱️ ${restMain}s</span>
+          <span class="badge" style="background: rgba(0,229,255,0.14); color: var(--accent); font-size: 10px;">⏱️ ${restSS}s w SS / ⏱️ ${restMain}s obwód</span>
         </div>
         <div style="display: flex; gap: 6px; flex-wrap: wrap;">
           ${headerQuickGifs}
@@ -2363,6 +2363,75 @@ function renderTimerEffortStrip() {
   `;
 }
 
+function getNextWorkoutBlockInfo(currentExIdx, currentSsGroup) {
+  if (!STATE.activeWorkout || !Array.isArray(STATE.activeWorkout.exercises)) return null;
+  const exercises = STATE.activeWorkout.exercises;
+
+  const isCurrentInSs = Boolean(currentSsGroup && currentSsGroup.trim());
+  const cleanSsGroup = isCurrentInSs ? currentSsGroup.trim() : '';
+
+  // 1. Search forward from current exercise for the next incomplete block
+  let checkFromIdx = currentExIdx + 1;
+  if (isCurrentInSs) {
+    for (let i = exercises.length - 1; i >= 0; i--) {
+      if ((exercises[i].supersetGroup || '').trim() === cleanSsGroup) {
+        checkFromIdx = Math.max(checkFromIdx, i + 1);
+        break;
+      }
+    }
+  }
+
+  for (let i = checkFromIdx; i < exercises.length; i++) {
+    const candidate = exercises[i];
+    const candSs = (candidate.supersetGroup || '').trim();
+    if (isCurrentInSs && candSs === cleanSsGroup) continue;
+
+    const hasIncompleteSet = Array.isArray(candidate.sets) && candidate.sets.some(s => !s.completed);
+    if (hasIncompleteSet) {
+      if (candSs) {
+        return {
+          shortName: `Superseria ${candSs}`,
+          name: `Superseria ${candSs} (${candidate.name})`,
+          exercise: candidate
+        };
+      } else {
+        return {
+          shortName: candidate.name,
+          name: candidate.name,
+          exercise: candidate
+        };
+      }
+    }
+  }
+
+  // 2. Wrap-around search in case an earlier exercise was skipped/incomplete
+  for (let i = 0; i < exercises.length; i++) {
+    const candidate = exercises[i];
+    const candSs = (candidate.supersetGroup || '').trim();
+    if (isCurrentInSs && candSs === cleanSsGroup) continue;
+    if (!isCurrentInSs && i === currentExIdx) continue;
+
+    const hasIncompleteSet = Array.isArray(candidate.sets) && candidate.sets.some(s => !s.completed);
+    if (hasIncompleteSet) {
+      if (candSs) {
+        return {
+          shortName: `Superseria ${candSs}`,
+          name: `Superseria ${candSs} (${candidate.name})`,
+          exercise: candidate
+        };
+      } else {
+        return {
+          shortName: candidate.name,
+          name: candidate.name,
+          exercise: candidate
+        };
+      }
+    }
+  }
+
+  return null; // All sets in all exercises of the workout are complete!
+}
+
 function toggleSetComplete(exIdx, sIdx) {
   if (!STATE.activeWorkout) return;
   const ex = STATE.activeWorkout.exercises[exIdx];
@@ -2404,6 +2473,7 @@ function toggleSetComplete(exIdx, sIdx) {
     if (navigator.vibrate) navigator.vibrate(50);
 
     const mainRest = parseInt(ex.restSeconds || STATE.activeWorkout.restSeconds) || 90;
+    const shortRest = parseInt(ex.supersetRestSeconds || STATE.activeWorkout.supersetRestSeconds) || 30;
 
     if (ssGroup) {
       // Find all exercises belonging to this superset
@@ -2417,16 +2487,17 @@ function toggleSetComplete(exIdx, sIdx) {
       );
 
       if (incompleteInSameRound) {
-        // Exercise finished, but round NOT finished yet: Short technical break to switch station/equipment
+        // Exercise finished, but round NOT finished yet:
+        // Stations are already prepared! This is a SHORT REST BREAK between exercises in superset (count DOWN)
         const nextExName = incompleteInSameRound.item.name;
         startRestTimer(
-          0,
-          `⚡ PRZERWA TECHNICZNA • PRZYGOTUJ: ${nextExName}`,
+          shortRest,
+          `⏱️ ODPOCZYNEK W SUPERSERII • KOLEJNE: ${nextExName}`,
           ex.name,
           set.num,
           'superset-short',
-          `🔧 Czas na przygotowanie stanowiska pod kolejne ćwiczenie • Brak limitu czasu`,
-          `✅ Gotowe — Stanowisko przygotowane (Rozpocznij: ${nextExName})`
+          `⏱️ Krótki odpoczynek w superserii przed: ${nextExName} • Cel: ${shortRest}s (odliczanie w dół)`,
+          `✅ OK / Gotowe (Rozpocznij: ${nextExName})`
         );
       } else {
         // Round sIdx is fully complete!
@@ -2434,54 +2505,84 @@ function toggleSetComplete(exIdx, sIdx) {
         const hasNextRound = (sIdx + 1) < maxSets;
 
         if (hasNextRound) {
-          // Long rest between rounds (countdown with overtime)
+          // Long rest between rounds of superset (odliczanie w dół z czasem zdefiniowanym w treningu)
           startRestTimer(
             mainRest,
             `🟢 ODPOCZYNEK PO OBWODZIE ${sIdx + 1}/${maxSets} (SUPERSERIA ${ssGroup})`,
             ex.name,
             set.num,
             'superset-round',
-            `⏱️ Planowany odpoczynek między obwodami: ${mainRest}s`,
+            `⏱️ Dłuższy odpoczynek po całym obwodzie • Cel: ${mainRest}s (odliczanie w dół)`,
             `✅ OK / Gotowe (Rozpocznij Obwód ${sIdx + 2}/${maxSets})`
           );
         } else {
-          // Superset fully completed! (countdown with overtime)
-          startRestTimer(
-            mainRest,
-            `🎉 UKOŃCZONO SUPERSERIĘ ${ssGroup}! (${maxSets} obwodów)`,
-            ex.name,
-            set.num,
-            'superset-done',
-            `⏱️ Planowany odpoczynek po superserii: ${mainRest}s`,
-            `✅ OK / Gotowe (Przejdź do kolejnego zadania)`
-          );
+          // Entire Superset is fully completed (all rounds done)!
+          // NOW is the time for a TECHNICAL BREAK to prepare gym stations for the next workout block!
+          const nextBlock = getNextWorkoutBlockInfo(exIdx, ssGroup);
+          if (nextBlock) {
+            startRestTimer(
+              0,
+              `⚡ PRZERWA TECHNICZNA • PRZYGOTUJ STANOWISKO: ${nextBlock.shortName}`,
+              ex.name,
+              set.num,
+              'technical-prep',
+              `🔧 Przygotowanie siłowni pod kolejny zestaw: ${nextBlock.name} • Brak limitu czasu`,
+              `✅ Stanowisko gotowe (Rozpocznij: ${nextBlock.shortName})`
+            );
+          } else {
+            // Whole workout completed!
+            startRestTimer(
+              mainRest,
+              `🎉 UKOŃCZONO TRENING! (Wszystkie serie wykonane)`,
+              ex.name,
+              set.num,
+              'workout-done',
+              `🏆 Wykonałeś cały zaplanowany trening! Kliknij aby zakończyć sesję.`,
+              `🏁 Zakończ i podsumuj trening`
+            );
+          }
         }
       }
     } else {
       // Standard isolated exercise
       const isLastSet = sIdx >= ex.sets.length - 1;
       if (!isLastSet) {
-        // Rest between sets (countdown with overtime)
+        // Rest between sets of isolated exercise (odliczanie w dół z czasem zdefiniowanym w treningu)
         startRestTimer(
           mainRest,
           `⏱️ ODPOCZYNEK MIĘDZY SERIAMI (SERIA ${set.num}/${ex.sets.length})`,
           ex.name,
           set.num,
           'standard',
-          `⏱️ Planowany odpoczynek przed Serią ${set.num + 1}/${ex.sets.length}: ${mainRest}s`,
+          `⏱️ Planowany odpoczynek przed Serią ${set.num + 1}/${ex.sets.length}: ${mainRest}s (odliczanie w dół)`,
           `✅ OK / Gotowe (Rozpocznij Serię ${set.num + 1}/${ex.sets.length})`
         );
       } else {
-        // Exercise complete (countdown with overtime)
-        startRestTimer(
-          mainRest,
-          `🟢 UKOŃCZONO ĆWICZENIE: ${ex.name} (${ex.sets.length} serii)`,
-          ex.name,
-          set.num,
-          'exercise-done',
-          `⏱️ Planowany odpoczynek przed kolejnym ćwiczeniem: ${mainRest}s`,
-          `✅ OK / Gotowe (Przejdź do kolejnego ćwiczenia)`
-        );
+        // Entire single exercise is complete!
+        // NOW is the time for a TECHNICAL BREAK to prepare gym stations for the next workout block!
+        const nextBlock = getNextWorkoutBlockInfo(exIdx, null);
+        if (nextBlock) {
+          startRestTimer(
+            0,
+            `⚡ PRZERWA TECHNICZNA • PRZYGOTUJ STANOWISKO: ${nextBlock.shortName}`,
+            ex.name,
+            set.num,
+            'technical-prep',
+            `🔧 Przygotowanie siłowni pod kolejny zestaw: ${nextBlock.name} • Brak limitu czasu`,
+            `✅ Stanowisko gotowe (Rozpocznij: ${nextBlock.shortName})`
+          );
+        } else {
+          // Whole workout completed!
+          startRestTimer(
+            mainRest,
+            `🎉 UKOŃCZONO TRENING! (Wszystkie serie wykonane)`,
+            ex.name,
+            set.num,
+            'workout-done',
+            `🏆 Wykonałeś cały zaplanowany trening! Kliknij aby zakończyć sesję.`,
+            `🏁 Zakończ i podsumuj trening`
+          );
+        }
       }
     }
     renderTimerEffortStrip();
@@ -2561,7 +2662,7 @@ function startRestTimer(
 ) {
   clearInterval(STATE.timerInterval);
 
-  const isTechnical = (restType === 'superset-short');
+  const isTechnical = (restType === 'technical-prep' || restType === 'technical-break');
   STATE.timerIsTechnical = isTechnical;
   STATE.timerElapsedSeconds = 0;
   STATE.timerTargetSeconds = isTechnical ? 0 : (parseInt(targetSeconds) || 90);
@@ -2604,7 +2705,7 @@ function startRestTimer(
   if (modeLabel) modeLabel.textContent = labelText;
 
   if (confirmBtn) {
-    confirmBtn.textContent = btnText || (isTechnical ? '✅ Gotowe — Stanowisko przygotowane' : '✅ OK / Gotowe (Kolejna seria)');
+    confirmBtn.textContent = btnText || (isTechnical ? '✅ Stanowisko gotowe — Rozpocznij kolejny zestaw' : '✅ OK / Gotowe (Kolejna seria)');
   }
 
   if (quickAdjust) {
@@ -2710,7 +2811,7 @@ function finalizeCurrentRestLog(nextExerciseName = null, nextSetNum = null) {
   if (!STATE.activeWorkout.restLogs) STATE.activeWorkout.restLogs = [];
 
   if (STATE.currentRestInfo && !STATE.currentRestInfo.logged) {
-    const isTech = (STATE.currentRestInfo.type === 'superset-short');
+    const isTech = (STATE.currentRestInfo.type === 'technical-prep' || STATE.currentRestInfo.type === 'technical-break');
     const actualSec = Math.max(1, STATE.timerElapsedSeconds || Math.round((Date.now() - STATE.currentRestInfo.startedAt) / 1000));
     const plannedSec = isTech ? 0 : (STATE.currentRestInfo.plannedSeconds || 90);
     const overtimeSec = isTech ? 0 : Math.max(0, actualSec - plannedSec);
@@ -2741,6 +2842,7 @@ function finalizeCurrentRestLog(nextExerciseName = null, nextSetNum = null) {
 }
 
 function stopTimer() {
+  const isWorkoutDoneType = (STATE.currentRestInfo && STATE.currentRestInfo.type === 'workout-done');
   if (STATE.currentRestInfo && !STATE.currentRestInfo.logged) {
     finalizeCurrentRestLog();
   }
@@ -2756,6 +2858,9 @@ function stopTimer() {
   if (bar) {
     bar.classList.remove('overtime');
     bar.style.display = 'none';
+  }
+  if (isWorkoutDoneType) {
+    finishCurrentWorkout();
   }
 }
 
