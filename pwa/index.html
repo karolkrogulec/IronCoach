@@ -1227,9 +1227,15 @@
         <input type="url" id="gdrive-webhook-url" class="input-box" style="text-align: left; font-size: 12px; margin-bottom: 8px;" placeholder="https://script.google.com/macros/s/.../exec">
 
         <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">
-          🔐 Tajny klucz webhooka (ten sam co SECRET_KEY w skrypcie Google):
+          🔐 Tajny klucz webhooka (ten sam co SECRET_KEY we Właściwościach projektu w Apps Script):
         </label>
-        <input type="password" id="gdrive-webhook-secret" class="input-box" style="text-align: left; font-size: 12px; margin-bottom: 8px;" placeholder="Tajny klucz" autocomplete="off">
+        <div style="position: relative; margin-bottom: 6px;">
+          <input type="password" id="gdrive-webhook-secret" class="input-box" style="text-align: left; font-size: 12px; padding-right: 44px; margin-bottom: 0;" placeholder="Wpisz ten sam klucz co we Właściwościach skryptu" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+          <button type="button" onclick="toggleSecretVisibility()" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 16px; cursor: pointer; color: var(--text-muted); padding: 4px;" title="Pokaż/Ukryj klucz">👁️</button>
+        </div>
+        <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px; margin-bottom: 8px;">
+          💡 Wskazówka: Kliknij 👁️, aby upewnić się, że klucz nie ma przypadkowej spacji ani literówki (wielkość liter ma znaczenie).
+        </div>
 
         <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">
           🔑 Lub Token OAuth2 Google Drive API (opcjonalnie):
@@ -1388,6 +1394,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=32"></script>
+  <script src="app.js?v=33"></script>
 </body>
 </html>

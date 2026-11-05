@@ -6766,6 +6766,12 @@ function saveGoogleDriveConfig() {
   alert('✅ Zapisano konfigurację automatycznego backupu Google Drive!');
 }
 
+function toggleSecretVisibility() {
+  const input = document.getElementById('gdrive-webhook-secret');
+  if (!input) return;
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+
 function dismissMorningBackupBanner() {
   const banner = document.getElementById('morning-backup-banner');
   if (banner) banner.style.display = 'none';
@@ -6824,8 +6830,9 @@ async function uploadBackupToGoogleDrive(backupObj, silent = false) {
 
   // 1. If Google Apps Script Webhook URL is configured, POST directly (no OAuth expiration issues)
   if (STATE.gdriveWebhookUrl) {
-    if (!STATE.gdriveWebhookSecret) {
-      return { ok: false, error: 'Brak wpisanego tajnego klucza webhooka (wklej ten sam klucz co SECRET_KEY w Apps Script).' };
+    const trimmedSecret = String(STATE.gdriveWebhookSecret || '').trim();
+    if (!trimmedSecret) {
+      return { ok: false, error: 'Brak wpisanego tajnego klucza webhooka w Opcjach aplikacji (wklej ten sam klucz co SECRET_KEY we Właściwościach projektu w Apps Script).' };
     }
     try {
       // Apps Script: { secret, payload } -> odpowiedź JSON { status: "success" | "error" }
@@ -6833,7 +6840,7 @@ async function uploadBackupToGoogleDrive(backupObj, silent = false) {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
-          secret: STATE.gdriveWebhookSecret,
+          secret: trimmedSecret,
           payload: backupObj
         })
       });

@@ -59,9 +59,10 @@ function doPost(e) {
   }
 
   try {
-    var secret = PropertiesService.getScriptProperties().getProperty("SECRET_KEY");
+    var rawSecret = PropertiesService.getScriptProperties().getProperty("SECRET_KEY");
+    var secret = String(rawSecret || "").trim();
     if (!secret || secret.length < 16) {
-      return respond_("error", "Błąd: Brak SECRET_KEY we Właściwościach skryptu (min. 16 znaków)!");
+      return respond_("error", "Błąd: Brak właściwości SECRET_KEY w Ustawieniach projektu Apps Script (musi mieć min. 16 znaków)!");
     }
 
     if (!e || !e.postData || !e.postData.contents) {
@@ -72,9 +73,11 @@ function doPost(e) {
     }
 
     var requestData = JSON.parse(e.postData.contents);
-    if (!requestData || !safeEquals_(requestData.secret, secret)) {
-      console.log("Odmowa: Przesłany klucz 'secret' nie zgadza się z SECRET_KEY");
-      return respond_("error", "Brak autoryzacji (nieprawidłowy klucz)");
+    var incomingSecret = String((requestData && requestData.secret) || "").trim();
+
+    if (!incomingSecret || !safeEquals_(incomingSecret, secret)) {
+      console.log("Odmowa: Przesłany klucz 'secret' (długość: " + incomingSecret.length + ") nie zgadza się z SECRET_KEY (długość: " + secret.length + ")");
+      return respond_("error", "Brak autoryzacji: Przesłany klucz nie pasuje do SECRET_KEY w Google Apps Script. Długość wpisana w aplikacji: " + incomingSecret.length + " zn., długość w Apps Script: " + secret.length + " zn. Upewnij się, że wielkość liter i znaki są w 100% identyczne.");
     }
 
     var payload = requestData.payload;
