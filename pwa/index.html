@@ -322,62 +322,114 @@
       color: #000;
     }
 
-    /* Big Rest Timer Floating Panel (+50% larger clock) */
+    /* Full-Screen Focus Overlay (Technical Break & Rest Lock) */
+    body.focus-lock {
+      overflow: hidden !important;
+      height: 100vh !important;
+      touch-action: none !important;
+      user-select: none;
+    }
     #rest-timer-bar {
       display: none;
       position: fixed;
-      bottom: 72px;
-      left: 10px;
-      right: 10px;
-      max-width: 580px;
-      margin: 0 auto;
-      background: rgba(16, 20, 28, 0.98);
-      border: 2px solid var(--accent);
-      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.85);
-      border-radius: 22px;
-      padding: 18px 20px;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(4, 7, 11, 0.94);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      z-index: 9999;
       flex-direction: column;
       align-items: center;
-      gap: 12px;
-      z-index: 150;
+      justify-content: center;
+      padding: 20px;
+      pointer-events: all;
+      touch-action: none;
+    }
+    .focus-overlay-card {
+      width: 100%;
+      max-width: 480px;
+      background: linear-gradient(160deg, #063d23 0%, #0b663a 100%);
+      border: 2px solid #00E676;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.9), 0 0 40px rgba(0, 230, 118, 0.28);
+      border-radius: 26px;
+      padding: 24px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      text-align: center;
       transition: background 0.25s, border-color 0.25s;
     }
-    #rest-timer-bar.overtime {
-      background: rgba(48, 14, 18, 0.98);
-      border-color: var(--danger);
-      box-shadow: 0 0 34px rgba(255, 82, 82, 0.55);
+    #rest-timer-bar.overtime .focus-overlay-card {
+      border-color: #FFB300;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.9), 0 0 40px rgba(255, 179, 0, 0.35);
     }
     .timer-label-row {
       display: flex;
+      flex-direction: column;
       align-items: center;
-      justify-content: space-between;
+      gap: 4px;
       width: 100%;
       font-size: 13px;
       font-weight: 800;
-      color: var(--text-muted);
+      color: #b9f6ca;
       text-transform: uppercase;
-      letter-spacing: 0.6px;
+      letter-spacing: 0.8px;
     }
     .timer-big-seconds {
-      font-size: 84px;
+      font-size: 92px;
       font-weight: 900;
-      line-height: 1.02;
-      color: var(--accent);
+      line-height: 1.0;
+      color: #ffffff;
       font-variant-numeric: tabular-nums;
       letter-spacing: -2px;
       text-align: center;
-      padding: 6px 24px;
-      border-radius: 16px;
+      padding: 10px 28px;
+      border-radius: 20px;
+      background: rgba(0, 0, 0, 0.28);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      text-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
     }
-    #rest-timer-bar.overtime .timer-big-seconds {
-      color: #fff;
-      background: var(--danger);
-      box-shadow: 0 0 18px rgba(255, 82, 82, 0.6);
-      animation: pulseOvertime 1s infinite alternate;
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 5px;
+      text-align: center;
     }
-    @keyframes pulseOvertime {
-      from { transform: scale(1); }
-      to { transform: scale(1.04); }
+    .cal-day-header {
+      font-size: 10px;
+      font-weight: 800;
+      color: var(--text-muted);
+      padding-bottom: 4px;
+      text-transform: uppercase;
+    }
+    .cal-day-cell {
+      min-height: 44px;
+      border-radius: 9px;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      padding: 3px 2px;
+      position: relative;
+      transition: all 0.15s;
+    }
+    .cal-day-cell.selected {
+      border-color: var(--accent);
+      background: rgba(0, 229, 255, 0.15);
+      box-shadow: 0 0 10px rgba(0, 229, 255, 0.25);
+    }
+    .cal-day-cell.today {
+      border-color: var(--primary);
+    }
+    .cal-day-cell.empty {
+      background: transparent;
+      border-color: transparent;
+      cursor: default;
     }
 
     /* Inputs */
@@ -429,24 +481,43 @@
     </div>
   </header>
 
-  <!-- Rest Timer Banner (Large Seconds Display + Overtime Mode + Instant Set Effort Rating) -->
+  <!-- Full-Screen Focus Overlay (Technical Break & Rest Lock + Stopwatch 1s Upwards) -->
   <div id="rest-timer-bar">
-    <div class="timer-label-row">
-      <span id="timer-mode-label">⏱️ PRZERWA MIĘDZY SERIAMI</span>
-      <span id="timer-overtime-badge" style="display: none; color: var(--danger); font-weight: 800;">⚠️ PRZEKROCZONO CZAS!</span>
-    </div>
-    <div class="timer-big-seconds" id="timer-display">90s</div>
-    <div id="timer-effort-strip" style="width: 100%; margin: 2px 0 8px 0;"></div>
-    <div style="display: flex; gap: 10px; width: 100%; justify-content: center;">
-      <button class="btn btn-sm btn-secondary" style="flex: 1; font-size: 16px; font-weight: 800; padding: 12px;" onclick="addTimerSeconds(-15)">-15s</button>
-      <button class="btn btn-sm btn-secondary" style="flex: 1; font-size: 16px; font-weight: 800; padding: 12px;" onclick="addTimerSeconds(15)">+15s</button>
-      <button class="btn btn-sm btn-primary" style="flex: 1.5; font-size: 16px; font-weight: 800; padding: 12px;" onclick="stopTimer()">Gotowe / Pomiń</button>
+    <div class="focus-overlay-card" id="focus-overlay-card">
+      <div class="timer-label-row">
+        <span style="font-size: 11px; background: rgba(0,0,0,0.35); padding: 4px 10px; border-radius: 999px; color: #00E676; border: 1px solid rgba(0,230,118,0.4);">🔒 EKRAN PRZERWY TECHNICZNEJ I ODPOCZYNKU</span>
+        <span id="timer-mode-label" style="font-size: 14px; color: #ffffff; margin-top: 4px;">⏱️ PRZERWA TECHNICZNA / ODPOCZYNEK</span>
+        <span id="timer-overtime-badge" style="display: none; color: #FFE082; font-size: 12px; font-weight: 800;">✅ ODPOCZYNEK OSIĄGNIĘTY — GOTOWY DO SERII</span>
+      </div>
+
+      <div class="timer-big-seconds" id="timer-display">1s</div>
+      <div id="timer-target-ref" style="font-size: 12px; color: #d0f8ce; font-weight: 700; margin-top: -6px;">Stoper w górę od 1s • Cel odpoczynku: 90s</div>
+
+      <div id="timer-effort-strip" style="width: 100%; margin: 2px 0;"></div>
+
+      <button type="button" class="btn btn-primary" style="width: 100%; font-size: 18px; font-weight: 900; padding: 16px; border-radius: 16px; background: #00E676; color: #042414; box-shadow: 0 6px 20px rgba(0, 230, 118, 0.45);" onclick="stopTimer()">
+        ✅ OK / Gotowe (Kolejny zestaw)
+      </button>
     </div>
   </div>
 
   <!-- VIEW: DASHBOARD (HOME) -->
   <section id="view-home" class="view active">
     <div class="container">
+
+      <!-- Morning Auto-Backup Status / Trigger Banner -->
+      <div id="morning-backup-banner" class="card" style="display: none; padding: 10px 14px; border-color: rgba(0, 229, 255, 0.45); background: rgba(0, 229, 255, 0.08); margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 180px;">
+            <div style="font-size: 11px; font-weight: 800; color: var(--accent); text-transform: uppercase;">☁️ Poranny Auto-Backup (Google Drive)</div>
+            <div id="morning-backup-banner-text" style="font-size: 12px; color: var(--text); margin-top: 2px;">Dzisiejsza kopia zapasowa jest gotowa do wysyłki.</div>
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <button type="button" class="btn btn-sm btn-accent" style="padding: 6px 10px; font-size: 11px;" onclick="shareBackupToGoogleDriveApp()">☁️ Zapisz na Drive</button>
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 8px; font-size: 11px;" onclick="dismissMorningBackupBanner()">✕</button>
+          </div>
+        </div>
+      </div>
       
       <!-- Ongoing workout prompt -->
       <div id="active-session-banner" class="card" style="display: none; border-color: var(--primary); background: rgba(255, 179, 0, 0.08); padding: 12px 14px;">
@@ -473,6 +544,29 @@
           <div class="kpi-val" id="home-kpi-weight" style="color: var(--success);">—</div>
           <div class="kpi-lbl">Waga ciała</div>
         </div>
+      </div>
+
+      <!-- MODULE 5: CALENDAR & AI DASHBOARD SUMMARY CARDS -->
+      <div class="card" id="home-calendar-card" style="padding: 14px; border-color: rgba(0, 229, 255, 0.3);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 6px;">
+          <button type="button" class="btn btn-sm btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="changeCalendarMonth(-1)">◀</button>
+          <div style="text-align: center; flex: 1;">
+            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Kalendarz Aktywności i Dashboard AI</div>
+            <div id="calendar-month-label" style="font-size: 15px; font-weight: 800; color: var(--text);">Miesiąc</div>
+          </div>
+          <button type="button" class="btn btn-sm btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="changeCalendarMonth(1)">▶</button>
+        </div>
+
+        <div style="display: flex; justify-content: center; gap: 12px; font-size: 10px; color: var(--text-muted); margin-bottom: 8px;">
+          <span>🏋️ Trening</span>
+          <span>⚖️ Waga / Pomiary</span>
+          <span>🔥 Dzień mieszany</span>
+        </div>
+
+        <div class="calendar-grid" id="home-calendar-grid" style="margin-bottom: 12px;"></div>
+
+        <!-- Dynamic AI Summary Card for Selected Calendar Day -->
+        <div id="calendar-day-summary-card"></div>
       </div>
 
       <!-- Plans Section Header with Inline Action Buttons -->
@@ -1047,8 +1141,50 @@
         </p>
       </div>
 
+      <div class="card" style="border-color: rgba(0, 229, 255, 0.4);">
+        <div class="card-title">
+          <span>☁️ Automatyczny Backup (Google Drive)</span>
+          <span class="badge badge-cyan">Codziennie Rano</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 10px; line-height: 1.5;">
+          Aplikacja codziennie rano przy pierwszym otwarciu automatycznie tworzy pełną kopię zapasową (historia sesji, obciążenia, powtórzenia, czasy serii, pomiary ciała oraz analizy Gemini).
+        </p>
+
+        <div id="gdrive-last-backup-status" style="font-size: 12px; padding: 8px 10px; background: var(--surface-elevated); border-radius: 8px; border: 1px solid var(--border); margin-bottom: 10px; color: var(--text-muted);">
+          Ostatni poranny auto-backup: sprawdzanie...
+        </div>
+
+        <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">
+          🔗 URL skryptu Google Drive Webhook (opcjonalnie — do 100% cichego zapisu w tle na Twój Google Drive):
+        </label>
+        <input type="url" id="gdrive-webhook-url" class="input-box" style="text-align: left; font-size: 12px; margin-bottom: 8px;" placeholder="https://script.google.com/macros/s/.../exec">
+
+        <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">
+          🔑 Lub Token OAuth2 Google Drive API (opcjonalnie):
+        </label>
+        <input type="password" id="gdrive-oauth-token" class="input-box" style="text-align: left; font-size: 12px; margin-bottom: 10px;" placeholder="ya29.a0...">
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+          <button type="button" class="btn btn-sm btn-primary" onclick="saveGoogleDriveConfig()">💾 Zapisz konfigurację Drive</button>
+          <button type="button" class="btn btn-sm btn-accent" onclick="triggerGoogleDriveBackupNow()">☁️ Wyślij Backup na Drive teraz</button>
+        </div>
+        <button type="button" class="btn btn-sm btn-secondary" style="width: 100%; font-size: 12px;" onclick="shareBackupToGoogleDriveApp()">
+          📲 Wyślij plik bezpośrednio do aplikacji Dysk Google na telefonie
+        </button>
+
+        <details style="margin-top: 10px; font-size: 11px; color: var(--text-muted); background: var(--surface-elevated); padding: 8px 10px; border-radius: 8px;">
+          <summary style="cursor: pointer; color: var(--accent); font-weight: 700;">ℹ️ Jak w 30 sekund włączyć darmowy cichy zapis na Google Drive?</summary>
+          <div style="margin-top: 6px; line-height: 1.5;">
+            1. Wejdź na <b>script.google.com</b> → <i>Nowy projekt</i>.<br>
+            2. Wklej 5 linijek kodu:<br>
+            <code style="display: block; background: #101216; padding: 6px; border-radius: 6px; margin: 4px 0; color: #00E676; font-size: 10px; user-select: all;">function doPost(e) { DriveApp.createFile('ironcoach-backup-' + new Date().toISOString().slice(0,10) + '.json', e.postData.contents, MimeType.PLAIN_TEXT); return ContentService.createTextOutput('OK'); }</code>
+            3. Kliknij <b>Wdróż → Nowe wdrożenie → Aplikacja internetowa (Kto ma dostęp: Wszyscy)</b> i wklej otrzymany link powyżej. Od tej chwili każdego ranka przy otwarciu aplikacji plik sam pojawi się na Twoim Dysku Google!
+          </div>
+        </details>
+      </div>
+
       <div class="card">
-        <div class="card-title">💾 Kopia Zapasowa Danych</div>
+        <div class="card-title">💾 Ręczna Kopia Zapasowa (Plik JSON)</div>
         <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
           Eksportuje i przywraca komplet danych: <b>plany treningowe, historię sesji i przerw, raporty z wagi Fitdays, obwody ciała, profil/cel oraz czat z trenerem AI</b>.
         </p>
@@ -1180,6 +1316,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=26"></script>
+  <script src="app.js?v=27"></script>
 </body>
 </html>

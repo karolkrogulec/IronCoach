@@ -1,4 +1,4 @@
-// IronCoach AI - Mobile PWA Engine (v18)
+// IronCoach AI - Mobile PWA Engine (v27)
 
 const STATE = {
   plans: JSON.parse(localStorage.getItem('iron_plans')) || [
@@ -22,6 +22,8 @@ const STATE = {
   apiKey: localStorage.getItem('iron_gemini_api_key') || '',
   timerInterval: null,
   timerSeconds: 0,
+  timerElapsedSeconds: 1,
+  timerTargetSeconds: 90,
   currentRestInfo: null,
   workoutDurationInterval: null,
   wakeLockSentinel: null,
@@ -49,7 +51,14 @@ const STATE = {
   selectedNutritionDate: new Date().toISOString().slice(0, 10),
   pendingMealPhotos: [],
   editingMealId: null,
-  lastUsedGeminiModel: ''
+  lastUsedGeminiModel: '',
+  editingEffortCoords: null,
+  calendarYear: new Date().getFullYear(),
+  calendarMonth: new Date().getMonth(),
+  selectedCalendarDate: new Date().toISOString().slice(0, 10),
+  calendarAiSummaries: JSON.parse(localStorage.getItem('iron_calendar_ai_summaries') || '{}'),
+  gdriveWebhookUrl: localStorage.getItem('iron_gdrive_webhook_url') || '',
+  gdriveOauthToken: localStorage.getItem('iron_gdrive_oauth_token') || ''
 };
 
 // Initialize
@@ -63,6 +72,9 @@ document.addEventListener('DOMContentLoaded', () => {
   loadExerciseGifsDatabase();
   renderPlans();
   renderRecentWorkouts();
+  initCalendarDashboard();
+  loadGoogleDriveConfig();
+  checkMorningAutoBackup();
   checkActiveWorkout();
   initCoachThreads();
   refreshCoachReportBox();
@@ -1058,6 +1070,7 @@ function showView(viewName) {
 
   if (viewName === 'home') {
     renderHomeKpis();
+    if (typeof renderCalendarDashboard === 'function') renderCalendarDashboard();
   } else if (viewName === 'nutrition') {
     renderNutritionView();
   } else if (viewName === 'body') {
@@ -1067,6 +1080,8 @@ function showView(viewName) {
   } else if (viewName === 'coach') {
     renderCoachThreadsBar();
     renderCoachChat();
+  } else if (viewName === 'settings') {
+    if (typeof loadGoogleDriveConfig === 'function') loadGoogleDriveConfig();
   }
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1277,6 +1292,7 @@ function deleteHistorySession(sessionId, skipConfirm = false) {
     STATE.currentCoachReportSessionId = null;
   }
   renderRecentWorkouts();
+  if (typeof renderCalendarDashboard === 'function') renderCalendarDashboard();
   refreshCoachReportBox();
   return true;
 }
@@ -1289,7 +1305,7 @@ function deleteTestWorkoutFromCoach(sessionId) {
 }
 
 // ============================================================================
-// SET EFFORT / RPE RATING SCALE (1 = Lekko ... 5 = Hardcore)
+// SET EFFORT / RPE RATING SCALE (1 = Lekko ... 5 = Bardzo ciężko, 6 = Hardcore)
 // ============================================================================
 const SET_EFFORT_SCALE = {
   1: {
@@ -1314,7 +1330,7 @@ const SET_EFFORT_SCALE = {
     icon: '🟡',
     color: '#FFB300',
     bg: 'rgba(255, 179, 0, 0.18)',
-    hint: 'W sam raz (1–2 powt. w zapasie) — idealny bodziec'
+    hint: 'W sam raz (2 powt. w zapasie) — idealny bodziec'
   },
   4: {
     val: 4,
@@ -1322,15 +1338,24 @@ const SET_EFFORT_SCALE = {
     icon: '🟠',
     color: '#FF9100',
     bg: 'rgba(255, 145, 0, 0.20)',
-    hint: 'Walka (max 1 powt. w zapasie) — zostań na tym ciężarze'
+    hint: 'Mocna seria (~1 powt. w zapasie) — utrzymaj lub +1 powt.'
   },
   5: {
     val: 5,
+    short: 'B. ciężko',
+    fullLabel: 'Bardzo ciężko',
+    icon: '🔥',
+    color: '#FF5722',
+    bg: 'rgba(255, 87, 34, 0.22)',
+    hint: 'Blisko upadku (0–0.5 powt. w zapasie) — zostań na tym ciężarze'
+  },
+  6: {
+    val: 6,
     short: 'Hardcore',
     icon: '🔴',
-    color: '#FF5252',
-    bg: 'rgba(255, 82, 82, 0.22)',
-    hint: 'Na maksa / brak zapasu — nie dokładaj jeszcze ciężaru'
+    color: '#FF1744',
+    bg: 'rgba(255, 23, 68, 0.24)',
+    hint: 'Absolutny maks / upadek mięśniowy — nie dokładaj ciężaru'
   }
 };
 
@@ -1339,15 +1364,32 @@ function getSetEffortMeta(rating) {
   return SET_EFFORT_SCALE[n] || null;
 }
 
+function isCalisthenicsExercise(ex) {
+  if (!ex) return false;
+  return (ex.loadType || 'standard') === 'bodyweight' && !ex.showExtraWeight;
+}
+
+function formatRelativeWorkoutTime(msTs, workoutStartTs) {
+  if (!msTs || !workoutStartTs) return '00:00';
+  const diffSec = Math.max(0, Math.floor((msTs - workoutStartTs) / 1000));
+  const hrs = Math.floor(diffSec / 3600);
+  const mins = Math.floor((diffSec % 3600) / 60);
+  const secs = diffSec % 60;
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
 function getExerciseProgressionBadge(avgEffort) {
   if (!avgEffort || isNaN(avgEffort)) return '';
-  if (avgEffort <= 2.3) {
-    return `<span style="color: var(--success); font-weight: 800; font-size: 11px;">📈 Dołóż ciężar (${avgEffort.toFixed(1)}/5)</span>`;
+  if (avgEffort <= 2.4) {
+    return `<span style="color: var(--success); font-weight: 800; font-size: 11px;">📈 Dołóż ciężar (${avgEffort.toFixed(1)}/6)</span>`;
   }
-  if (avgEffort <= 3.6) {
-    return `<span style="color: var(--primary); font-weight: 800; font-size: 11px;">🎯 Optymalnie (${avgEffort.toFixed(1)}/5)</span>`;
+  if (avgEffort <= 4.3) {
+    return `<span style="color: var(--primary); font-weight: 800; font-size: 11px;">🎯 Optymalnie (${avgEffort.toFixed(1)}/6)</span>`;
   }
-  return `<span style="color: var(--danger); font-weight: 800; font-size: 11px;">🔥 Na limicie (${avgEffort.toFixed(1)}/5)</span>`;
+  return `<span style="color: var(--danger); font-weight: 800; font-size: 11px;">🔥 Na limicie (${avgEffort.toFixed(1)}/6)</span>`;
 }
 
 function renderAnalysisSessionOverview(session) {
@@ -1565,29 +1607,93 @@ function forceCoachAnalysis(sessionId) {
 // ============================================================================
 // ACTIVE WORKOUT SESSION (Duration Ticker, Supersets, Rest Logging)
 // ============================================================================
+function findLastCompletedSessionForPlan(plan) {
+  if (!plan || !Array.isArray(STATE.history)) return null;
+  const normPlanName = String(plan.name || '').trim().toLowerCase();
+  return STATE.history.find(h => {
+    if (!h || !Array.isArray(h.sets) || h.sets.length === 0) return false;
+    if (h.planId && plan.id && h.planId === plan.id) return true;
+    if (normPlanName && String(h.planName || '').trim().toLowerCase() === normPlanName) return true;
+    return false;
+  }) || null;
+}
+
 function startWorkout(planId) {
   const plan = STATE.plans.find(p => p.id === planId);
   if (!plan) return;
 
   const restSeconds = parseInt(plan.restSeconds) || 90;
   const supersetRestSeconds = parseInt(plan.supersetRestSeconds) || 30;
+  const lastSamePlanSession = findLastCompletedSessionForPlan(plan);
+  const lastSessionEndTs = lastSamePlanSession ? (lastSamePlanSession.endTime || lastSamePlanSession.startTime || 0) : 0;
 
   const exercises = (plan.exercises || []).map(ex => {
     const loadType = ex.loadType || 'standard';
     const hasInitialWeight = (parseFloat(ex.weight) || 0) > 0;
+    const normExName = normalizeExKey(ex.name);
+
+    // Module 3: Check if manual edit in plan is newer than the last completed workout of this plan
+    const isManualOverride = Boolean(ex.manualUpdatedAt && ex.manualUpdatedAt > lastSessionEndTs);
+    const histSets = (!isManualOverride && lastSamePlanSession && Array.isArray(lastSamePlanSession.sets))
+      ? lastSamePlanSession.sets.filter(s => normalizeExKey(s.exercise) === normExName)
+      : [];
+
+    let progressionSourceLabel = '';
+    const numSets = parseInt(ex.sets) || 3;
     const sets = [];
-    for (let i = 1; i <= (ex.sets || 3); i++) {
+
+    for (let i = 1; i <= numSets; i++) {
+      const histSet = histSets[i - 1] || (histSets.length > 0 ? histSets[histSets.length - 1] : null);
+      let defaultWeight = loadType === 'bodyweight' && !hasInitialWeight ? 0 : (parseFloat(ex.weight) || 0);
+      let defaultReps = parseInt(ex.reps) || 10;
+
+      if (histSet) {
+        const lastW = parseFloat(histSet.weight) || 0;
+        const lastR = parseInt(histSet.reps) || defaultReps;
+        const lastEffort = parseInt(histSet.effort) || 0;
+
+        if (loadType === 'bodyweight' && !hasInitialWeight && lastW === 0) {
+          defaultWeight = 0;
+          defaultReps = lastR + 1;
+          progressionSourceLabel = `📈 Auto-progres z ost. sesji (+1 powt.)`;
+        } else if (lastEffort >= 1 && lastEffort <= 2 && lastW > 0) {
+          // Easy last time (1-2/6) -> suggest +2.5kg (or +1kg for dumbbells <= 14kg) or +1 rep
+          const stepKg = (loadType === 'dual_dumbbell' || lastW < 20) ? 1 : 2.5;
+          defaultWeight = Number((lastW + stepKg).toFixed(1));
+          defaultReps = lastR;
+          progressionSourceLabel = `📈 Auto-progres z ost. sesji (+${stepKg}kg po lekkiej serii)`;
+        } else if (lastEffort >= 5) {
+          // Very hard / Hardcore last time (5-6/6) -> keep exact weight & reps as target
+          defaultWeight = lastW;
+          defaultReps = lastR;
+          progressionSourceLabel = `🎯 Z ost. sesji (utrzymanie po ciężkiej serii)`;
+        } else {
+          // Standard progression target: same weight from last session + 1 rep
+          defaultWeight = lastW;
+          defaultReps = lastR + 1;
+          progressionSourceLabel = `📈 Auto-progres z ost. sesji (+1 powt.)`;
+        }
+      } else if (isManualOverride) {
+        progressionSourceLabel = `✏️ Ręczna wartość z planu`;
+      }
+
       sets.push({
         num: i,
-        weight: loadType === 'bodyweight' && !hasInitialWeight ? 0 : (ex.weight || 0),
-        reps: ex.reps || 10,
+        weight: defaultWeight,
+        reps: defaultReps,
         completed: false,
+        startedAt: null,
         completedAt: null,
+        relStartStr: null,
+        relEndStr: null,
+        relTimeLabel: null,
         restBeforeSeconds: null,
         effort: null
       });
     }
+
     const matchedGif = findExerciseGif(ex.name, ex);
+    const hasAnyExtraWeight = sets.some(s => (parseFloat(s.weight) || 0) > 0);
     return {
       name: ex.name,
       muscle: ex.muscle || 'Inne',
@@ -1596,23 +1702,28 @@ function startWorkout(planId) {
       gifSlug: ex.gifSlug || (matchedGif ? matchedGif.s : ''),
       gifUrl: ex.gifUrl || (matchedGif ? matchedGif.g : ''),
       gifName: ex.gifName || (matchedGif ? matchedGif.n : ''),
-      showExtraWeight: loadType === 'bodyweight' ? hasInitialWeight : true,
+      showExtraWeight: loadType === 'bodyweight' ? (hasInitialWeight || hasAnyExtraWeight) : true,
+      progressionHint: progressionSourceLabel,
       sets
     };
   });
 
+  const nowTs = Date.now();
   STATE.activeWorkout = {
-    id: 'session-' + Date.now(),
+    id: 'session-' + nowTs,
     planId: plan.id,
     planName: plan.name,
     restSeconds: restSeconds,
     supersetRestSeconds: supersetRestSeconds,
     planSnapshot: JSON.parse(JSON.stringify(plan)),
-    startTime: Date.now(),
+    startTime: nowTs,
+    currentSetStartedAt: nowTs,
+    supersetRoundStartMap: {},
     lastSetCompletedAt: null,
     restLogs: [],
     exercises: exercises
   };
+  STATE.editingEffortCoords = null;
 
   saveActiveWorkout();
   loadActiveWorkoutUI();
@@ -1726,6 +1837,16 @@ function renderActiveExercises() {
   container.innerHTML = blocksHtml.join('');
 }
 
+function toggleInlineEffortPicker(exIdx, sIdx) {
+  const cur = STATE.editingEffortCoords;
+  if (cur && cur.exIdx === exIdx && cur.sIdx === sIdx) {
+    STATE.editingEffortCoords = null;
+  } else {
+    STATE.editingEffortCoords = { exIdx, sIdx };
+  }
+  renderActiveExercises();
+}
+
 function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
   const ssTag = ex.supersetGroup
     ? `<span class="badge badge-cyan" style="font-size: 10px; margin-right: 4px;">SS ${escapeHtml(ex.supersetGroup)}</span>`
@@ -1735,7 +1856,8 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
     : '';
 
   const loadType = ex.loadType || 'standard';
-  const isBodyweightNoLoad = loadType === 'bodyweight' && !ex.showExtraWeight;
+  const isCalisthenics = isCalisthenicsExercise(ex);
+  const isBodyweightNoLoad = isCalisthenics;
   const isBodyweightWithLoad = loadType === 'bodyweight' && ex.showExtraWeight;
   const isDualDumbbell = loadType === 'dual_dumbbell';
 
@@ -1743,8 +1865,12 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
   if (isDualDumbbell) {
     loadBadgeHtml = `<span class="badge" style="font-size: 10px; background: rgba(0, 229, 255, 0.15); color: var(--accent);">💪 2× Hantle (tonaż ×2)</span>`;
   } else if (loadType === 'bodyweight') {
-    loadBadgeHtml = `<span class="badge" style="font-size: 10px; background: rgba(0, 230, 118, 0.15); color: var(--success);">🤸 Masa ciała</span>`;
+    loadBadgeHtml = `<span class="badge" style="font-size: 10px; background: rgba(0, 230, 118, 0.15); color: var(--success);">🤸 Kalistenika / Masa ciała</span>`;
   }
+
+  const progBadgeHtml = ex.progressionHint
+    ? `<span class="badge" style="font-size: 9px; background: rgba(255,255,255,0.06); color: var(--text-muted); border: 1px solid var(--border);">${escapeHtml(ex.progressionHint)}</span>`
+    : '';
 
   let extraWeightToggleBtn = '';
   if (isBodyweightNoLoad) {
@@ -1779,6 +1905,7 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
               <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 3px;">
                 ${loadBadgeHtml}
                 ${nextBadge}
+                ${progBadgeHtml}
               </div>
             </div>
           </div>
@@ -1804,47 +1931,77 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
           ? `<div style="font-size: 10px; color: var(--accent); text-align: center; margin-top: 2px;">= ${wVal * 2} kg łącznie</div>`
           : '';
         const selectedEffort = getSetEffortMeta(set.effort);
-        const effortRowHtml = set.completed ? `
-          <div style="margin: -2px 0 10px 0; padding: 7px 8px; background: rgba(255,255,255,0.03); border: 1px solid ${selectedEffort ? selectedEffort.color : 'rgba(0,229,255,0.28)'}; border-radius: 10px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; gap: 4px; flex-wrap: wrap;">
-              <span style="font-size: 11px; font-weight: 700; color: var(--text-muted);">🔥 Jak weszła Seria ${set.num}?</span>
-              ${selectedEffort
-                ? `<span style="font-size: 11px; font-weight: 800; color: ${selectedEffort.color};">${selectedEffort.icon} ${selectedEffort.val}/5 ${selectedEffort.short}</span>`
-                : `<span style="font-size: 10px; color: var(--accent);">Oceń 1–5 (wskazówka do progresji)</span>`
-              }
-            </div>
-            <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px;">
-              ${[1, 2, 3, 4, 5].map(val => {
-                const m = SET_EFFORT_SCALE[val];
-                const isActive = parseInt(set.effort) === val;
-                return `
-                  <button
-                    type="button"
-                    onclick="rateWorkoutSet(${exIdx}, ${sIdx}, ${val})"
-                    style="
-                      padding: 6px 2px;
-                      border-radius: 7px;
-                      border: 1px solid ${isActive ? m.color : 'var(--border)'};
-                      background: ${isActive ? m.bg : '#12151b'};
-                      color: ${isActive ? m.color : 'var(--text-muted)'};
-                      font-weight: ${isActive ? '900' : '600'};
-                      font-size: 11px;
-                      cursor: pointer;
-                      display: flex;
-                      flex-direction: column;
-                      align-items: center;
-                      line-height: 1.15;
-                    "
-                  >
-                    <span style="font-size: 13px;">${val}</span>
-                    <span style="font-size: 9px; margin-top: 1px;">${m.short}</span>
-                  </button>
-                `;
-              }).join('')}
-            </div>
-            ${selectedEffort ? `<div style="font-size: 10px; color: var(--text-muted); margin-top: 5px; text-align: center;">💡 ${selectedEffort.hint}</div>` : ''}
-          </div>
-        ` : '';
+        const isEditingThisEffort = STATE.editingEffortCoords && STATE.editingEffortCoords.exIdx === exIdx && STATE.editingEffortCoords.sIdx === sIdx;
+
+        // Relative time badge for completed set
+        const timePillHtml = (set.completed && set.relTimeLabel)
+          ? `<span style="display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--text-muted); background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); padding: 2px 7px; border-radius: 999px;">⏱️ ${escapeHtml(set.relTimeLabel)}</span>`
+          : '';
+
+        // Small effort label or inline 1-6 selector (ONLY for weighted exercises; calisthenics has NO scale 1-6)
+        let effortSmallLabelHtml = '';
+        let effortInlinePickerHtml = '';
+
+        if (set.completed && !isCalisthenics) {
+          if (selectedEffort && !isEditingThisEffort) {
+            effortSmallLabelHtml = `
+              <button
+                type="button"
+                onclick="toggleInlineEffortPicker(${exIdx}, ${sIdx})"
+                title="Kliknij, aby zmienić ocenę serii"
+                style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 800; color: ${selectedEffort.color}; background: ${selectedEffort.bg}; border: 1px solid ${selectedEffort.color}; padding: 2px 8px; border-radius: 999px; cursor: pointer;"
+              >
+                ${selectedEffort.icon} ${selectedEffort.val}/6 ${escapeHtml(selectedEffort.short)}
+              </button>
+            `;
+          } else {
+            effortInlinePickerHtml = `
+              <div style="margin: 2px 0 8px 0; padding: 6px 8px; background: rgba(255,255,255,0.03); border: 1px solid rgba(0,229,255,0.28); border-radius: 9px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-size: 10px;">
+                  <span style="color: var(--text-muted); font-weight: 700;">🔥 Oceń Serię ${set.num} (skala 1–6):</span>
+                  ${selectedEffort ? `<button type="button" onclick="toggleInlineEffortPicker(${exIdx}, ${sIdx})" style="background:none;border:none;color:var(--text-muted);font-size:10px;cursor:pointer;">Zamknij ✕</button>` : ''}
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px;">
+                  ${[1, 2, 3, 4, 5, 6].map(val => {
+                    const m = SET_EFFORT_SCALE[val];
+                    const isActive = parseInt(set.effort) === val;
+                    return `
+                      <button
+                        type="button"
+                        onclick="rateWorkoutSet(${exIdx}, ${sIdx}, ${val})"
+                        style="
+                          padding: 5px 1px;
+                          border-radius: 6px;
+                          border: 1px solid ${isActive ? m.color : 'var(--border)'};
+                          background: ${isActive ? m.bg : '#12151b'};
+                          color: ${isActive ? m.color : 'var(--text-muted)'};
+                          font-weight: ${isActive ? '900' : '600'};
+                          font-size: 10px;
+                          cursor: pointer;
+                          display: flex;
+                          flex-direction: column;
+                          align-items: center;
+                          line-height: 1.1;
+                        "
+                      >
+                        <span style="font-size: 12px;">${val}</span>
+                        <span style="font-size: 8px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;">${m.short}</span>
+                      </button>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+            `;
+          }
+        }
+
+        const setMetaSubRowHtml = (timePillHtml || effortSmallLabelHtml)
+          ? `<div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap; margin: -4px 0 8px 38px;">
+              ${timePillHtml}
+              ${effortSmallLabelHtml}
+            </div>`
+          : '';
+
         return `
           <div class="set-row" style="grid-template-columns: ${gridCols};">
             <div class="set-num ${set.completed ? 'done' : ''}">${set.num}</div>
@@ -1859,27 +2016,10 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
               ${set.completed ? '✓' : '○'}
             </button>
           </div>
-          ${effortRowHtml}
+          ${setMetaSubRowHtml}
+          ${effortInlinePickerHtml}
         `;
       }).join('')}
-      ${(() => {
-        const ratedSets = ex.sets.filter(s => s.completed && s.effort && SET_EFFORT_SCALE[s.effort]);
-        if (ratedSets.length === 0) return '';
-        const avg = ratedSets.reduce((acc, s) => acc + parseInt(s.effort), 0) / ratedSets.length;
-        let msg = '';
-        let col = 'var(--primary)';
-        if (avg <= 2.3) {
-          msg = `📈 Średnia trudność: ${avg.toFixed(1)}/5 — masz duży zapas! Na kolejnym treningu warto podnieść ciężar.`;
-          col = 'var(--success)';
-        } else if (avg <= 3.6) {
-          msg = `🎯 Średnia trudność: ${avg.toFixed(1)}/5 — optymalny dobór obciążenia (1–2 powt. w zapasie).`;
-          col = 'var(--primary)';
-        } else {
-          msg = `🔥 Średnia trudność: ${avg.toFixed(1)}/5 — praca na granicy możliwości. Zostań na tym ciężarze aż spadnie trudność.`;
-          col = 'var(--danger)';
-        }
-        return `<div style="margin-top: 6px; padding: 6px 10px; border-radius: 8px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); font-size: 11px; color: ${col}; font-weight: 700;">${msg}</div>`;
-      })()}
     </div>
   `;
 }
@@ -1890,7 +2030,10 @@ function toggleBodyweightExtraLoad(exIdx, enable) {
   if (!ex) return;
   ex.showExtraWeight = !!enable;
   if (!enable) {
-    ex.sets.forEach(s => { s.weight = 0; });
+    ex.sets.forEach(s => {
+      s.weight = 0;
+      s.effort = null;
+    });
   }
   saveActiveWorkout();
   renderActiveExercises();
@@ -1923,8 +2066,15 @@ function rateWorkoutSet(exIdx, sIdx, rating) {
   const set = ex?.sets?.[sIdx];
   if (!set) return;
 
-  const val = parseInt(rating);
-  set.effort = (set.effort === val) ? null : val;
+  if (isCalisthenicsExercise(ex)) {
+    set.effort = null;
+  } else {
+    const val = parseInt(rating);
+    set.effort = (set.effort === val) ? null : val;
+  }
+
+  // Collapse inline picker into small label once rated
+  STATE.editingEffortCoords = null;
 
   saveActiveWorkout();
   renderActiveExercises();
@@ -1943,7 +2093,8 @@ function renderTimerEffortStrip() {
 
   const ex = STATE.activeWorkout.exercises?.[coords.exIdx];
   const set = ex?.sets?.[coords.sIdx];
-  if (!ex || !set || !set.completed) {
+  // Calisthenics (bodyweight without extra weight) has NO 1-6 effort scale
+  if (!ex || !set || !set.completed || isCalisthenicsExercise(ex)) {
     stripEl.innerHTML = '';
     return;
   }
@@ -1951,16 +2102,16 @@ function renderTimerEffortStrip() {
   const selectedMeta = getSetEffortMeta(set.effort);
 
   stripEl.innerHTML = `
-    <div style="background: rgba(16, 18, 22, 0.85); border: 1px solid ${selectedMeta ? selectedMeta.color : 'rgba(255,255,255,0.14)'}; border-radius: 10px; padding: 7px 8px;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; font-size: 11px;">
-        <span style="color: var(--text-muted); font-weight: 700;">🔥 Jak weszła S${set.num} (${escapeHtml(ex.name.slice(0, 22))})?</span>
+    <div style="background: rgba(5, 22, 13, 0.72); border: 1px solid ${selectedMeta ? selectedMeta.color : 'rgba(255,255,255,0.22)'}; border-radius: 12px; padding: 10px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 11px; gap: 6px; flex-wrap: wrap;">
+        <span style="color: #d7ffe8; font-weight: 800;">🔥 Ocena trudności S${set.num} (${escapeHtml(ex.name.slice(0, 22))}):</span>
         ${selectedMeta
-          ? `<span style="color: ${selectedMeta.color}; font-weight: 900;">${selectedMeta.icon} ${selectedMeta.val}/5 ${selectedMeta.short}</span>`
-          : `<span style="color: var(--accent); font-size: 10px;">Oceń 1–5</span>`
+          ? `<span style="color: ${selectedMeta.color}; font-weight: 900; background: rgba(0,0,0,0.45); padding: 2px 8px; border-radius: 999px;">${selectedMeta.icon} ${selectedMeta.val}/6 ${escapeHtml(selectedMeta.fullLabel || selectedMeta.short)}</span>`
+          : `<span style="color: #80ffb8; font-size: 10px;">Wybierz 1–6</span>`
         }
       </div>
-      <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px;">
-        ${[1, 2, 3, 4, 5].map(val => {
+      <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px;">
+        ${[1, 2, 3, 4, 5, 6].map(val => {
           const m = SET_EFFORT_SCALE[val];
           const isActive = parseInt(set.effort) === val;
           return `
@@ -1968,11 +2119,11 @@ function renderTimerEffortStrip() {
               type="button"
               onclick="rateWorkoutSet(${coords.exIdx}, ${coords.sIdx}, ${val})"
               style="
-                padding: 5px 2px;
-                border-radius: 7px;
-                border: 1px solid ${isActive ? m.color : 'var(--border)'};
-                background: ${isActive ? m.bg : 'var(--surface-elevated)'};
-                color: ${isActive ? m.color : 'var(--text)'};
+                padding: 6px 2px;
+                border-radius: 8px;
+                border: 1px solid ${isActive ? m.color : 'rgba(255,255,255,0.18)'};
+                background: ${isActive ? m.bg : 'rgba(0,0,0,0.45)'};
+                color: ${isActive ? m.color : '#eafff3'};
                 font-weight: ${isActive ? '900' : '700'};
                 font-size: 11px;
                 cursor: pointer;
@@ -1983,7 +2134,7 @@ function renderTimerEffortStrip() {
               "
             >
               <span style="font-size: 13px;">${val}</span>
-              <span style="font-size: 9px; opacity: 0.9;">${m.short}</span>
+              <span style="font-size: 8px; opacity: 0.95; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;">${m.short}</span>
             </button>
           `;
         }).join('')}
@@ -1999,40 +2150,73 @@ function toggleSetComplete(exIdx, sIdx) {
   set.completed = !set.completed;
 
   if (set.completed) {
+    const nowTs = Date.now();
+    const workoutStartTs = STATE.activeWorkout.startTime || nowTs;
+
     // 1. If a rest timer was active (or a previous set was completed), log the rest duration
     finalizeCurrentRestLog(ex.name, set.num);
 
-    set.completedAt = Date.now();
-    STATE.activeWorkout.lastSetCompletedAt = Date.now();
+    // 2. Module 4: Set / Superset Relative Time Tracking (start w MM:SS, koniec w MM:SS)
+    const ssGroup = (ex.supersetGroup || '').trim();
+    const ssRoundKey = ssGroup ? `${ssGroup}_${sIdx}` : '';
+    if (!STATE.activeWorkout.supersetRoundStartMap) {
+      STATE.activeWorkout.supersetRoundStartMap = {};
+    }
+
+    const rawSetStart = STATE.activeWorkout.currentSetStartedAt
+      || STATE.activeWorkout.lastSetCompletedAt
+      || workoutStartTs;
+    const safeSetStart = Math.min(rawSetStart, nowTs);
+
+    if (ssGroup && !STATE.activeWorkout.supersetRoundStartMap[ssRoundKey]) {
+      STATE.activeWorkout.supersetRoundStartMap[ssRoundKey] = safeSetStart;
+    }
+
+    set.startedAt = safeSetStart;
+    set.completedAt = nowTs;
+    set.relStartStr = formatRelativeWorkoutTime(set.startedAt, workoutStartTs);
+    set.relEndStr = formatRelativeWorkoutTime(set.completedAt, workoutStartTs);
+    set.relTimeLabel = `start w ${set.relStartStr}, koniec w ${set.relEndStr}`;
+
+    STATE.activeWorkout.lastSetCompletedAt = nowTs;
     STATE.lastCompletedSetCoords = { exIdx, sIdx };
 
     if (navigator.vibrate) navigator.vibrate(50);
 
-    // 2. Determine whether to start Short Superset Rest or Main Rest
-    const ssGroup = (ex.supersetGroup || '').trim();
+    // 3. Module 1: Focus Overlay triggers ONLY after completing the LAST exercise in a set / superset round
     const mainRest = parseInt(STATE.activeWorkout.restSeconds) || 90;
-    const shortRest = parseInt(STATE.activeWorkout.supersetRestSeconds) || 30;
 
     if (ssGroup) {
       const groupMembers = STATE.activeWorkout.exercises.filter(
         item => (item.supersetGroup || '').trim() === ssGroup
       );
-      // Check if in the current round (sIdx) there is still at least one exercise in this superset not yet completed
       const incompleteInSameRound = groupMembers.some(
         member => member.sets[sIdx] && !member.sets[sIdx].completed
       );
 
       if (incompleteInSameRound) {
-        startRestTimer(shortRest, `⚡ PRZERWA W SUPERSERII ${ssGroup} (KOLEJNE ĆWICZENIE)`, ex.name, set.num, 'superset-short');
+        // Inside superset (not the last exercise yet): do NOT lock screen with Focus Overlay; mark start of next exercise in superset
+        STATE.activeWorkout.currentSetStartedAt = nowTs;
       } else {
-        startRestTimer(mainRest, `⏱️ KONIEC OBWODU SUPERSERII ${ssGroup} (DŁUGA PRZERWA)`, ex.name, set.num, 'superset-round');
+        // Last exercise in the superset round completed! Record full superset round span and trigger Focus Overlay
+        const roundStartTs = STATE.activeWorkout.supersetRoundStartMap[ssRoundKey] || set.startedAt;
+        const roundStartStr = formatRelativeWorkoutTime(roundStartTs, workoutStartTs);
+        set.supersetRelTimeLabel = `Superseria ${ssGroup}: start w ${roundStartStr}, koniec w ${set.relEndStr}`;
+        startRestTimer(mainRest, `🟢 PRZERWA TECHNICZNA • SUPERSERIA ${ssGroup} (S${set.num})`, ex.name, set.num, 'superset-round');
       }
     } else {
-      startRestTimer(mainRest, `⏱️ PRZERWA MIĘDZY SERIAMI`, ex.name, set.num, 'standard');
+      // Standard isolated exercise: every set completion is the end of that set -> trigger Focus Overlay
+      startRestTimer(mainRest, `🟢 PRZERWA TECHNICZNA I ODPOCZYNEK (SERIA ${set.num})`, ex.name, set.num, 'standard');
     }
     renderTimerEffortStrip();
   } else {
     set.effort = null;
+    set.startedAt = null;
+    set.completedAt = null;
+    set.relStartStr = null;
+    set.relEndStr = null;
+    set.relTimeLabel = null;
+    STATE.editingEffortCoords = null;
     renderTimerEffortStrip();
   }
 
@@ -2050,7 +2234,11 @@ function addSetToExercise(exIdx) {
     weight: last ? last.weight : 0,
     reps: last ? last.reps : 10,
     completed: false,
+    startedAt: null,
     completedAt: null,
+    relStartStr: null,
+    relEndStr: null,
+    relTimeLabel: null,
     restBeforeSeconds: null,
     effort: null
   });
@@ -2084,23 +2272,32 @@ function updateWorkoutStats() {
 }
 
 // ============================================================================
-// BIG REST TIMER (Counts down to 0, then counts overtime in RED + logs rests)
+// MODULE 1: FOCUS OVERLAY — TECHNICAL BREAK & REST LOCK (Stopwatch counting UP from 1s)
 // ============================================================================
-function startRestTimer(seconds, labelText = '⏱️ PRZERWA MIĘDZY SERIAMI', afterExercise = '', afterSet = 1, restType = 'standard') {
+function startRestTimer(targetSeconds = 90, labelText = '🟢 PRZERWA TECHNICZNA I ODPOCZYNEK', afterExercise = '', afterSet = 1, restType = 'standard') {
   clearInterval(STATE.timerInterval);
-  STATE.timerSeconds = seconds;
+  STATE.timerElapsedSeconds = 1;
+  STATE.timerTargetSeconds = parseInt(targetSeconds) || 90;
+  STATE.timerSeconds = STATE.timerElapsedSeconds;
   STATE.currentRestInfo = {
     startedAt: Date.now(),
-    plannedSeconds: seconds,
+    plannedSeconds: STATE.timerTargetSeconds,
     afterExercise: afterExercise,
     afterSet: afterSet,
     type: restType,
     logged: false
   };
 
+  // Full screen lock: prevent scrolling and clicking background elements
+  document.body.classList.add('focus-lock');
+
   const bar = document.getElementById('rest-timer-bar');
   const modeLabel = document.getElementById('timer-mode-label');
+  const targetRef = document.getElementById('timer-target-ref');
   if (modeLabel) modeLabel.textContent = labelText;
+  if (targetRef) {
+    targetRef.textContent = `${afterExercise ? afterExercise + ' (S' + afterSet + ') • ' : ''}Cel odpoczynku: ${STATE.timerTargetSeconds}s`;
+  }
   if (bar) {
     bar.classList.remove('overtime');
     bar.style.display = 'flex';
@@ -2109,8 +2306,9 @@ function startRestTimer(seconds, labelText = '⏱️ PRZERWA MIĘDZY SERIAMI', a
   updateTimerDisplayUI();
 
   STATE.timerInterval = setInterval(() => {
-    STATE.timerSeconds--;
-    if (STATE.timerSeconds === 0) {
+    STATE.timerElapsedSeconds++;
+    STATE.timerSeconds = STATE.timerElapsedSeconds;
+    if (STATE.timerElapsedSeconds === STATE.timerTargetSeconds) {
       if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 250]);
     }
     updateTimerDisplayUI();
@@ -2123,26 +2321,28 @@ function updateTimerDisplayUI() {
   const overtimeBadge = document.getElementById('timer-overtime-badge');
   if (!display || !bar) return;
 
-  if (STATE.timerSeconds > 0) {
-    bar.classList.remove('overtime');
-    if (overtimeBadge) overtimeBadge.style.display = 'none';
-    display.textContent = `${STATE.timerSeconds}s`;
-  } else {
-    // At 0 or negative (overtime): highlight in red and count how many seconds overtime
-    const overSec = Math.abs(STATE.timerSeconds);
-    bar.classList.add('overtime');
+  const elapsed = Math.max(1, STATE.timerElapsedSeconds || 1);
+  const target = STATE.timerTargetSeconds || 90;
+
+  display.textContent = `${elapsed}s`;
+
+  if (elapsed >= target) {
     if (overtimeBadge) {
-      overtimeBadge.style.display = 'inline';
-      overtimeBadge.textContent = `⚠️ ZA DŁUGA PRZERWA: +${overSec}s`;
+      overtimeBadge.style.display = 'inline-block';
+      const extra = elapsed - target;
+      overtimeBadge.textContent = extra > 0
+        ? `✅ ODPOCZYNEK OSIĄGNIĘTY (+${extra}s)`
+        : `✅ ODPOCZYNEK OSIĄGNIĘTY — GOTOWY DO SERII`;
     }
-    display.textContent = STATE.timerSeconds === 0 ? `0s` : `+${overSec}s`;
+  } else {
+    if (overtimeBadge) overtimeBadge.style.display = 'none';
   }
 }
 
 function addTimerSeconds(secs) {
-  STATE.timerSeconds += secs;
+  STATE.timerTargetSeconds = Math.max(10, (STATE.timerTargetSeconds || 90) + secs);
   if (STATE.currentRestInfo) {
-    STATE.currentRestInfo.plannedSeconds = Math.max(0, (STATE.currentRestInfo.plannedSeconds || 0) + secs);
+    STATE.currentRestInfo.plannedSeconds = STATE.timerTargetSeconds;
   }
   updateTimerDisplayUI();
 }
@@ -2152,7 +2352,7 @@ function finalizeCurrentRestLog(nextExerciseName = null, nextSetNum = null) {
   if (!STATE.activeWorkout.restLogs) STATE.activeWorkout.restLogs = [];
 
   if (STATE.currentRestInfo && !STATE.currentRestInfo.logged) {
-    const actualSec = Math.max(1, Math.round((Date.now() - STATE.currentRestInfo.startedAt) / 1000));
+    const actualSec = Math.max(1, STATE.timerElapsedSeconds || Math.round((Date.now() - STATE.currentRestInfo.startedAt) / 1000));
     const plannedSec = STATE.currentRestInfo.plannedSeconds || 90;
     const overtimeSec = Math.max(0, actualSec - plannedSec);
 
@@ -2184,10 +2384,15 @@ function finalizeCurrentRestLog(nextExerciseName = null, nextSetNum = null) {
 function stopTimer() {
   if (STATE.currentRestInfo && !STATE.currentRestInfo.logged) {
     finalizeCurrentRestLog();
+  }
+  if (STATE.activeWorkout) {
+    // Module 4: Pressing OK / Gotowe starts relative timer for the next set/superset
+    STATE.activeWorkout.currentSetStartedAt = Date.now();
     saveActiveWorkout();
   }
   clearInterval(STATE.timerInterval);
   STATE.timerInterval = null;
+  document.body.classList.remove('focus-lock');
   const bar = document.getElementById('rest-timer-bar');
   if (bar) {
     bar.classList.remove('overtime');
@@ -2214,12 +2419,15 @@ async function finishCurrentWorkout() {
   const completedSetsList = [];
 
   STATE.activeWorkout.exercises.forEach(ex => {
+    const isCalisthenics = isCalisthenicsExercise(ex);
     ex.sets.forEach(s => {
       totalSets++;
       if (s.completed) {
         completedSets++;
         const effectiveWeight = getEffectiveSetWeight(ex, s);
         totalVolumeKg += (effectiveWeight * s.reps);
+        const relStartStr = s.relStartStr || formatRelativeWorkoutTime(s.startedAt || startTime, startTime);
+        const relEndStr = s.relEndStr || formatRelativeWorkoutTime(s.completedAt || endTime, startTime);
         completedSetsList.push({
           exercise: ex.name,
           muscle: ex.muscle || 'Inne',
@@ -2229,8 +2437,12 @@ async function finishCurrentWorkout() {
           weight: s.weight,
           effectiveWeight: effectiveWeight,
           reps: s.reps,
-          effort: s.effort || null,
-          completedAt: s.completedAt || null
+          effort: isCalisthenics ? null : (s.effort || null),
+          startedAt: s.startedAt || null,
+          completedAt: s.completedAt || null,
+          relStartStr: relStartStr,
+          relEndStr: relEndStr,
+          relTimeLabel: s.relTimeLabel || `start w ${relStartStr}, koniec w ${relEndStr}`
         });
       }
     });
@@ -2251,6 +2463,9 @@ async function finishCurrentWorkout() {
     return;
   }
 
+  const burnedKcal = Math.round(((durationSeconds / 60) * 6.5) + (totalVolumeKg * 0.012));
+  const epocKcal = Math.round(burnedKcal * 0.15);
+
   const session = {
     id: STATE.activeWorkout.id,
     planId: STATE.activeWorkout.planId,
@@ -2262,6 +2477,8 @@ async function finishCurrentWorkout() {
     avgRestSeconds: avgRestSeconds,
     restLogs: restLogs,
     totalVolumeKg: Math.round(totalVolumeKg),
+    burnedKcal: burnedKcal,
+    epocKcal: epocKcal,
     completedSets: completedSets,
     sets: completedSetsList,
     coachFeedback: null
@@ -2274,6 +2491,7 @@ async function finishCurrentWorkout() {
   localStorage.removeItem('iron_active_workout');
   checkActiveWorkout();
   renderRecentWorkouts();
+  if (typeof renderCalendarDashboard === 'function') renderCalendarDashboard();
 
   STATE.currentCoachReportSessionId = session.id;
   showView('analysis');
@@ -2645,6 +2863,10 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
   if (initUrl) row.dataset.gifUrl = initUrl;
   if (initGifName) row.dataset.gifName = initGifName;
   if (exObj && exObj.gifUrl) row.dataset.gifLocked = '1';
+  if (exObj && exObj.manualUpdatedAt) row.dataset.manualUpdatedAt = String(exObj.manualUpdatedAt);
+  row.dataset.origSets = String(sets);
+  row.dataset.origReps = String(reps);
+  row.dataset.origWeight = String(weight);
 
   const ssOptions = [
     { val: '', label: 'Pojedyncze (Izolacja)' },
@@ -2701,15 +2923,15 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
     </div>
     <div style="display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 6px; align-items: center;">
       <div style="position: relative;">
-        <input type="number" class="input-box modal-ex-sets" style="font-size: 13px; padding: 6px;" placeholder="Ser" value="${sets}" title="Serie">
+        <input type="number" class="input-box modal-ex-sets" style="font-size: 13px; padding: 6px;" placeholder="Ser" value="${sets}" title="Serie" oninput="this.closest('.modal-ex-row').dataset.manualEdited='1'">
         <span style="font-size: 9px; color: var(--text-muted); display: block; text-align: center;">SERIE</span>
       </div>
       <div style="position: relative;">
-        <input type="number" class="input-box modal-ex-reps" style="font-size: 13px; padding: 6px;" placeholder="Powt" value="${reps}" title="Powtórzenia">
+        <input type="number" class="input-box modal-ex-reps" style="font-size: 13px; padding: 6px;" placeholder="Powt" value="${reps}" title="Powtórzenia" oninput="this.closest('.modal-ex-row').dataset.manualEdited='1'">
         <span style="font-size: 9px; color: var(--text-muted); display: block; text-align: center;">POWT</span>
       </div>
       <div class="modal-weight-container" style="position: relative; ${hideWeightBox ? 'display: none;' : ''}">
-        <input type="number" step="0.5" class="input-box modal-ex-weight" style="font-size: 13px; padding: 6px;" placeholder="kg" value="${weight}" title="Ciężar (kg)">
+        <input type="number" step="0.5" class="input-box modal-ex-weight" style="font-size: 13px; padding: 6px;" placeholder="kg" value="${weight}" title="Ciężar (kg)" oninput="this.closest('.modal-ex-row').dataset.manualEdited='1'">
         <span class="modal-weight-label" style="font-size: 9px; color: var(--text-muted); display: block; text-align: center;">${weightLabelText}</span>
       </div>
       <div class="modal-bw-add-container" style="${hideWeightBox ? 'display: flex;' : 'display: none;'} flex-direction: column; align-items: center; justify-content: center;">
@@ -2813,6 +3035,15 @@ function saveModalPlan() {
         persistExerciseGifAssignment(exName, { s: gifSlug, g: gifUrl, n: gifName });
       }
 
+      // Module 3 Exception: Manual change in plan overrides historical auto-progression
+      const wasEditedInModal = r.dataset.manualEdited === '1'
+        || String(sets) !== (r.dataset.origSets || '')
+        || String(reps) !== (r.dataset.origReps || '')
+        || String(weight) !== (r.dataset.origWeight || '');
+      const manualUpdatedAt = wasEditedInModal
+        ? Date.now()
+        : (parseInt(r.dataset.manualUpdatedAt) || null);
+
       exercises.push({
         name: exName,
         sets,
@@ -2823,7 +3054,8 @@ function saveModalPlan() {
         muscle: (matched && matched.m) || 'Ogólne',
         gifSlug,
         gifUrl,
-        gifName
+        gifName,
+        manualUpdatedAt
       });
     }
   });
@@ -3109,6 +3341,7 @@ function renderBodyMeasurementsView() {
   renderBodyChart();
   renderBodyHistoryList();
   renderHomeKpis();
+  if (typeof renderCalendarDashboard === 'function') renderCalendarDashboard();
 }
 
 function getSelectedOrLatestScaleEntry() {
@@ -4922,9 +5155,12 @@ function formatSessionDetailsForCoach(session, userWeightKg = 0) {
     }
     const effMeta = getSetEffortMeta(s.effort);
     const effortDesc = effMeta
-      ? ` | Subiektywna ocena trudności serii (1-5): ${effMeta.val}/5 (${effMeta.short} — ${effMeta.hint})`
-      : '';
-    return `${s.supersetGroup ? `[Superseria ${s.supersetGroup}] ` : '[Izolacja] '}${s.exercise}: Seria ${s.setNum} -> ${wDesc} x ${s.reps} powt.${effortDesc}`;
+      ? ` | Subiektywna ocena trudności serii (1-6): ${effMeta.val}/6 (${effMeta.fullLabel || effMeta.short} — ${effMeta.hint})`
+      : (s.loadType === 'bodyweight' && !(s.weight > 0) ? ' | Kalistenika (wyznacznikiem jest maks. liczba powtórzeń)' : '');
+    const timeDesc = s.relTimeLabel
+      ? ` | Czas serii: ${s.relTimeLabel}`
+      : (s.relStartStr && s.relEndStr ? ` | Czas serii: start w ${s.relStartStr}, koniec w ${s.relEndStr}` : '');
+    return `${s.supersetGroup ? `[Superseria ${s.supersetGroup}] ` : '[Izolacja] '}${s.exercise}: Seria ${s.setNum} -> ${wDesc} x ${s.reps} powt.${timeDesc}${effortDesc}`;
   }).join('\n');
 
   const restsSummary = (session.restLogs && session.restLogs.length > 0)
@@ -4983,8 +5219,8 @@ ${prevWorkouts}
 ${plansSection}
 
 Przygotuj pogłębioną, spersonalizowaną analizę w języku polskim:
-1. 📊 Ocena sesji pod kątem celu użytkownika (${STATE.userProfile?.goal || 'Hipertrofia'}) oraz jego składu ciała Fitdays i obwodów: oceń objętość, tonaż (w tym ćwiczenia z masą własnego ciała i 2x hantle), gęstość treningową (całkowity czas sesji), subiektywne oceny trudności serii w skali 1–5 (gdzie 1=Lekko, 2=Spokojnie, 3=Optymalnie, 4=Ciężko, 5=Hardcore/na maksa) oraz dyscyplinę przerw między ćwiczeniami i wewnątrz superserii.
-2. 🎯 Konkretna periodyzacja i progresywne przeładowanie na kolejny trening (OPARTE NA OCENACH 1–5): wskaż dokładnie, w których ćwiczeniach użytkownik ocenił serie na 1–2 (lub łatwe 3) i powinien podnieść ciężar (podaj o ile kg!), w których ćwiczeniach było 3–4 (utrzymać ciężar / dołożyć powtórzenie), a gdzie było 5/5 Hardcore (zostać na obecnym ciężarze lub wydłużyć przerwę).
+1. 📊 Ocena sesji pod kątem celu użytkownika (${STATE.userProfile?.goal || 'Hipertrofia'}) oraz jego składu ciała Fitdays i obwodów: oceń objętość, tonaż (w tym ćwiczenia z masą własnego ciała i 2x hantle), gęstość treningową (całkowity czas sesji oraz relatywne czasy rozpoczęcia i zakończenia poszczególnych serii), subiektywne oceny trudności serii dla ćwiczeń z ciężarem w skali 1–6 (gdzie 1=Lekko, 2=Spokojnie, 3=Optymalnie, 4=Ciężko, 5=Bardzo ciężko, 6=Hardcore; w kalistenice wyznacznikiem jest liczba powtórzeń) oraz dyscyplinę przerw między ćwiczeniami i wewnątrz superserii.
+2. 🎯 Konkretna periodyzacja i progresywne przeładowanie na kolejny trening (OPARTE NA OCENACH 1–6 ORAZ KALISTENICE): wskaż dokładnie, w których ćwiczeniach użytkownik ocenił serie na 1–2 (lub łatwe 3) i powinien podnieść ciężar (podaj o ile kg!), w których ćwiczeniach było 3–4 (utrzymać ciężar / dołożyć +1 powtórzenie), a gdzie było 5/6 Bardzo ciężko lub 6/6 Hardcore (zostać na obecnym ciężarze lub wydłużyć przerwę).
 3. ⚡ Praktyczne wskazówki biomechaniczne, żywieniowe (dopasowane do BMR, dziennika kalorii/makro, % tkanki tłuszczowej i celu) oraz regeneracyjne.
 Używaj czytelnego formatowania punktowego.`;
 
@@ -5404,8 +5640,7 @@ function saveApiKey() {
   setTimeout(() => status.style.display = 'none', 3000);
 }
 
-function exportDataJson() {
-  // Enrich every exercise in STATE.plans with its resolved gifUrl & gifSlug before exporting
+function buildFullBackupObject() {
   const enrichedPlans = (STATE.plans || []).map(p => ({
     ...p,
     exercises: (p.exercises || []).map(ex => {
@@ -5419,8 +5654,8 @@ function exportDataJson() {
     })
   }));
 
-  const backup = {
-    schemaVersion: 7,
+  return {
+    schemaVersion: 8,
     exportedAt: new Date().toISOString(),
     userProfile: STATE.userProfile,
     bodyMeasurements: STATE.bodyMeasurements,
@@ -5428,11 +5663,16 @@ function exportDataJson() {
     nutritionDiary: STATE.nutritionDiary,
     plans: enrichedPlans,
     history: STATE.history,
+    calendarAiSummaries: STATE.calendarAiSummaries || {},
     customGifMap: JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}'),
     coachThreads: STATE.coachThreads,
     activeCoachThreadId: STATE.activeCoachThreadId,
     coachChat: STATE.coachChat
   };
+}
+
+function exportDataJson() {
+  const backup = buildFullBackupObject();
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -5529,7 +5769,8 @@ function importDataJson(event) {
               loadType: ex.loadType || 'standard',
               gifSlug,
               gifUrl,
-              gifName
+              gifName,
+              manualUpdatedAt: ex.manualUpdatedAt || null
             };
           }) : []
         }));
@@ -5556,6 +5797,8 @@ function importDataJson(event) {
             avgRestSeconds: h.avgRestSeconds || 0,
             restLogs: Array.isArray(h.restLogs) ? h.restLogs : [],
             totalVolumeKg: Math.round(parseFloat(h.totalVolumeKg) || 0),
+            burnedKcal: h.burnedKcal || null,
+            epocKcal: h.epocKcal || null,
             completedSets: parseInt(h.completedSets) || (Array.isArray(h.sets) ? h.sets.length : 0),
             sets: Array.isArray(h.sets) ? h.sets.map((s, sIdx) => ({
               exercise: s.exercise || 'Ćwiczenie',
@@ -5567,7 +5810,11 @@ function importDataJson(event) {
               effectiveWeight: parseFloat(s.effectiveWeight) || (s.loadType === 'dual_dumbbell' ? (parseFloat(s.weight) || 0) * 2 : (parseFloat(s.weight) || 0)),
               reps: parseInt(s.reps) || 0,
               effort: parseInt(s.effort) || null,
-              completedAt: s.completedAt || null
+              startedAt: s.startedAt || null,
+              completedAt: s.completedAt || null,
+              relStartStr: s.relStartStr || null,
+              relEndStr: s.relEndStr || null,
+              relTimeLabel: s.relTimeLabel || null
             })) : [],
             coachFeedback: h.coachFeedback || null
           };
@@ -5613,14 +5860,607 @@ function importDataJson(event) {
         initCoachThreads();
       }
 
+      if (data.calendarAiSummaries && typeof data.calendarAiSummaries === 'object') {
+        STATE.calendarAiSummaries = { ...(STATE.calendarAiSummaries || {}), ...data.calendarAiSummaries };
+        localStorage.setItem('iron_calendar_ai_summaries', JSON.stringify(STATE.calendarAiSummaries));
+      }
+
       renderPlans();
       renderRecentWorkouts();
+      if (typeof renderCalendarDashboard === 'function') renderCalendarDashboard();
       alert('Dane i historia zostały bezpiecznie zaimportowane!');
     } catch (err) {
       alert('Niepoprawny plik JSON: ' + err.message);
     }
   };
   reader.readAsText(file);
+}
+
+// ============================================================================
+// MODULE 5: CALENDAR & GEMINI AI DASHBOARD (Workout / Rest & Weight / Mixed Cards)
+// ============================================================================
+function getIsoDateFromTimestamp(ts) {
+  const d = new Date(ts || Date.now());
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getWorkoutsForDateKey(dateKey) {
+  if (!dateKey || !Array.isArray(STATE.history)) return [];
+  return STATE.history.filter(h => {
+    const k = getIsoDateFromTimestamp(h.endTime || h.startTime);
+    return k === dateKey;
+  });
+}
+
+function getMeasurementsForDateKey(dateKey) {
+  if (!dateKey || !Array.isArray(STATE.bodyMeasurements)) return [];
+  return STATE.bodyMeasurements.filter(m => getMeasurementDayKey(m) === dateKey);
+}
+
+function initCalendarDashboard() {
+  const now = new Date();
+  STATE.calendarYear = now.getFullYear();
+  STATE.calendarMonth = now.getMonth();
+  const todayIso = getIsoDateFromTimestamp(now.getTime());
+
+  // Default selected calendar day to today if it has data, or the latest day with workout/measurement in current month
+  const todayHasData = getWorkoutsForDateKey(todayIso).length > 0 || getMeasurementsForDateKey(todayIso).length > 0;
+  if (todayHasData) {
+    STATE.selectedCalendarDate = todayIso;
+  } else {
+    const latestWorkout = (STATE.history || [])[0];
+    const latestMeas = (STATE.bodyMeasurements || [])[0];
+    const wTs = latestWorkout ? (latestWorkout.endTime || latestWorkout.startTime || 0) : 0;
+    const mTs = latestMeas ? (latestMeas.timestamp || 0) : 0;
+    if (wTs >= mTs && wTs > 0) {
+      const d = new Date(wTs);
+      STATE.calendarYear = d.getFullYear();
+      STATE.calendarMonth = d.getMonth();
+      STATE.selectedCalendarDate = getIsoDateFromTimestamp(wTs);
+    } else if (mTs > 0) {
+      const dKey = getMeasurementDayKey(latestMeas);
+      const parts = dKey.split('-');
+      if (parts.length === 3) {
+        STATE.calendarYear = parseInt(parts[0]) || now.getFullYear();
+        STATE.calendarMonth = (parseInt(parts[1]) || 1) - 1;
+      }
+      STATE.selectedCalendarDate = dKey;
+    } else {
+      STATE.selectedCalendarDate = todayIso;
+    }
+  }
+  renderCalendarDashboard();
+}
+
+function changeCalendarMonth(delta) {
+  let m = STATE.calendarMonth + delta;
+  let y = STATE.calendarYear;
+  if (m < 0) {
+    m = 11;
+    y--;
+  } else if (m > 11) {
+    m = 0;
+    y++;
+  }
+  STATE.calendarMonth = m;
+  STATE.calendarYear = y;
+  renderCalendarDashboard();
+}
+
+function selectCalendarDay(dateKey) {
+  STATE.selectedCalendarDate = dateKey;
+  renderCalendarDashboard();
+}
+
+function renderCalendarDashboard() {
+  const monthLabelEl = document.getElementById('calendar-month-label');
+  const gridEl = document.getElementById('home-calendar-grid');
+  if (!monthLabelEl || !gridEl) return;
+
+  const year = STATE.calendarYear;
+  const month = STATE.calendarMonth;
+  const monthNamesPl = [
+    'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
+    'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'
+  ];
+  monthLabelEl.textContent = `${monthNamesPl[month] || ''} ${year}`;
+
+  const firstDay = new Date(year, month, 1);
+  // Convert JS Sunday=0..Saturday=6 into Monday=0..Sunday=6
+  const startWeekday = (firstDay.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const todayIso = getIsoDateFromTimestamp(Date.now());
+
+  const cellsHtml = [];
+  for (let i = 0; i < startWeekday; i++) {
+    cellsHtml.push(`<div></div>`);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const hasWorkout = getWorkoutsForDateKey(dateKey).length > 0;
+    const hasMeas = getMeasurementsForDateKey(dateKey).length > 0;
+    const isSelected = STATE.selectedCalendarDate === dateKey;
+    const isToday = dateKey === todayIso;
+
+    let bg = 'var(--surface-elevated)';
+    let border = '1px solid var(--border)';
+    let badgeIcons = '';
+
+    if (hasWorkout && hasMeas) {
+      bg = 'linear-gradient(135deg, rgba(255,179,0,0.22), rgba(0,229,255,0.22))';
+      border = '1px solid var(--primary)';
+      badgeIcons = '🏋️⚖️';
+    } else if (hasWorkout) {
+      bg = 'rgba(255, 179, 0, 0.16)';
+      border = '1px solid rgba(255, 179, 0, 0.45)';
+      badgeIcons = '🏋️';
+    } else if (hasMeas) {
+      bg = 'rgba(0, 229, 255, 0.14)';
+      border = '1px solid rgba(0, 229, 255, 0.45)';
+      badgeIcons = '⚖️';
+    }
+
+    if (isSelected) {
+      border = '2px solid #00E676';
+    }
+
+    cellsHtml.push(`
+      <button
+        type="button"
+        onclick="selectCalendarDay('${dateKey}')"
+        style="
+          background: ${bg};
+          border: ${border};
+          border-radius: 8px;
+          padding: 5px 2px;
+          min-height: 42px;
+          color: var(--text);
+          cursor: pointer;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 2px;
+          box-shadow: ${isSelected ? '0 0 10px rgba(0,230,118,0.35)' : 'none'};
+        "
+      >
+        <span style="font-size: 12px; font-weight: ${isToday || isSelected ? '900' : '700'}; color: ${isToday ? 'var(--success)' : 'var(--text)'};">${day}</span>
+        <span style="font-size: 9px; line-height: 1; min-height: 10px;">${badgeIcons}</span>
+      </button>
+    `);
+  }
+
+  gridEl.innerHTML = cellsHtml.join('');
+  renderCalendarDaySummaryCard(STATE.selectedCalendarDate);
+}
+
+function getWeightTrendForMeasurement(entry) {
+  if (!entry || !entry.weightKg) {
+    return { arrow: '→', color: 'var(--text-muted)', deltaStr: 'stabilnie' };
+  }
+  const currentDayKey = getMeasurementDayKey(entry);
+  // Find previous measurement with weightKg before currentDayKey
+  const olderWithWeight = (STATE.bodyMeasurements || [])
+    .filter(m => m.weightKg && getMeasurementDayKey(m) < currentDayKey)
+    .sort((a, b) => getMeasurementDayKey(b).localeCompare(getMeasurementDayKey(a)));
+
+  const prev = olderWithWeight[0];
+  if (!prev || !prev.weightKg) {
+    return { arrow: '→', color: 'var(--accent)', deltaStr: 'pierwszy pomiar' };
+  }
+  const diff = Number((parseFloat(entry.weightKg) - parseFloat(prev.weightKg)).toFixed(1));
+  if (diff > 0.1) {
+    return { arrow: '↑', color: 'var(--primary)', deltaStr: `+${diff} kg` };
+  }
+  if (diff < -0.1) {
+    return { arrow: '↓', color: 'var(--success)', deltaStr: `${diff} kg` };
+  }
+  return { arrow: '→', color: 'var(--accent)', deltaStr: '0.0 kg' };
+}
+
+function buildWorkoutDayModuleHtml(dateKey, dayWorkouts, aiCache) {
+  const totalVol = dayWorkouts.reduce((acc, w) => acc + (parseFloat(w.totalVolumeKg) || 0), 0);
+  const totalDurSec = dayWorkouts.reduce((acc, w) => {
+    const d = w.durationSeconds || (w.endTime && w.startTime ? Math.round((w.endTime - w.startTime) / 1000) : 0);
+    return acc + d;
+  }, 0);
+  const totalSets = dayWorkouts.reduce((acc, w) => acc + (parseInt(w.completedSets) || 0), 0);
+  const burnedKcal = dayWorkouts.reduce((acc, w) => {
+    if (w.burnedKcal) return acc + w.burnedKcal;
+    const dMin = (w.durationSeconds || 1800) / 60;
+    return acc + Math.round((dMin * 6.5) + ((w.totalVolumeKg || 0) * 0.012));
+  }, 0);
+  const epocKcal = Math.round(burnedKcal * 0.15);
+  const planNames = dayWorkouts.map(w => w.planName || 'Trening').join(' + ');
+
+  const twoLineSummary = (aiCache && aiCache.workoutSummary)
+    ? aiCache.workoutSummary
+    : `Mocna sesja ${planNames} (${totalSets} serii, tonaż ${Math.round(totalVol)} kg).\nWysoki bodziec metaboliczny — zadbaj o białko i sen pod kątem superkompensacji.`;
+
+  return `
+    <div>
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap;">
+        <span class="badge" style="background: rgba(255,179,0,0.18); color: var(--primary); font-size: 11px;">🏋️ DZIEŃ TRENINGOWY • ${escapeHtml(planNames)}</span>
+        <button type="button" class="btn btn-sm btn-secondary" style="width: auto; padding: 3px 8px; font-size: 10px;" onclick="generateCalendarDayAiSummary('${dateKey}', true)">🤖 Odśwież Gemini</button>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px;">
+        <div style="background: rgba(0,0,0,0.28); border: 1px solid var(--border); border-radius: 8px; padding: 7px 4px; text-align: center;">
+          <div style="font-size: 13px; font-weight: 900; color: var(--primary);">${Math.round(totalVol)} kg</div>
+          <div style="font-size: 9px; color: var(--text-muted); text-transform: uppercase;">Tonaż całk.</div>
+        </div>
+        <div style="background: rgba(0,0,0,0.28); border: 1px solid var(--border); border-radius: 8px; padding: 7px 4px; text-align: center;">
+          <div style="font-size: 13px; font-weight: 900; color: var(--accent);">${formatDuration(totalDurSec)}</div>
+          <div style="font-size: 9px; color: var(--text-muted); text-transform: uppercase;">Czas trwania</div>
+        </div>
+        <div style="background: rgba(0,0,0,0.28); border: 1px solid var(--border); border-radius: 8px; padding: 7px 4px; text-align: center;">
+          <div style="font-size: 13px; font-weight: 900; color: var(--success);">~${burnedKcal} kcal</div>
+          <div style="font-size: 9px; color: var(--text-muted); text-transform: uppercase;">Spalone kcal</div>
+        </div>
+        <div style="background: rgba(0,0,0,0.28); border: 1px solid var(--border); border-radius: 8px; padding: 7px 4px; text-align: center;">
+          <div style="font-size: 13px; font-weight: 900; color: #ff9100;">+${epocKcal} kcal</div>
+          <div style="font-size: 9px; color: var(--text-muted); text-transform: uppercase;">Efekt EPOC</div>
+        </div>
+      </div>
+      <div style="background: rgba(255,179,0,0.07); border-left: 3px solid var(--primary); border-radius: 6px; padding: 7px 10px; font-size: 12px; line-height: 1.45; color: var(--text);">
+        <div style="font-size: 10px; font-weight: 800; color: var(--primary); text-transform: uppercase; margin-bottom: 2px;">✨ Podsumowanie Gemini (2-linijkowe):</div>
+        <div>${escapeHtml(twoLineSummary).replace(/\n/g, '<br>')}</div>
+      </div>
+    </div>
+  `;
+}
+
+function buildMeasurementDayModuleHtml(dateKey, measEntry, aiCache, isCompactPanel = false) {
+  const trend = getWeightTrendForMeasurement(measEntry);
+  const oneWord = (aiCache && aiCache.oneWordStatus) ? aiCache.oneWordStatus : 'Regeneracja';
+
+  // Pick 3-4 key indicators available on this measurement
+  const indicators = [];
+  if (measEntry.bodyFatPct != null) indicators.push({ label: 'Tkanka tł. (BF)', val: `${measEntry.bodyFatPct}%` });
+  if (measEntry.muscleMassKg != null) indicators.push({ label: 'Mięśnie', val: `${measEntry.muscleMassKg} kg` });
+  if (measEntry.bodyWaterPct != null) indicators.push({ label: 'Woda', val: `${measEntry.bodyWaterPct}%` });
+  if (measEntry.waistCm != null) indicators.push({ label: 'Talia', val: `${measEntry.waistCm} cm` });
+  if (measEntry.beltCm != null && indicators.length < 4) indicators.push({ label: 'Pas', val: `${measEntry.beltCm} cm` });
+  if (measEntry.bicepsCm != null && indicators.length < 4) indicators.push({ label: 'Biceps', val: `${measEntry.bicepsCm} cm` });
+  if (measEntry.bmrKcal != null && indicators.length < 4) indicators.push({ label: 'BMR', val: `${measEntry.bmrKcal} kcal` });
+  if (measEntry.bmi != null && indicators.length < 4) indicators.push({ label: 'BMI', val: `${measEntry.bmi}` });
+
+  const topIndicators = indicators.slice(0, 4);
+
+  return `
+    <div>
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap;">
+        <span class="badge badge-cyan" style="font-size: 11px;">⚖️ ${isCompactPanel ? 'PANEL WYMIARÓW I WAGI' : 'DZIEŃ BEZ TRENINGU (POMIARY / WAGA)'}</span>
+        <span class="badge" style="background: rgba(0,230,118,0.16); color: var(--success); font-size: 11px; font-weight: 900;">✨ Gemini: „${escapeHtml(oneWord)}”</span>
+      </div>
+      <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.28); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; margin-bottom: 8px;">
+        <div>
+          <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Waga i trend</div>
+          <div style="font-size: 18px; font-weight: 900; color: var(--text);">
+            ${measEntry.weightKg != null ? `${measEntry.weightKg} kg` : 'Pomiar obwodów'}
+            <span style="color: ${trend.color}; font-size: 18px; margin-left: 4px;">${trend.arrow}</span>
+            <span style="font-size: 11px; color: ${trend.color}; font-weight: 700; margin-left: 4px;">(${escapeHtml(trend.deltaStr)})</span>
+          </div>
+        </div>
+        ${!isCompactPanel ? `<button type="button" class="btn btn-sm btn-secondary" style="width: auto; padding: 4px 8px; font-size: 10px;" onclick="generateCalendarDayAiSummary('${dateKey}', true)">🤖 Odśwież AI</button>` : ''}
+      </div>
+      ${topIndicators.length > 0 ? `
+        <div style="display: grid; grid-template-columns: repeat(${Math.min(4, topIndicators.length)}, 1fr); gap: 6px;">
+          ${topIndicators.map(ind => `
+            <div style="background: rgba(0,0,0,0.22); border: 1px solid var(--border); border-radius: 8px; padding: 6px 4px; text-align: center;">
+              <div style="font-size: 12px; font-weight: 800; color: var(--accent);">${escapeHtml(ind.val)}</div>
+              <div style="font-size: 9px; color: var(--text-muted);">${escapeHtml(ind.label)}</div>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function renderCalendarDaySummaryCard(dateKey) {
+  const cardEl = document.getElementById('calendar-day-summary-card');
+  if (!cardEl) return;
+
+  const dayWorkouts = getWorkoutsForDateKey(dateKey);
+  const dayMeasurements = getMeasurementsForDateKey(dateKey);
+  const measEntry = dayMeasurements[0] || null;
+  const aiCache = (STATE.calendarAiSummaries && STATE.calendarAiSummaries[dateKey]) || null;
+
+  if (dayWorkouts.length === 0 && !measEntry) {
+    cardEl.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <div style="font-size: 12px; font-weight: 800; color: var(--text);">📅 ${escapeHtml(dateKey)} — Dzień wolny</div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Brak zarejestrowanego treningu lub pomiaru wagi w tym dniu.</div>
+        </div>
+        <span class="badge" style="background: rgba(255,255,255,0.06); color: var(--text-muted);">Odpoczynek</span>
+      </div>
+    `;
+    return;
+  }
+
+  // Case 1: Mixed Day (Workout + Weight/Measurements integrated card)
+  if (dayWorkouts.length > 0 && measEntry) {
+    cardEl.innerHTML = `
+      <div style="font-size: 11px; font-weight: 900; color: var(--success); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
+        🔥 DZIEŃ MIESZANY (${escapeHtml(dateKey)}) — ZINTEGROWANA KARTA TRENINGU I POMIARÓW
+      </div>
+      ${buildWorkoutDayModuleHtml(dateKey, dayWorkouts, aiCache)}
+      <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(255,255,255,0.14);">
+        ${buildMeasurementDayModuleHtml(dateKey, measEntry, aiCache, true)}
+      </div>
+    `;
+  } else if (dayWorkouts.length > 0) {
+    // Case 2: Workout Day only
+    cardEl.innerHTML = buildWorkoutDayModuleHtml(dateKey, dayWorkouts, aiCache);
+  } else if (measEntry) {
+    // Case 3: Non-Workout Day (Weight/Measurements only)
+    cardEl.innerHTML = buildMeasurementDayModuleHtml(dateKey, measEntry, aiCache, false);
+  }
+
+  // Automatically generate Gemini summary in background if API key is present and not yet cached
+  if (STATE.apiKey && (!aiCache || (!aiCache.workoutSummary && dayWorkouts.length > 0) || (!aiCache.oneWordStatus && measEntry))) {
+    generateCalendarDayAiSummary(dateKey, false);
+  }
+}
+
+const pendingCalendarAiDates = new Set();
+
+async function generateCalendarDayAiSummary(dateKey, force = false) {
+  if (!dateKey || !STATE.apiKey) {
+    if (force && !STATE.apiKey) alert('Podaj klucz Gemini API w Ustawieniach!');
+    return;
+  }
+  if (pendingCalendarAiDates.has(dateKey)) return;
+
+  const dayWorkouts = getWorkoutsForDateKey(dateKey);
+  const dayMeasurements = getMeasurementsForDateKey(dateKey);
+  const measEntry = dayMeasurements[0] || null;
+  if (dayWorkouts.length === 0 && !measEntry) return;
+
+  pendingCalendarAiDates.add(dateKey);
+
+  try {
+    const wContext = dayWorkouts.map(w => {
+      const setsStr = (w.sets || []).map(s => `${s.exercise} ${s.weight}kgx${s.reps}${s.effort ? ` (ocena ${s.effort}/6)` : ''}`).join(', ');
+      return `Trening: ${w.planName}, tonaż ${w.totalVolumeKg}kg, czas ${formatDuration(w.durationSeconds || 0)}, serie: ${setsStr}`;
+    }).join('\n');
+
+    const mContext = measEntry
+      ? `Waga: ${measEntry.weightKg || '-'}kg, BF: ${measEntry.bodyFatPct || '-'}%, Mięśnie: ${measEntry.muscleMassKg || '-'}kg, Talia: ${measEntry.waistCm || '-'}cm`
+      : '';
+
+    const prompt = `
+Jesteś silnikiem analitycznym Gemini w aplikacji IronCoach AI. Przygotuj zwięzłe podsumowanie dnia (${dateKey}) do kafelka Dashboardu.
+Dane treningowe z tego dnia:
+${wContext || 'Brak treningu'}
+Dane pomiarowe z tego dnia:
+${mContext || 'Brak pomiaru wagi'}
+
+Zwróć WYŁĄCZNIE poprawny obiekt JSON:
+{
+  "workoutSummary": "Dokładnie 2 krótkie, konkretne linijki tekstu po polsku (oddzielone znakiem \\n) podsumowujące wykonany trening, objętość i efekt potreningowy EPOC.",
+  "oneWordStatus": "Dokładnie 1 słowo po polsku określające stan dnia bez treningu / pomiaru (np. Regeneracja, Rekompozycja, Adaptacja, Redukcja, Superkompensacja)"
+}
+Bez znaczników markdown.`;
+
+    const raw = await callGemini(prompt, 'fast');
+    const parsed = extractJsonFromGemini(raw);
+    if (!STATE.calendarAiSummaries) STATE.calendarAiSummaries = {};
+    STATE.calendarAiSummaries[dateKey] = {
+      workoutSummary: parsed.workoutSummary || null,
+      oneWordStatus: String(parsed.oneWordStatus || 'Regeneracja').trim().split(/\s+/)[0],
+      updatedAt: Date.now()
+    };
+    localStorage.setItem('iron_calendar_ai_summaries', JSON.stringify(STATE.calendarAiSummaries));
+    if (STATE.selectedCalendarDate === dateKey) {
+      renderCalendarDaySummaryCard(dateKey);
+    }
+  } catch (e) {
+    console.warn('Calendar AI summary error:', e);
+    if (force) alert('Błąd generowania podsumowania AI: ' + e.message);
+  } finally {
+    pendingCalendarAiDates.delete(dateKey);
+  }
+}
+
+// ============================================================================
+// MODULE 6: AUTOMATIC GOOGLE DRIVE BACKUP (Morning Trigger on First App Open)
+// ============================================================================
+function loadGoogleDriveConfig() {
+  const whInput = document.getElementById('gdrive-webhook-url');
+  const tokInput = document.getElementById('gdrive-oauth-token');
+  const statusEl = document.getElementById('gdrive-last-backup-status');
+
+  if (whInput) whInput.value = STATE.gdriveWebhookUrl || '';
+  if (tokInput) tokInput.value = STATE.gdriveOauthToken || '';
+
+  const lastDate = localStorage.getItem('iron_last_morning_backup_date') || 'Brak';
+  const lastMode = localStorage.getItem('iron_last_morning_backup_mode') || 'lokalny snapshot';
+  if (statusEl) {
+    statusEl.innerHTML = `📅 Ostatni poranny auto-backup: <b style="color: var(--success);">${escapeHtml(lastDate)}</b> (${escapeHtml(lastMode)}) • Zakres: <b>${(STATE.history || []).length}</b> sesji, <b>${(STATE.bodyMeasurements || []).length}</b> pomiarów ciała, analizy Gemini.`;
+  }
+}
+
+function saveGoogleDriveConfig() {
+  const wh = (document.getElementById('gdrive-webhook-url')?.value || '').trim();
+  const tok = (document.getElementById('gdrive-oauth-token')?.value || '').trim();
+  STATE.gdriveWebhookUrl = wh;
+  STATE.gdriveOauthToken = tok;
+  localStorage.setItem('iron_gdrive_webhook_url', wh);
+  localStorage.setItem('iron_gdrive_oauth_token', tok);
+  loadGoogleDriveConfig();
+  alert('✅ Zapisano konfigurację automatycznego backupu Google Drive!');
+}
+
+function dismissMorningBackupBanner() {
+  const banner = document.getElementById('morning-backup-banner');
+  if (banner) banner.style.display = 'none';
+}
+
+async function checkMorningAutoBackup() {
+  const todayIso = getIsoDateFromTimestamp(Date.now());
+  const lastBackupDate = localStorage.getItem('iron_last_morning_backup_date');
+
+  // Trigger once every day upon the first opening of the application
+  if (lastBackupDate === todayIso) {
+    loadGoogleDriveConfig();
+    return;
+  }
+
+  const backupObj = buildFullBackupObject();
+  try {
+    localStorage.setItem('iron_morning_auto_snapshot', JSON.stringify(backupObj));
+    localStorage.setItem('iron_last_morning_backup_date', todayIso);
+  } catch (e) {
+    console.warn('Morning local snapshot storage warning:', e);
+  }
+
+  const banner = document.getElementById('morning-backup-banner');
+  const subText = document.getElementById('morning-backup-banner-text');
+
+  if (STATE.gdriveWebhookUrl || STATE.gdriveOauthToken) {
+    const res = await uploadBackupToGoogleDrive(backupObj, true);
+    if (res.ok) {
+      localStorage.setItem('iron_last_morning_backup_mode', 'Google Drive Cloud');
+      if (banner && subText) {
+        subText.textContent = `Przesłano automatycznie pełny backup (${todayIso}) na Twój Google Drive.`;
+        banner.style.display = 'block';
+      }
+    } else {
+      localStorage.setItem('iron_last_morning_backup_mode', 'Snapshot + gotowy do wysłania');
+      if (banner && subText) {
+        subText.textContent = `Utworzono poranny backup (${todayIso}). Kliknij „Wyślij na Drive”, aby zapisać w chmurze.`;
+        banner.style.display = 'block';
+      }
+    }
+  } else {
+    localStorage.setItem('iron_last_morning_backup_mode', 'Gotowy poranny snapshot');
+    if (banner && subText) {
+      subText.textContent = `Przygotowano poranny backup z dnia ${todayIso} (sesje, ciężary, pomiary i analizy Gemini).`;
+      banner.style.display = 'block';
+    }
+  }
+
+  loadGoogleDriveConfig();
+}
+
+async function uploadBackupToGoogleDrive(backupObj, silent = false) {
+  const fileName = `ironcoach-auto-backup-${getIsoDateFromTimestamp(Date.now())}.json`;
+  const jsonContent = JSON.stringify(backupObj, null, 2);
+
+  // 1. If Google Apps Script Webhook URL is configured, POST directly (no OAuth expiration issues)
+  if (STATE.gdriveWebhookUrl) {
+    try {
+      const response = await fetch(STATE.gdriveWebhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          fileName: fileName,
+          mimeType: 'application/json',
+          backup: backupObj
+        })
+      });
+      if (response.ok) {
+        return { ok: true, method: 'webhook' };
+      }
+    } catch (e) {
+      console.warn('Webhook upload failed:', e);
+    }
+  }
+
+  // 2. If Google Drive REST API OAuth Token is configured, upload via multipart Drive v3 API
+  if (STATE.gdriveOauthToken) {
+    try {
+      const metadata = {
+        name: fileName,
+        mimeType: 'application/json',
+        description: 'Automatyczny backup IronCoach AI (sesje, obciążenia, pomiary, analizy Gemini)'
+      };
+      const boundary = '-------IronCoachDriveBoundary' + Date.now();
+      const body =
+        `--${boundary}\r\n` +
+        `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+        `${JSON.stringify(metadata)}\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Type: application/json\r\n\r\n` +
+        `${jsonContent}\r\n` +
+        `--${boundary}--`;
+
+      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${STATE.gdriveOauthToken}`,
+          'Content-Type': `multipart/related; boundary=${boundary}`
+        },
+        body: body
+      });
+      if (res.ok) {
+        return { ok: true, method: 'oauth' };
+      }
+    } catch (e) {
+      console.warn('Drive API upload failed:', e);
+    }
+  }
+
+  if (!silent) {
+    return { ok: false };
+  }
+  return { ok: false };
+}
+
+async function triggerGoogleDriveBackupNow() {
+  const backupObj = buildFullBackupObject();
+  const todayIso = getIsoDateFromTimestamp(Date.now());
+  localStorage.setItem('iron_morning_auto_snapshot', JSON.stringify(backupObj));
+  localStorage.setItem('iron_last_morning_backup_date', todayIso);
+
+  if (STATE.gdriveWebhookUrl || STATE.gdriveOauthToken) {
+    const res = await uploadBackupToGoogleDrive(backupObj, false);
+    if (res.ok) {
+      localStorage.setItem('iron_last_morning_backup_mode', 'Google Drive Cloud');
+      loadGoogleDriveConfig();
+      dismissMorningBackupBanner();
+      alert('✅ Pełny backup (sesje, obciążenia, powtórzenia, pomiary ciała i analizy Gemini) został zapisany na Google Drive!');
+      return;
+    }
+  }
+
+  // Fallback to mobile native Share Sheet (allows 1-tap "Save to Google Drive" on Android/iOS) or file download
+  await shareBackupToGoogleDriveApp();
+}
+
+async function shareBackupToGoogleDriveApp() {
+  const backupObj = buildFullBackupObject();
+  const todayIso = getIsoDateFromTimestamp(Date.now());
+  const fileName = `ironcoach-backup-${todayIso}.json`;
+  const jsonStr = JSON.stringify(backupObj, null, 2);
+
+  localStorage.setItem('iron_last_morning_backup_date', todayIso);
+  localStorage.setItem('iron_last_morning_backup_mode', 'Udostępniono do Google Drive');
+  loadGoogleDriveConfig();
+  dismissMorningBackupBanner();
+
+  try {
+    const file = new File([jsonStr], fileName, { type: 'application/json' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({
+        title: `IronCoach Backup (${todayIso})`,
+        text: 'Kopia zapasowa IronCoach AI (historia sesji, ciężary, pomiary ciała i analizy Gemini)',
+        files: [file]
+      });
+      return;
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;
+  }
+
+  // Standard download fallback if Web Share API is not supported on desktop
+  exportDataJson();
 }
 
 // ============================================================================
