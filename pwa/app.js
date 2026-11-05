@@ -21,7 +21,7 @@ const STATE = {
   activeWorkout: JSON.parse(localStorage.getItem('iron_active_workout')) || null,
   apiKey: localStorage.getItem('iron_gemini_api_key') || '',
   backupApiKey: localStorage.getItem('iron_gemini_backup_api_key') || '',
-  preferredGeminiTier: localStorage.getItem('iron_gemini_preferred_tier') || 'smart',
+  preferredGeminiTier: localStorage.getItem('iron_gemini_preferred_tier') || 'fast',
   lastUsedGeminiModel: null,
   lastGeminiFallback: null,
   timerInterval: null,
@@ -6628,7 +6628,7 @@ function toggleApiKeyVisibility(inputId = 'gemini-api-key') {
 }
 
 function savePreferredGeminiTier(tier) {
-  STATE.preferredGeminiTier = tier || 'smart';
+  STATE.preferredGeminiTier = tier || 'fast';
   localStorage.setItem('iron_gemini_preferred_tier', STATE.preferredGeminiTier);
 }
 
@@ -6638,7 +6638,7 @@ function loadApiKey() {
   const backupInput = document.getElementById('gemini-backup-api-key');
   if (backupInput) backupInput.value = STATE.backupApiKey || '';
   const tierSelect = document.getElementById('gemini-preferred-tier');
-  if (tierSelect) tierSelect.value = STATE.preferredGeminiTier || 'smart';
+  if (tierSelect) tierSelect.value = STATE.preferredGeminiTier || 'fast';
   if (STATE.lastUsedGeminiModel) {
     updateGeminiModelBadges(STATE.lastUsedGeminiModel, Boolean(STATE.lastGeminiFallback));
   }

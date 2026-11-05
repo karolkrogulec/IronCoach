@@ -1214,9 +1214,9 @@
         <div style="border-top: 1px solid var(--border); padding-top: 10px; margin-top: 6px;">
           <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Preferowany poziom / model główny</label>
           <select id="gemini-preferred-tier" class="input-box" style="text-align: left; margin-bottom: 8px; font-size: 13px;" onchange="savePreferredGeminiTier(this.value)">
-            <option value="smart">💎 Najwyższy poziom (Pro ➔ Flash ➔ Flash-Lite)</option>
-            <option value="fast">⚡ Szybki poziom (Flash ➔ Flash-Lite ➔ Pro — aż 1500 zapytań/dzień!)</option>
-            <option value="lite">🍃 Maksymalne limity (Flash-Lite ➔ Flash ➔ Pro)</option>
+            <option value="fast" selected>⚡ Szybki poziom (Gemini 3.8 / 3.6 Flash — wysoka jakość)</option>
+            <option value="lite">🍃 Maksymalne limity (Gemini 3.5 / 3.1 Flash-Lite — aż 500 zapytań/dzień!)</option>
+            <option value="smart">💎 Poziom Pro (jeśli dostępny ➔ auto-fallback do Flash)</option>
           </select>
           <div style="background: rgba(0, 229, 255, 0.05); border: 1px solid rgba(0, 229, 255, 0.2); border-radius: 8px; padding: 8px; font-size: 11px; color: var(--text-muted); line-height: 1.45;">
             🔄 <b>Inteligentny Fallback Jakościowy (Quality-First Multi-Project):</b><br>
@@ -1429,6 +1429,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=43"></script>
+  <script src="app.js?v=44"></script>
 </body>
 </html>
