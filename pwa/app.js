@@ -3476,6 +3476,13 @@ let currentModalPlanSupersets = {};
 function openNewPlanModal() {
   editingPlanId = null;
   currentModalPlanSupersets = {};
+
+  const ssSettingsContainer = document.getElementById('modal-supersets-settings');
+  if (ssSettingsContainer) {
+    ssSettingsContainer.innerHTML = '';
+    ssSettingsContainer.style.display = 'none';
+  }
+
   document.getElementById('plan-modal-title').textContent = 'Nowy Plan Treningowy';
   document.getElementById('modal-plan-name').value = '';
   document.getElementById('modal-plan-desc').value = '';
@@ -3494,15 +3501,24 @@ function openEditPlanModal(planId) {
   const plan = STATE.plans.find(p => p.id === planId);
   if (!plan) return;
   editingPlanId = planId;
+
+  // 1. Always purge modal superset settings container DOM so values from other plans never leak!
+  const ssSettingsContainer = document.getElementById('modal-supersets-settings');
+  if (ssSettingsContainer) {
+    ssSettingsContainer.innerHTML = '';
+    ssSettingsContainer.style.display = 'none';
+  }
+
+  // 2. Freshly clone ONLY this specific plan's superset configs
   currentModalPlanSupersets = JSON.parse(JSON.stringify(plan.supersets || {}));
 
-  // Backwards compatibility: if plan.supersets was not defined, populate from exercises
+  // Backwards compatibility: if plan.supersets was not defined, populate strictly from THIS plan's exercises
   (plan.exercises || []).forEach(ex => {
     const grp = (ex.supersetGroup || '').trim();
     if (grp && !currentModalPlanSupersets[grp]) {
       currentModalPlanSupersets[grp] = {
-        restSeconds: parseInt(ex.restSeconds) || null,
-        supersetRestSeconds: parseInt(ex.supersetRestSeconds) || null
+        restSeconds: (ex.restSeconds !== undefined && ex.restSeconds !== null) ? parseInt(ex.restSeconds) : null,
+        supersetRestSeconds: (ex.supersetRestSeconds !== undefined && ex.supersetRestSeconds !== null) ? parseInt(ex.supersetRestSeconds) : null
       };
     }
   });
@@ -3528,6 +3544,13 @@ function openEditPlanModal(planId) {
 }
 
 function closePlanModal() {
+  editingPlanId = null;
+  currentModalPlanSupersets = {};
+  const ssSettingsContainer = document.getElementById('modal-supersets-settings');
+  if (ssSettingsContainer) {
+    ssSettingsContainer.innerHTML = '';
+    ssSettingsContainer.style.display = 'none';
+  }
   const modal = document.getElementById('plan-modal');
   modal.style.display = 'none';
 }
@@ -3589,17 +3612,19 @@ function updateModalSupersetsView() {
     }
   });
 
-  // Preserve any currently typed values in modal-supersets-settings before re-rendering
+  // Preserve any currently typed values in modal-supersets-settings for active groups in this plan
   const existingCards = ssSettingsContainer.querySelectorAll('.modal-ss-config-card');
   existingCards.forEach(c => {
     const g = c.dataset.ssGroup;
-    if (g) {
+    if (g && activeSupersets[g]) {
       const shortInput = c.querySelector('.modal-ss-rest-short');
       const mainInput = c.querySelector('.modal-ss-rest-main');
-      currentModalPlanSupersets[g] = {
-        restSeconds: (mainInput && mainInput.value.trim() !== '') ? parseInt(mainInput.value) : null,
-        supersetRestSeconds: (shortInput && shortInput.value.trim() !== '') ? parseInt(shortInput.value) : null
-      };
+      if (shortInput && mainInput) {
+        currentModalPlanSupersets[g] = {
+          restSeconds: (mainInput.value.trim() !== '') ? parseInt(mainInput.value) : null,
+          supersetRestSeconds: (shortInput.value.trim() !== '') ? parseInt(shortInput.value) : null
+        };
+      }
     }
   });
 
