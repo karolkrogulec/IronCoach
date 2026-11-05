@@ -262,6 +262,37 @@
     .superset-group-box .exercise-block:last-child {
       margin-bottom: 0;
     }
+    .superset-round-card {
+      background: var(--surface-elevated);
+      border: 1px solid rgba(0, 229, 255, 0.25);
+      border-radius: 14px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .superset-round-card.active-round {
+      border: 1.5px solid var(--accent);
+      box-shadow: 0 0 16px rgba(0, 229, 255, 0.18);
+      background: rgba(0, 229, 255, 0.03);
+    }
+    .superset-round-card.completed-round {
+      border-color: rgba(0, 230, 118, 0.35);
+      background: rgba(0, 230, 118, 0.02);
+    }
+    .superset-item-row {
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .superset-item-row:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+    .superset-item-row.current-active-item {
+      background: rgba(0, 229, 255, 0.06);
+      border-radius: 10px;
+      padding: 8px 10px;
+      margin: 6px 0;
+      border: 1px dashed rgba(0, 229, 255, 0.45);
+    }
     .exercise-block.next-in-superset {
       border-color: var(--primary);
       box-shadow: 0 0 0 1px var(--primary);
@@ -495,7 +526,7 @@
 
       <div id="timer-effort-strip" style="width: 100%; margin: 2px 0;"></div>
 
-      <button type="button" class="btn btn-primary" style="width: 100%; font-size: 18px; font-weight: 900; padding: 16px; border-radius: 16px; background: #00E676; color: #042414; box-shadow: 0 6px 20px rgba(0, 230, 118, 0.45);" onclick="stopTimer()">
+      <button type="button" id="timer-confirm-btn" class="btn btn-primary" style="width: 100%; font-size: 18px; font-weight: 900; padding: 16px; border-radius: 16px; background: #00E676; color: #042414; box-shadow: 0 6px 20px rgba(0, 230, 118, 0.45);" onclick="stopTimer()">
         ✅ OK / Gotowe (Kolejny zestaw)
       </button>
     </div>
@@ -1321,6 +1352,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=29"></script>
+  <script src="app.js?v=30"></script>
 </body>
 </html>

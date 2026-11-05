@@ -1782,7 +1782,7 @@ function loadActiveWorkoutUI() {
   updateWorkoutStats();
 }
 
-// Group exercises into isolated blocks or Superset frames while preserving original indices
+// Group exercises into isolated blocks or Superset frames (Rendered Round-by-Round)
 function renderActiveExercises() {
   const container = document.getElementById('workout-exercises-container');
   if (!container || !STATE.activeWorkout) return;
@@ -1791,51 +1791,267 @@ function renderActiveExercises() {
   const restMain = STATE.activeWorkout.restSeconds || 90;
   const restSS = STATE.activeWorkout.supersetRestSeconds || 30;
 
-  // Build render blocks: exercises sharing a non-empty supersetGroup are rendered inside one frame
   const renderedSupersetGroups = new Set();
   const blocksHtml = [];
 
   exercises.forEach((ex, exIdx) => {
     const ssGroup = (ex.supersetGroup || '').trim();
     if (!ssGroup) {
-      // Isolated exercise
+      // Isolated exercise (single)
       blocksHtml.push(renderSingleExerciseCard(ex, exIdx, false));
     } else if (!renderedSupersetGroups.has(ssGroup)) {
       renderedSupersetGroups.add(ssGroup);
-      // Collect all exercises belonging to this superset group
       const groupMembers = exercises
         .map((item, idx) => ({ item, idx }))
         .filter(entry => (entry.item.supersetGroup || '').trim() === ssGroup);
 
-      // Determine which exercise in this superset is next up (for visual guidance)
-      let nextUpExIdx = null;
-      const maxSets = Math.max(...groupMembers.map(m => m.item.sets.length));
-      outer: for (let s = 0; s < maxSets; s++) {
-        for (const m of groupMembers) {
-          if (m.item.sets[s] && !m.item.sets[s].completed) {
-            nextUpExIdx = m.idx;
-            break outer;
-          }
-        }
-      }
-
-      const modeDesc = groupMembers.length === 2
-        ? 'Wykonywane na przemian (A1 ⇄ A2)'
-        : `Obwód po kolei (1 → ${groupMembers.length})`;
-
-      blocksHtml.push(`
-        <div class="superset-group-box">
-          <div class="superset-group-header">
-            <span>🔗 SUPERSERIA ${escapeHtml(ssGroup)} • ${modeDesc}</span>
-            <span>⚡ ${restSS}s / ⏱️ ${restMain}s</span>
-          </div>
-          ${groupMembers.map(m => renderSingleExerciseCard(m.item, m.idx, m.idx === nextUpExIdx)).join('')}
-        </div>
-      `);
+      blocksHtml.push(renderSupersetGroupCard(groupMembers, ssGroup, restSS, restMain));
     }
   });
 
   container.innerHTML = blocksHtml.join('');
+}
+
+function renderSupersetGroupCard(groupMembers, ssGroup, restSS, restMain) {
+  const exCount = groupMembers.length;
+  const maxSets = Math.max(...groupMembers.map(m => m.item.sets.length));
+
+  // Determine active round and active exercise in superset (the first uncompleted set)
+  let activeRoundIdx = null;
+  let activeMemberIdx = null;
+  findActive: for (let s = 0; s < maxSets; s++) {
+    for (const m of groupMembers) {
+      if (m.item.sets[s] && !m.item.sets[s].completed) {
+        activeRoundIdx = s;
+        activeMemberIdx = m.idx;
+        break findActive;
+      }
+    }
+  }
+
+  // Quick technique preview buttons for all exercises in this superset
+  const headerQuickGifs = groupMembers.map((m, i) => {
+    const matched = findExerciseGif(m.item.name, m.item);
+    const gUrl = m.item.gifUrl || (matched ? matched.g : '');
+    return `
+      <div style="display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 4px 8px;">
+        ${gUrl ? `<img src="${escapeHtml(gUrl)}" alt="" onclick="openGifModal('${escapeHtml(m.item.name)}')" style="width: 26px; height: 26px; border-radius: 4px; object-fit: cover; cursor: pointer; flex-shrink: 0;">` : ''}
+        <span style="font-size: 11px; font-weight: 800; color: var(--text);">[${escapeHtml(ssGroup)}${i + 1}] ${escapeHtml(m.item.name)}</span>
+        <button type="button" class="btn btn-sm btn-secondary" style="padding: 2px 6px; font-size: 10px; flex-shrink: 0;" onclick="openGifModal('${escapeHtml(m.item.name)}')">🎬</button>
+      </div>
+    `;
+  }).join('');
+
+  // Render round-by-round (Obwód po obwodzie)
+  const roundsHtml = [];
+  for (let sIdx = 0; sIdx < maxSets; sIdx++) {
+    const isRoundDone = groupMembers.every(m => !m.item.sets[sIdx] || m.item.sets[sIdx].completed);
+    const isActiveRound = (sIdx === activeRoundIdx);
+
+    const itemsInThisRoundHtml = groupMembers.map((m, subIdx) => {
+      const ex = m.item;
+      const exIdx = m.idx;
+      const set = ex.sets[sIdx];
+      if (!set) return '';
+
+      const isCurrentActive = isActiveRound && (exIdx === activeMemberIdx);
+      const isDone = Boolean(set.completed);
+      const isCalisthenics = isCalisthenicsExercise(ex);
+      const isBodyweightNoLoad = isCalisthenics;
+      const isBodyweightWithLoad = ex.loadType === 'bodyweight' && ex.showExtraWeight;
+      const isDualDumbbell = ex.loadType === 'dual_dumbbell';
+
+      const gridCols = isBodyweightNoLoad ? '36px 1fr 44px' : '36px 1fr 1fr 44px';
+      const weightHeaderLabel = isDualDumbbell ? 'KG (×2)' : (isBodyweightWithLoad ? '+KG' : 'KG');
+      const wVal = parseFloat(set.weight) || 0;
+      const dualHint = isDualDumbbell && wVal > 0 ? `<div style="font-size: 9px; color: var(--accent); text-align: center;">= ${wVal * 2} kg</div>` : '';
+
+      const matchedGif = findExerciseGif(ex.name, ex);
+      const gifUrl = ex.gifUrl || (matchedGif ? matchedGif.g : '');
+
+      let loadBadge = '';
+      if (isDualDumbbell) loadBadge = `<span class="badge" style="font-size: 9px; background: rgba(0, 229, 255, 0.15); color: var(--accent);">2× Hantle</span>`;
+      else if (isBodyweightNoLoad) loadBadge = `<span class="badge" style="font-size: 9px; background: rgba(0, 230, 118, 0.15); color: var(--success);">Masa ciała</span>`;
+
+      // Relative time badge
+      const timePillHtml = (set.completed && set.relTimeLabel)
+        ? `<span style="font-size: 10px; color: var(--text-muted); background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); padding: 2px 7px; border-radius: 999px;">⏱️ ${escapeHtml(set.relTimeLabel)}</span>`
+        : '';
+
+      // Effort rating badge / inline picker (only for weighted sets)
+      const selectedEffort = getSetEffortMeta(set.effort);
+      const isEditingThisEffort = STATE.editingEffortCoords && STATE.editingEffortCoords.exIdx === exIdx && STATE.editingEffortCoords.sIdx === sIdx;
+      let effortSmallLabelHtml = '';
+      let effortInlinePickerHtml = '';
+
+      if (set.completed && !isCalisthenics) {
+        if (selectedEffort && !isEditingThisEffort) {
+          effortSmallLabelHtml = `
+            <button
+              type="button"
+              onclick="toggleInlineEffortPicker(${exIdx}, ${sIdx})"
+              title="Kliknij, aby zmienić ocenę serii"
+              style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 800; color: ${selectedEffort.color}; background: ${selectedEffort.bg}; border: 1px solid ${selectedEffort.color}; padding: 2px 8px; border-radius: 999px; cursor: pointer;"
+            >
+              ${selectedEffort.icon} ${selectedEffort.val}/6 ${escapeHtml(selectedEffort.short)}
+            </button>
+          `;
+        } else {
+          effortInlinePickerHtml = `
+            <div style="margin: 4px 0 6px 0; padding: 6px 8px; background: rgba(255,255,255,0.03); border: 1px solid rgba(0,229,255,0.28); border-radius: 9px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-size: 10px;">
+                <span style="color: var(--text-muted); font-weight: 700;">🔥 Oceń trudność [${escapeHtml(ssGroup)}${subIdx + 1}]:</span>
+                ${selectedEffort ? `<button type="button" onclick="toggleInlineEffortPicker(${exIdx}, ${sIdx})" style="background:none;border:none;color:var(--text-muted);font-size:10px;cursor:pointer;">Zamknij ✕</button>` : ''}
+              </div>
+              <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px;">
+                ${[1, 2, 3, 4, 5, 6].map(val => {
+                  const m = SET_EFFORT_SCALE[val];
+                  const isActive = parseInt(set.effort) === val;
+                  return `
+                    <button
+                      type="button"
+                      onclick="rateWorkoutSet(${exIdx}, ${sIdx}, ${val})"
+                      style="
+                        padding: 5px 1px;
+                        border-radius: 6px;
+                        border: 1px solid ${isActive ? m.color : 'var(--border)'};
+                        background: ${isActive ? m.bg : '#12151b'};
+                        color: ${isActive ? m.color : 'var(--text-muted)'};
+                        font-weight: ${isActive ? '900' : '600'};
+                        font-size: 10px;
+                        cursor: pointer;
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        line-height: 1.1;
+                      "
+                    >
+                      <span style="font-size: 12px;">${val}</span>
+                      <span style="font-size: 8px;">${m.short}</span>
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          `;
+        }
+      }
+
+      const metaSubRow = (timePillHtml || effortSmallLabelHtml)
+        ? `<div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px;">
+            ${timePillHtml}
+            ${effortSmallLabelHtml}
+          </div>`
+        : '';
+
+      return `
+        <div class="superset-item-row ${isCurrentActive ? 'current-active-item' : ''}">
+          <!-- Exercise Mini-Header -->
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 5px;">
+            <div style="display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1;">
+              ${gifUrl
+                ? `<img src="${escapeHtml(gifUrl)}" alt="" onclick="openGifModal('${escapeHtml(ex.name)}')" style="width: 28px; height: 28px; border-radius: 6px; object-fit: cover; background: #fff; cursor: pointer; flex-shrink: 0;">`
+                : `<span style="font-size: 14px;">🎬</span>`
+              }
+              <div style="min-width: 0; flex: 1;">
+                <div style="font-size: 13px; font-weight: 800; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                  <span style="color: var(--accent); margin-right: 2px;">[${escapeHtml(ssGroup)}${subIdx + 1}]</span> ${escapeHtml(ex.name)}
+                </div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 4px; flex-shrink: 0;">
+              ${loadBadge}
+              ${isCurrentActive ? `<span class="badge" style="background: rgba(0,229,255,0.22); color: var(--accent); font-weight: 900; font-size: 10px;">👉 TERAZ</span>` : ''}
+              ${isDone ? `<span style="color: var(--success); font-weight: 900; font-size: 13px;">✓</span>` : ''}
+            </div>
+          </div>
+
+          <!-- Set input row -->
+          <div class="set-row" style="grid-template-columns: ${gridCols}; margin-bottom: 0;">
+            <div class="set-num ${isDone ? 'done' : ''}">${set.num}</div>
+            ${isBodyweightNoLoad ? '' : `
+              <div>
+                <input type="number" step="0.5" class="input-box" value="${set.weight}" onchange="updateSetData(${exIdx}, ${sIdx}, 'weight', this.value)">
+                ${dualHint}
+              </div>
+            `}
+            <input type="number" class="input-box" value="${set.reps}" onchange="updateSetData(${exIdx}, ${sIdx}, 'reps', this.value)">
+            <button class="check-btn ${isDone ? 'completed' : ''}" onclick="toggleSetComplete(${exIdx}, ${sIdx})">
+              ${isDone ? '✓' : '○'}
+            </button>
+          </div>
+          ${metaSubRow}
+          ${effortInlinePickerHtml}
+        </div>
+      `;
+    }).join('');
+
+    roundsHtml.push(`
+      <div class="superset-round-card ${isActiveRound ? 'active-round' : ''} ${isRoundDone ? 'completed-round' : ''}">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 4px;">
+          <span style="font-size: 12px; font-weight: 900; color: ${isRoundDone ? 'var(--success)' : (isActiveRound ? 'var(--accent)' : 'var(--text-muted)')}; text-transform: uppercase; letter-spacing: 0.5px;">
+            ${isRoundDone ? '✅' : (isActiveRound ? '⚡' : '🔄')} OBWÓD ${sIdx + 1} z ${maxSets}
+          </span>
+          <span style="font-size: 10px; color: var(--text-muted);">
+            ${isRoundDone ? 'Obwód ukończony' : `⚡ ${restSS}s zmiana • ⏱️ ${restMain}s po obwodzie`}
+          </span>
+        </div>
+        ${itemsInThisRoundHtml}
+      </div>
+    `);
+  }
+
+  return `
+    <div class="superset-group-box">
+      <div class="superset-group-header" style="flex-direction: column; align-items: stretch; gap: 8px; margin-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 14px; font-weight: 800; color: var(--accent);">🔗 SUPERSERIA ${escapeHtml(ssGroup)} (${exCount} ćwiczenia na przemian)</span>
+          <span class="badge" style="background: rgba(0,229,255,0.14); color: var(--accent); font-size: 10px;">⚡ ${restSS}s / ⏱️ ${restMain}s</span>
+        </div>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          ${headerQuickGifs}
+        </div>
+      </div>
+
+      <div style="margin-bottom: 8px; font-size: 11px; color: var(--text-muted); display: flex; justify-content: space-between;">
+        <span>ĆWICZENIA WYKONYWANE W OBWODACH (A1 ➔ A2 ➔ A1 ➔ A2):</span>
+      </div>
+
+      ${roundsHtml.join('')}
+
+      <div style="display: flex; justify-content: flex-end; margin-top: 8px;">
+        <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 6px 12px; color: var(--accent); border-color: rgba(0,229,255,0.35);" onclick="addSupersetRound('${escapeHtml(ssGroup)}')">
+          ➕ Dodaj kolejny obwód do SS ${escapeHtml(ssGroup)}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function addSupersetRound(ssGroup) {
+  if (!STATE.activeWorkout) return;
+  const groupMembers = STATE.activeWorkout.exercises.filter(
+    item => (item.supersetGroup || '').trim() === ssGroup
+  );
+  groupMembers.forEach(ex => {
+    const last = ex.sets[ex.sets.length - 1];
+    ex.sets.push({
+      num: ex.sets.length + 1,
+      weight: last ? last.weight : 0,
+      reps: last ? last.reps : 10,
+      completed: false,
+      startedAt: null,
+      completedAt: null,
+      relStartStr: null,
+      relEndStr: null,
+      relTimeLabel: null,
+      restBeforeSeconds: null,
+      effort: null
+    });
+  });
+  saveActiveWorkout();
+  renderActiveExercises();
+  updateWorkoutStats();
 }
 
 function toggleInlineEffortPicker(exIdx, sIdx) {
@@ -2154,10 +2370,10 @@ function toggleSetComplete(exIdx, sIdx) {
     const nowTs = Date.now();
     const workoutStartTs = STATE.activeWorkout.startTime || nowTs;
 
-    // 1. If a rest timer was active (or a previous set was completed), log the rest duration
+    // 1. If a rest timer was active (or previous set was completed), log the rest duration
     finalizeCurrentRestLog(ex.name, set.num);
 
-    // 2. Module 4: Set / Superset Relative Time Tracking (start w MM:SS, koniec w MM:SS)
+    // 2. Set / Superset Relative Time Tracking (start w MM:SS, koniec w MM:SS)
     const ssGroup = (ex.supersetGroup || '').trim();
     const ssRoundKey = ssGroup ? `${ssGroup}_${sIdx}` : '';
     if (!STATE.activeWorkout.supersetRoundStartMap) {
@@ -2184,30 +2400,87 @@ function toggleSetComplete(exIdx, sIdx) {
 
     if (navigator.vibrate) navigator.vibrate(50);
 
-    // 3. Module 1: Focus Overlay triggers ONLY after completing the LAST exercise in a set / superset round
     const mainRest = parseInt(STATE.activeWorkout.restSeconds) || 90;
+    const shortRest = parseInt(STATE.activeWorkout.supersetRestSeconds) || 30;
 
     if (ssGroup) {
-      const groupMembers = STATE.activeWorkout.exercises.filter(
-        item => (item.supersetGroup || '').trim() === ssGroup
-      );
-      const incompleteInSameRound = groupMembers.some(
-        member => member.sets[sIdx] && !member.sets[sIdx].completed
+      // Find all exercises belonging to this superset
+      const groupMembers = STATE.activeWorkout.exercises
+        .map((item, idx) => ({ item, idx }))
+        .filter(entry => (entry.item.supersetGroup || '').trim() === ssGroup);
+
+      // Check if inside THIS round (sIdx) there is still an incomplete exercise
+      const incompleteInSameRound = groupMembers.find(
+        member => member.item.sets[sIdx] && !member.item.sets[sIdx].completed
       );
 
       if (incompleteInSameRound) {
-        // Inside superset (not the last exercise yet): do NOT lock screen with Focus Overlay; mark start of next exercise in superset
-        STATE.activeWorkout.currentSetStartedAt = nowTs;
+        // Exercise finished, but round NOT finished yet: Short technical break to switch station/equipment
+        const nextExName = incompleteInSameRound.item.name;
+        startRestTimer(
+          shortRest,
+          `⚡ PRZERWA TECHNICZNA • PRZEJŚCIE DO: ${nextExName}`,
+          ex.name,
+          set.num,
+          'superset-short',
+          `Przejście między ćwiczeniami w superserii • Cel: ${shortRest}s`,
+          `✅ OK / Gotowe (Rozpocznij: ${nextExName})`
+        );
       } else {
-        // Last exercise in the superset round completed! Record full superset round span and trigger Focus Overlay
-        const roundStartTs = STATE.activeWorkout.supersetRoundStartMap[ssRoundKey] || set.startedAt;
-        const roundStartStr = formatRelativeWorkoutTime(roundStartTs, workoutStartTs);
-        set.supersetRelTimeLabel = `Superseria ${ssGroup}: start w ${roundStartStr}, koniec w ${set.relEndStr}`;
-        startRestTimer(mainRest, `🟢 PRZERWA TECHNICZNA • SUPERSERIA ${ssGroup} (S${set.num})`, ex.name, set.num, 'superset-round');
+        // Round sIdx is fully complete!
+        const maxSets = Math.max(...groupMembers.map(m => m.item.sets.length));
+        const hasNextRound = (sIdx + 1) < maxSets;
+
+        if (hasNextRound) {
+          // Long rest between rounds
+          startRestTimer(
+            mainRest,
+            `🟢 ODPOCZYNEK PO OBWODZIE ${sIdx + 1}/${maxSets} (SUPERSERIA ${ssGroup})`,
+            ex.name,
+            set.num,
+            'superset-round',
+            `Regeneracja przed Obwodem ${sIdx + 2}/${maxSets} • Cel: ${mainRest}s`,
+            `✅ OK / Gotowe (Rozpocznij Obwód ${sIdx + 2}/${maxSets})`
+          );
+        } else {
+          // Superset fully completed!
+          startRestTimer(
+            mainRest,
+            `🎉 UKOŃCZONO SUPERSERIĘ ${ssGroup}! (${maxSets} obwodów)`,
+            ex.name,
+            set.num,
+            'superset-done',
+            `Odpoczynek po zakończeniu całej superserii • Cel: ${mainRest}s`,
+            `✅ OK / Gotowe (Przejdź do kolejnego zadania)`
+          );
+        }
       }
     } else {
-      // Standard isolated exercise: every set completion is the end of that set -> trigger Focus Overlay
-      startRestTimer(mainRest, `🟢 PRZERWA TECHNICZNA I ODPOCZYNEK (SERIA ${set.num})`, ex.name, set.num, 'standard');
+      // Standard isolated exercise
+      const isLastSet = sIdx >= ex.sets.length - 1;
+      if (!isLastSet) {
+        // Rest between sets
+        startRestTimer(
+          mainRest,
+          `⏱️ ODPOCZYNEK MIĘDZY SERIAMI (SERIA ${set.num}/${ex.sets.length})`,
+          ex.name,
+          set.num,
+          'standard',
+          `Regeneracja przed Serią ${set.num + 1}/${ex.sets.length} • Cel: ${mainRest}s`,
+          `✅ OK / Gotowe (Rozpocznij Serię ${set.num + 1}/${ex.sets.length})`
+        );
+      } else {
+        // Exercise complete
+        startRestTimer(
+          mainRest,
+          `🟢 UKOŃCZONO ĆWICZENIE: ${ex.name} (${ex.sets.length} serii)`,
+          ex.name,
+          set.num,
+          'exercise-done',
+          `Przerwa techniczna przed kolejnym ćwiczeniem • Cel: ${mainRest}s`,
+          `✅ OK / Gotowe (Przejdź do kolejnego ćwiczenia)`
+        );
+      }
     }
     renderTimerEffortStrip();
   } else {
@@ -2275,7 +2548,15 @@ function updateWorkoutStats() {
 // ============================================================================
 // MODULE 1: FOCUS OVERLAY — TECHNICAL BREAK & REST LOCK (Stopwatch counting UP from 1s)
 // ============================================================================
-function startRestTimer(targetSeconds = 90, labelText = '🟢 PRZERWA TECHNICZNA I ODPOCZYNEK', afterExercise = '', afterSet = 1, restType = 'standard') {
+function startRestTimer(
+  targetSeconds = 90,
+  labelText = '🟢 PRZERWA TECHNICZNA I ODPOCZYNEK',
+  afterExercise = '',
+  afterSet = 1,
+  restType = 'standard',
+  refText = null,
+  btnText = null
+) {
   clearInterval(STATE.timerInterval);
   STATE.timerElapsedSeconds = 1;
   STATE.timerTargetSeconds = parseInt(targetSeconds) || 90;
@@ -2295,9 +2576,14 @@ function startRestTimer(targetSeconds = 90, labelText = '🟢 PRZERWA TECHNICZNA
   const bar = document.getElementById('rest-timer-bar');
   const modeLabel = document.getElementById('timer-mode-label');
   const targetRef = document.getElementById('timer-target-ref');
+  const confirmBtn = document.getElementById('timer-confirm-btn');
+
   if (modeLabel) modeLabel.textContent = labelText;
   if (targetRef) {
-    targetRef.textContent = `${afterExercise ? afterExercise + ' (S' + afterSet + ') • ' : ''}Cel odpoczynku: ${STATE.timerTargetSeconds}s`;
+    targetRef.textContent = refText || `${afterExercise ? afterExercise + ' (S' + afterSet + ') • ' : ''}Cel odpoczynku: ${STATE.timerTargetSeconds}s`;
+  }
+  if (confirmBtn) {
+    confirmBtn.textContent = btnText || '✅ OK / Gotowe (Kolejny zestaw)';
   }
   if (bar) {
     bar.classList.remove('overtime');
