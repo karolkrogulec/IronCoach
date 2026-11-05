@@ -6237,8 +6237,20 @@ function initCoachThreads() {
     localStorage.setItem('iron_active_coach_thread_id', STATE.activeCoachThreadId);
   }
 
-  // Clear any stuck isThinking flags from page reload
-  STATE.coachThreads.forEach(t => { t.isThinking = false; });
+  // Clear any stuck isThinking flags from page reload and clean legacy fallback notes
+  let threadsModified = false;
+  STATE.coachThreads.forEach(t => {
+    t.isThinking = false;
+    (t.messages || []).forEach(m => {
+      if (m.text && m.text.includes('Odpowiedź wygenerowana przez model fallback')) {
+        m.text = m.text.replace(/\n*\s*\*\([⚡💡]?\s*Odpowiedź wygenerowana przez model fallback[^*]*\)\*/gi, '').trim();
+        threadsModified = true;
+      }
+    });
+  });
+  if (threadsModified) {
+    saveCoachThreads();
+  }
 
   renderCoachThreadsBar();
   renderCoachChat();
@@ -6418,11 +6430,7 @@ Udziel naturalnej, merytorycznej, spersonalizowanej odpowiedzi po polsku jako Tr
   try {
     const tier = STATE.preferredGeminiTier || 'fast';
     const ans = await callGemini(fullPrompt, tier);
-    const wasFallback = Boolean(STATE.lastGeminiFallback && STATE.lastGeminiFallback.usedModel);
-    const fallbackNote = wasFallback
-      ? `\n\n*(⚡ Odpowiedź wygenerowana przez model fallback: **${STATE.lastUsedGeminiModel}** z powodu wyczerpania limitu na modelu wyższym)*`
-      : '';
-    targetThread.messages.push({ role: 'assistant', text: ans + fallbackNote, time: Date.now() });
+    targetThread.messages.push({ role: 'assistant', text: ans, time: Date.now() });
     targetThread.updatedAt = Date.now();
   } catch (err) {
     targetThread.messages.push({ role: 'assistant', text: `⚠️ Błąd: ${err.message}`, time: Date.now() });
@@ -6454,6 +6462,7 @@ function renderCoachChat() {
 
   const bubblesHtml = msgs.map(m => {
     const isUser = m.role === 'user';
+    const textToDisplay = (m.text || '').replace(/\n*\s*\*\([⚡💡]?\s*Odpowiedź wygenerowana przez model fallback[^*]*\)\*/gi, '').trim();
     return `
       <div style="display: flex; justify-content: ${isUser ? 'flex-end' : 'flex-start'}; margin-bottom: 10px;">
         <div style="
@@ -6468,7 +6477,7 @@ function renderCoachChat() {
           box-shadow: 0 2px 8px rgba(0,0,0,0.2);
           border: ${isUser ? 'none' : '1px solid var(--border)'};
         ">
-          ${isUser ? escapeHtml(m.text) : formatMarkdown(m.text)}
+          ${isUser ? escapeHtml(textToDisplay) : formatMarkdown(textToDisplay)}
         </div>
       </div>
     `;
