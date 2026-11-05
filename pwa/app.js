@@ -3162,6 +3162,48 @@ function updateGeminiModelBadges(model, isFallback = false, keyLabel = '') {
   }
 }
 
+async function discoverGeminiModelsForKey(key) {
+  const discovered = [];
+  const versions = ['v1', 'v1beta'];
+  const errors = [];
+
+  for (const ver of versions) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/${ver}/models?key=${key}`);
+      const data = await res.json();
+      if (data.models && Array.isArray(data.models)) {
+        for (const m of data.models) {
+          const rawName = (m.name || '').replace(/^models\//, '');
+          if (!rawName) continue;
+          const methods = m.supportedGenerationMethods || [];
+          if (methods.includes('generateContent')) {
+            const n = rawName.toLowerCase();
+            if (!n.startsWith('gemini-')) continue;
+            if (n === 'gemini-pro' || n === 'gemini-pro-vision') continue; // legacy 1.0 deprecated
+            if (n.includes('embedding') || n.includes('aqa') || n.includes('imagen')) continue;
+
+            if (!discovered.some(d => d.name === rawName && d.apiVersion === ver)) {
+              discovered.push({
+                name: rawName,
+                apiVersion: ver,
+                displayName: m.displayName || rawName,
+                tier: getGeminiModelTier(rawName),
+                score: getGeminiModelVersionScore(rawName)
+              });
+            }
+          }
+        }
+      } else if (data.error) {
+        errors.push({ version: ver, ...data.error });
+      }
+    } catch (e) {
+      errors.push({ version: ver, message: e.message });
+    }
+  }
+
+  return { models: discovered, errors };
+}
+
 async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
   const primaryKey = (STATE.apiKey || '').trim();
   const backupKey = (STATE.backupApiKey || '').trim();
@@ -3176,72 +3218,45 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
     throw new Error('Brak klucza Gemini API');
   }
 
-  // Discover models across available keys
-  let discoveredModels = [];
+  // Discover actual available models dynamically across both v1 and v1beta
+  let discoveredList = [];
   for (const { key } of keysToTry) {
-    try {
-      const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
-      const listData = await listRes.json();
-      if (listData.models && Array.isArray(listData.models)) {
-        discoveredModels = listData.models
-          .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
-          .map(m => m.name.replace('models/', ''))
-          .filter(name => {
-            const n = name.toLowerCase();
-            if (!n.startsWith('gemini-')) return false;
-            if (n === 'gemini-pro' || n === 'gemini-pro-vision') return false; // deprecated legacy 1.0
-            if (n.includes('1.0')) return false;
-            if (n.includes('tts') || n.includes('image') || n.includes('imagen') || n.includes('vision-legacy')) return false;
-            if (n.includes('embedding') || n.includes('aqa') || n.includes('robotics') || n.includes('computer-use')) return false;
-            return true;
-          });
-        if (discoveredModels.length > 0) break;
-      }
-    } catch (e) {
-      console.warn('Listing models failed:', e);
+    const disc = await discoverGeminiModelsForKey(key);
+    if (disc.models && disc.models.length > 0) {
+      discoveredList = disc.models;
+      break;
     }
   }
 
-  // Real, active production models in Google AI Studio
-  const STATIC_TIER_1_PRO = [
-    'gemini-2.5-pro',
-    'gemini-2.5-pro-preview',
-    'gemini-2.0-pro-exp-02-05',
-    'gemini-1.5-pro',
-    'gemini-1.5-pro-latest'
+  const STATIC_FALLBACKS = [
+    // Tier 1 Pro
+    { name: 'gemini-1.5-pro', apiVersion: 'v1', tier: 1, score: 20 },
+    { name: 'gemini-1.5-pro-latest', apiVersion: 'v1', tier: 1, score: 21 },
+    { name: 'gemini-2.5-pro', apiVersion: 'v1beta', tier: 1, score: 30 },
+    { name: 'gemini-2.0-pro-exp-02-05', apiVersion: 'v1beta', tier: 1, score: 25 },
+    // Tier 2 Flash
+    { name: 'gemini-1.5-flash', apiVersion: 'v1', tier: 2, score: 20 },
+    { name: 'gemini-1.5-flash-latest', apiVersion: 'v1', tier: 2, score: 21 },
+    { name: 'gemini-2.5-flash', apiVersion: 'v1beta', tier: 2, score: 30 },
+    { name: 'gemini-2.0-flash', apiVersion: 'v1', tier: 2, score: 22 },
+    // Tier 3 Lite
+    { name: 'gemini-1.5-flash-8b', apiVersion: 'v1', tier: 3, score: 10 },
+    { name: 'gemini-2.5-flash-lite', apiVersion: 'v1beta', tier: 3, score: 15 }
   ];
 
-  const STATIC_TIER_2_FLASH = [
-    'gemini-2.5-flash',
-    'gemini-2.5-flash-preview',
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-latest',
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-001'
-  ];
+  const pool = discoveredList.length > 0 ? discoveredList : STATIC_FALLBACKS;
 
-  const STATIC_TIER_3_LITE = [
-    'gemini-2.5-flash-lite',
-    'gemini-2.5-flash-lite-preview',
-    'gemini-2.0-flash-lite',
-    'gemini-2.0-flash-lite-preview-02-05',
-    'gemini-1.5-flash-8b',
-    'gemini-1.5-flash-8b-latest'
-  ];
+  const tier1Models = pool.filter(m => m.tier === 1);
+  const tier2Models = pool.filter(m => m.tier === 2);
+  const tier3Models = pool.filter(m => m.tier === 3);
+  const tier4Models = pool.filter(m => m.tier === 4);
 
-  // Group discovered models by tier
-  const tier1Models = discoveredModels.filter(m => getGeminiModelTier(m) === 1);
-  const tier2Models = discoveredModels.filter(m => getGeminiModelTier(m) === 2);
-  const tier3Models = discoveredModels.filter(m => getGeminiModelTier(m) === 3);
-  const tier4Models = discoveredModels.filter(m => getGeminiModelTier(m) === 4);
+  const sortByScore = (list) => [...list].sort((a, b) => b.score - a.score);
 
-  // Sort within each tier by freshness/version
-  const sortByScore = (list) => [...list].sort((a, b) => getGeminiModelVersionScore(b) - getGeminiModelVersionScore(a));
-
-  const sortedTier1 = Array.from(new Set([...sortByScore(tier1Models), ...STATIC_TIER_1_PRO]));
-  const sortedTier2 = Array.from(new Set([...sortByScore(tier2Models), ...STATIC_TIER_2_FLASH]));
-  const sortedTier3 = Array.from(new Set([...sortByScore(tier3Models), ...STATIC_TIER_3_LITE]));
-  const sortedTier4 = Array.from(new Set(sortByScore(tier4Models)));
+  const sortedTier1 = sortByScore(tier1Models);
+  const sortedTier2 = sortByScore(tier2Models);
+  const sortedTier3 = sortByScore(tier3Models);
+  const sortedTier4 = sortByScore(tier4Models);
 
   // Quality-First Tier Ordering:
   // We prioritize higher tier models across ALL keys before degrading to lower tiers!
@@ -3294,82 +3309,91 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
     const tierModels = tierObj.models;
     if (!tierModels || tierModels.length === 0) continue;
 
-    // Reset quota exhaustion tracker for this tier:
-    // (a project might be quota-exhausted for Pro, but still have 1500 quota for Flash!)
+    // Reset quota exhaustion tracker for this tier
     quotaExhaustedKeyIndices.clear();
 
     for (let mIdx = 0; mIdx < tierModels.length; mIdx++) {
-      const model = tierModels[mIdx];
+      const modelObj = tierModels[mIdx];
+      const modelName = modelObj.name;
+      const primaryApiVer = modelObj.apiVersion || 'v1';
 
-      // If all keys are known to be quota-exhausted for this tier, skip remaining models in this tier
       if (quotaExhaustedKeyIndices.size >= keysToTry.length) {
         break;
       }
 
       for (let kIdx = 0; kIdx < keysToTry.length; kIdx++) {
         if (quotaExhaustedKeyIndices.has(kIdx)) {
-          // This project has already hit 429 quota on this tier; skip to next project key
           continue;
         }
 
         const { key, label } = keysToTry[kIdx];
         attemptCount++;
 
-        try {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-          const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: parts }]
-            })
-          });
+        // Support dual version resolution (try primaryApiVer, then alternate if 404)
+        const apiVersionsToTry = [primaryApiVer, primaryApiVer === 'v1' ? 'v1beta' : 'v1'];
 
-          if (response.ok) {
-            const data = await response.json();
-            const resParts = data.candidates?.[0]?.content?.parts || [];
-            const text = resParts.map(p => p.text || '').join('').trim();
-            if (text) {
-              const isFallback = (attemptCount > 1 || kIdx > 0 || tIdx > 0);
-              if (isFallback) {
-                const reasonsSummary = allAttempts.map(a => `${a.model} [${a.keyLabel}] (${a.reason})`).join(', ');
-                console.warn(`[Gemini Auto-Fallback] Użyto ${model} [${label}] po wcześniejszych próbach: ${reasonsSummary}`);
-                STATE.lastGeminiFallback = {
-                  usedModel: model,
-                  usedKeyLabel: label,
-                  failedModels: [...allAttempts],
-                  timestamp: Date.now()
-                };
+        for (const ver of apiVersionsToTry) {
+          try {
+            const url = `https://generativelanguage.googleapis.com/${ver}/models/${modelName}:generateContent?key=${key}`;
+            const response = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contents: [{ parts: parts }] })
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              const resParts = data.candidates?.[0]?.content?.parts || [];
+              const text = resParts.map(p => p.text || '').join('').trim();
+              if (text) {
+                const isFallback = (attemptCount > 1 || kIdx > 0 || tIdx > 0);
+                if (isFallback) {
+                  const reasonsSummary = allAttempts.map(a => `${a.model} [${a.keyLabel}] (${a.reason})`).join(', ');
+                  console.warn(`[Gemini Auto-Fallback] Użyto ${modelName} (${ver}) [${label}] po wcześniejszych próbach: ${reasonsSummary}`);
+                  STATE.lastGeminiFallback = {
+                    usedModel: `${modelName} (${ver})`,
+                    usedKeyLabel: label,
+                    failedModels: [...allAttempts],
+                    timestamp: Date.now()
+                  };
+                } else {
+                  STATE.lastGeminiFallback = null;
+                }
+
+                updateGeminiModelBadges(modelName, isFallback, label);
+                return text;
               } else {
-                STATE.lastGeminiFallback = null;
+                allAttempts.push({ keyLabel: label, model: `${modelName} (${ver})`, status: 200, reason: 'Pusta odpowiedź (brak treści)' });
+              }
+            } else {
+              const errJson = await response.json().catch(() => ({}));
+              const status = response.status;
+              const rawMsg = errJson.error?.message || `HTTP ${status}`;
+
+              if (status === 404 && ver === apiVersionsToTry[0]) {
+                // Try alternate API version before giving up
+                continue;
               }
 
-              updateGeminiModelBadges(model, isFallback, label);
-              return text;
-            } else {
-              allAttempts.push({ keyLabel: label, model, status: 200, reason: 'Pusta odpowiedź (brak treści)' });
-            }
-          } else {
-            const errJson = await response.json().catch(() => ({}));
-            const status = response.status;
-            const rawMsg = errJson.error?.message || `HTTP ${status}`;
-            
-            let reason = `HTTP ${status}`;
-            if (status === 429 || rawMsg.toLowerCase().includes('quota') || rawMsg.toLowerCase().includes('resource_exhausted')) {
-              reason = 'Wyczerpany limit (Quota / 429)';
-              quotaExhaustedKeyIndices.add(kIdx);
-            } else if (status === 404) {
-              reason = 'Model niedostępny (404)';
-            } else if (status === 503 || status === 500) {
-              reason = 'Serwer przeciążony (503)';
-            }
+              let reason = `HTTP ${status}`;
+              if (status === 429 || rawMsg.toLowerCase().includes('quota') || rawMsg.toLowerCase().includes('resource_exhausted')) {
+                reason = 'Wyczerpany limit (Quota / 429)';
+                quotaExhaustedKeyIndices.add(kIdx);
+              } else if (status === 404) {
+                reason = 'Model niedostępny (404)';
+              } else if (status === 503 || status === 500) {
+                reason = 'Serwer przeciążony (503)';
+              }
 
-            allAttempts.push({ keyLabel: label, model, status, reason, details: rawMsg });
-            console.warn(`[Gemini Auto-Fallback] ${label} | Model ${model} zwrócił ${reason}. Przechodzę do kolejnej próby...`);
+              allAttempts.push({ keyLabel: label, model: `${modelName} (${ver})`, status, reason, details: rawMsg });
+              console.warn(`[Gemini Auto-Fallback] ${label} | Model ${modelName} (${ver}) zwrócił ${reason}. Przechodzę do kolejnej próby...`);
+              break; // Don't try other version if not 404
+            }
+          } catch (networkErr) {
+            allAttempts.push({ keyLabel: label, model: `${modelName} (${ver})`, status: 0, reason: 'Błąd sieci', details: networkErr.message });
+            console.warn(`[Gemini Auto-Fallback] Błąd sieci dla modelu ${modelName} (${ver}) [${label}]:`, networkErr);
+            break;
           }
-        } catch (networkErr) {
-          allAttempts.push({ keyLabel: label, model, status: 0, reason: 'Błąd sieci', details: networkErr.message });
-          console.warn(`[Gemini Auto-Fallback] Błąd sieci dla modelu ${model} [${label}]:`, networkErr);
         }
       }
     }
@@ -6633,43 +6657,84 @@ async function testApiKeysConnection() {
   if (!statusEl) return;
 
   statusEl.style.display = 'block';
-  statusEl.innerHTML = '<span style="color: var(--accent);">⏳ Testuję zapytanie do Google AI Studio...</span>';
+  statusEl.innerHTML = '<span style="color: var(--accent);">⏳ Badam listę modeli (v1 i v1beta) i testuję połączenie z Google...</span>';
 
   const testKey = async (key, label) => {
     if (!key) return `• <b>${label}</b>: <span style="color: var(--text-muted);">⚪ Brak wpisanego klucza</span>`;
     
-    const candidateModels = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro', 'gemini-1.5-pro'];
-    let lastErr = null;
-
-    for (const testModel of candidateModels) {
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${testModel}:generateContent?key=${key}`;
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents: [{ parts: [{ text: 'ping' }] }] })
-        });
-        if (res.ok) {
-          return `• <b>${label}</b>: <span style="color: var(--success); font-weight: 700;">✅ Działa! Połączenie nawiązane (${testModel}), wolna pula dostępna.</span>`;
-        }
-        const err = await res.json().catch(() => ({}));
-        const msg = err.error?.message || `HTTP ${res.status}`;
-        if (res.status === 429 || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource_exhausted')) {
-          return `• <b>${label}</b>: <span style="color: #ffb74d; font-weight: 700;">⏳ Limit dobowy wyczerpany (${testModel}: Quota 429)</span>`;
-        }
-        if (res.status === 400 || res.status === 403) {
-          return `• <b>${label}</b>: <span style="color: var(--danger); font-weight: 700;">❌ Błąd klucza (${escapeHtml(msg)})</span>`;
-        }
-        if (res.status === 404) {
-          lastErr = msg;
-          continue; // try next candidate model
-        }
-        return `• <b>${label}</b>: <span style="color: var(--danger);">⚠️ Błąd ${res.status}: ${escapeHtml(msg)}</span>`;
-      } catch (e) {
-        return `• <b>${label}</b>: <span style="color: var(--danger);">⚠️ Błąd połączenia sieciowego: ${escapeHtml(e.message)}</span>`;
+    // Step 1: Discover models dynamically across v1 and v1beta
+    const { models, errors } = await discoverGeminiModelsForKey(key);
+    
+    if (models.length === 0 && errors.length > 0) {
+      const firstErr = errors[0];
+      const errMsg = firstErr.message || JSON.stringify(firstErr);
+      const isAuth = firstErr.code === 400 || firstErr.code === 403 || errMsg.toLowerCase().includes('api_key');
+      const isQuota = firstErr.code === 429 || errMsg.toLowerCase().includes('quota');
+      if (isAuth) {
+        return `• <b>${label}</b>: <span style="color: var(--danger); font-weight: 700;">❌ Błąd klucza (${escapeHtml(errMsg)})</span>`;
       }
+      if (isQuota) {
+        return `• <b>${label}</b>: <span style="color: #ffb74d; font-weight: 700;">⏳ Limit zapytań wyczerpany (Quota 429: ${escapeHtml(errMsg)})</span>`;
+      }
+      return `• <b>${label}</b>: <span style="color: var(--danger);">⚠️ Błąd pobierania modeli: ${escapeHtml(errMsg)}</span>`;
     }
-    return `• <b>${label}</b>: <span style="color: var(--danger);">⚠️ Żaden model testowy nie był dostępny (${escapeHtml(lastErr || '404')})</span>`;
+
+    // Step 2: Candidates to ping
+    const pool = models.length > 0 ? models : [
+      { name: 'gemini-1.5-flash', apiVersion: 'v1', tier: 2, score: 20 },
+      { name: 'gemini-1.5-pro', apiVersion: 'v1', tier: 1, score: 20 },
+      { name: 'gemini-2.0-flash', apiVersion: 'v1beta', tier: 2, score: 20 }
+    ];
+
+    const sorted = [...pool].sort((a, b) => {
+      if (a.tier === 2 && b.tier !== 2) return -1;
+      if (b.tier === 2 && a.tier !== 2) return 1;
+      return b.score - a.score;
+    });
+
+    const modelNamesList = models.map(m => `${m.name} (${m.apiVersion})`).slice(0, 6).join(', ');
+
+    let pingSuccess = false;
+    let pingModelUsed = '';
+    let pingErrorMsg = '';
+
+    for (const cand of sorted.slice(0, 4)) {
+      const vers = [cand.apiVersion, cand.apiVersion === 'v1' ? 'v1beta' : 'v1'];
+      for (const ver of vers) {
+        try {
+          const pingUrl = `https://generativelanguage.googleapis.com/${ver}/models/${cand.name}:generateContent?key=${key}`;
+          const pRes = await fetch(pingUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: 'ping' }] }] })
+          });
+          if (pRes.ok) {
+            pingSuccess = true;
+            pingModelUsed = `${cand.name} (${ver})`;
+            break;
+          } else {
+            const pErr = await pRes.json().catch(() => ({}));
+            pingErrorMsg = pErr.error?.message || `HTTP ${pRes.status}`;
+            if (pRes.status === 429) break;
+          }
+        } catch (e) {
+          pingErrorMsg = e.message;
+        }
+      }
+      if (pingSuccess) break;
+      if (pingErrorMsg.toLowerCase().includes('quota') || pingErrorMsg.includes('429')) break;
+    }
+
+    if (pingSuccess) {
+      const listInfo = modelNamesList ? `<br><span style="font-size: 11px; color: var(--text-muted); padding-left: 14px;">Dostępne w Twoim projekcie: ${escapeHtml(modelNamesList)}</span>` : '';
+      return `• <b>${label}</b>: <span style="color: var(--success); font-weight: 700;">✅ Działa! Połączenie nawiązane (${escapeHtml(pingModelUsed)})</span>${listInfo}`;
+    }
+
+    if (pingErrorMsg.toLowerCase().includes('quota') || pingErrorMsg.includes('429')) {
+      return `• <b>${label}</b>: <span style="color: #ffb74d; font-weight: 700;">⏳ Limit dobowy wyczerpany (Quota 429: ${escapeHtml(pingErrorMsg)})</span>`;
+    }
+
+    return `• <b>${label}</b>: <span style="color: var(--danger); font-weight: 700;">⚠️ Błąd testu: ${escapeHtml(pingErrorMsg)}</span>`;
   };
 
   const res1 = await testKey(primaryKey, 'Klucz główny');
@@ -6680,8 +6745,8 @@ async function testApiKeysConnection() {
     hint = '<div style="margin-top: 8px; color: #ffb74d;">⚠️ <b>Uwaga:</b> Oba wpisane klucze są identyczne! Klucz zapasowy musi pochodzić z osobnego projektu.</div>';
   } else if (res1.includes('429') && res2.includes('429')) {
     hint = '<div style="margin-top: 8px; color: #ffb74d;">💡 <b>Diagnoza:</b> Oba klucze zwróciły Quota 429. Oznacza to, że klucz zapasowy został wygenerowany w <u>tym samym projekcie Google Cloud</u> co klucz główny i dzielą tę samą wyczerpaną pulę. W Google AI Studio kliknij "Create API key in <b>NEW project</b>".</div>';
-  } else if (res1.includes('429') && res2.includes('Działa')) {
-    hint = '<div style="margin-top: 8px; color: var(--success);">🎉 <b>Super!</b> Klucz zapasowy działa i ma osobną pulę — asystent AI przejmie z niego odpowiedzi!</div>';
+  } else if (res2.includes('Działa')) {
+    hint = '<div style="margin-top: 8px; color: var(--success);">🎉 <b>Super!</b> Klucz zapasowy działa poprawnie!</div>';
   }
 
   statusEl.innerHTML = `<div style="text-align: left; font-size: 12px; line-height: 1.6;">${res1}<br>${res2}${hint}</div>`;
