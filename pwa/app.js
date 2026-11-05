@@ -1169,10 +1169,11 @@ function renderPlans() {
       const gifName = ex.gifName || (matched ? matched.n : '');
       const hasGif = Boolean(gifUrl);
       if (hasGif) gifAssignedCount++;
-      const ssTag = ex.supersetGroup ? `<span style="color: var(--accent); font-weight: 700; font-size: 11px;">[${escapeHtml(ex.supersetGroup)}]</span> ` : '';
+      const ssTag = ex.supersetGroup ? `<span style="color: var(--accent); font-weight: 700; font-size: 11px;">[SS ${escapeHtml(ex.supersetGroup)}]</span> ` : '';
       const loadInfo = ex.loadType === 'bodyweight'
         ? (ex.weight > 0 ? `+${ex.weight}kg` : 'Masa ciała')
         : (ex.loadType === 'dual_dumbbell' ? `2×${ex.weight || 0}kg` : `${ex.weight || 0}kg`);
+      const singleRestInfo = (!ex.supersetGroup && ex.restSeconds) ? ` • ⏱️ ${ex.restSeconds}s` : '';
 
       return `
         <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 8px;">
@@ -1186,7 +1187,7 @@ function renderPlans() {
                 ${ssTag}${escapeHtml(ex.name)}
               </div>
               <div style="font-size: 10px; color: ${hasGif ? 'var(--success)' : 'var(--text-muted)'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                ${ex.sets || 3}×${ex.reps || 10} (${loadInfo})${ex.restSeconds ? ` • ⏱️ ${ex.restSeconds}s` : ''}${ex.supersetRestSeconds ? ` • ⚡ ${ex.supersetRestSeconds}s` : ''} • ${hasGif ? `🎬 ${escapeHtml(gifName || 'Przypisany GIF')}` : '⚠️ Brak GIFa'}
+                ${ex.sets || 3}×${ex.reps || 10} (${loadInfo})${singleRestInfo} • ${hasGif ? `🎬 ${escapeHtml(gifName || 'Przypisany GIF')}` : '⚠️ Brak GIFa'}
               </div>
             </div>
           </div>
@@ -1199,6 +1200,9 @@ function renderPlans() {
 
     // Compact summary of first 3 exercise names when collapsed
     const compactExSummary = exercises.slice(0, 3).map(e => escapeHtml(e.name)).join(' • ') + (exercises.length > 3 ? ` (+${exercises.length - 3})` : '');
+    const customSsSummaries = Object.entries(plan.supersets || {})
+      .filter(([grp, cfg]) => cfg && (cfg.restSeconds || cfg.supersetRestSeconds))
+      .map(([grp, cfg]) => `SS ${grp} (⚡ ${cfg.supersetRestSeconds || ssRestSec}s / ⏱️ ${cfg.restSeconds || restSec}s)`);
 
     return `
       <div class="card" style="padding: 14px; margin-bottom: 12px;">
@@ -1208,6 +1212,11 @@ function renderPlans() {
             <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
               <b>${exercises.length}</b> ćw. • ⏱️ ${restSec}s ${hasSupersets ? `/ ⚡ SS ${ssRestSec}s` : ''} • <span style="color: ${gifAssignedCount === exercises.length ? 'var(--success)' : 'var(--accent)'};">🎬 GIFy: ${gifAssignedCount}/${exercises.length}</span>
             </div>
+            ${customSsSummaries.length > 0 ? `
+              <div style="font-size: 11px; color: var(--accent); margin-top: 3px; font-weight: 600;">
+                ⚡ Indywidualne czasy SS: ${escapeHtml(customSsSummaries.join(' • '))}
+              </div>
+            ` : ''}
           </div>
           <button class="btn btn-sm btn-primary" style="padding: 8px 16px; font-size: 13px; flex-shrink: 0;" onclick="startWorkout('${plan.id}')">▶ Start</button>
         </div>
@@ -1698,13 +1707,21 @@ function startWorkout(planId) {
 
     const matchedGif = findExerciseGif(ex.name, ex);
     const hasAnyExtraWeight = sets.some(s => (parseFloat(s.weight) || 0) > 0);
+    const ssCfg = (plan.supersets && plan.supersets[ex.supersetGroup]) || {};
+    const effectiveRest = ex.supersetGroup
+      ? (parseInt(ssCfg.restSeconds) || parseInt(ex.restSeconds) || null)
+      : (parseInt(ex.restSeconds) || null);
+    const effectiveSsRest = ex.supersetGroup
+      ? (parseInt(ssCfg.supersetRestSeconds) || parseInt(ex.supersetRestSeconds) || null)
+      : null;
+
     return {
       name: ex.name,
       muscle: ex.muscle || 'Inne',
       supersetGroup: ex.supersetGroup || '',
       loadType: loadType,
-      restSeconds: parseInt(ex.restSeconds) || null,
-      supersetRestSeconds: parseInt(ex.supersetRestSeconds) || null,
+      restSeconds: effectiveRest,
+      supersetRestSeconds: effectiveSsRest,
       gifSlug: ex.gifSlug || (matchedGif ? matchedGif.s : ''),
       gifUrl: ex.gifUrl || (matchedGif ? matchedGif.g : ''),
       gifName: ex.gifName || (matchedGif ? matchedGif.n : ''),
@@ -1721,6 +1738,7 @@ function startWorkout(planId) {
     planName: plan.name,
     restSeconds: restSeconds,
     supersetRestSeconds: supersetRestSeconds,
+    supersets: JSON.parse(JSON.stringify(plan.supersets || {})),
     planSnapshot: JSON.parse(JSON.stringify(plan)),
     startTime: nowTs,
     currentSetStartedAt: nowTs,
@@ -1820,6 +1838,14 @@ function renderActiveExercises() {
 function renderSupersetGroupCard(groupMembers, ssGroup, restSS, restMain) {
   const exCount = groupMembers.length;
   const maxSets = Math.max(...groupMembers.map(m => m.item.sets.length));
+
+  const ssCfg = (STATE.activeWorkout && STATE.activeWorkout.supersets && STATE.activeWorkout.supersets[ssGroup]) || {};
+  const currentSSRest = parseInt(ssCfg.supersetRestSeconds)
+    || groupMembers.find(m => parseInt(m.item.supersetRestSeconds) > 0)?.item.supersetRestSeconds
+    || restSS;
+  const currentRoundRest = parseInt(ssCfg.restSeconds)
+    || groupMembers.find(m => parseInt(m.item.restSeconds) > 0)?.item.restSeconds
+    || restMain;
 
   // Determine active round and active exercise in superset (the first uncompleted set)
   let activeRoundIdx = null;
@@ -1998,7 +2024,7 @@ function renderSupersetGroupCard(groupMembers, ssGroup, restSS, restMain) {
             ${isRoundDone ? '✅' : (isActiveRound ? '⚡' : '🔄')} OBWÓD ${sIdx + 1} z ${maxSets}
           </span>
           <span style="font-size: 10px; color: var(--text-muted);">
-            ${isRoundDone ? 'Obwód ukończony' : `⏱️ ${restSS}s odpoczynku w SS • ⏱️ ${restMain}s po obwodzie`}
+            ${isRoundDone ? 'Obwód ukończony' : `⏱️ ${currentSSRest}s odpoczynku w SS • ⏱️ ${currentRoundRest}s po obwodzie`}
           </span>
         </div>
         ${itemsInThisRoundHtml}
@@ -2011,8 +2037,8 @@ function renderSupersetGroupCard(groupMembers, ssGroup, restSS, restMain) {
       <div class="superset-group-header" style="flex-direction: column; align-items: stretch; gap: 8px; margin-bottom: 10px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <span style="font-size: 14px; font-weight: 800; color: var(--accent);">🔗 SUPERSERIA ${escapeHtml(ssGroup)} (${exCount} ćwiczenia na przemian)</span>
-          <button type="button" class="badge" style="background: rgba(0,229,255,0.14); color: var(--accent); border: 1px solid rgba(0,229,255,0.3); font-size: 10px; cursor: pointer; padding: 3px 8px; border-radius: 999px;" onclick="promptChangeSupersetRest('${escapeHtml(ssGroup)}')" title="Kliknij, aby zmienić czasy przerw dla tej superserii">
-            ⏱️ ${groupMembers.find(m => parseInt(m.item.supersetRestSeconds) > 0)?.item.supersetRestSeconds || restSS}s w SS / ⏱️ ${groupMembers.find(m => parseInt(m.item.restSeconds) > 0)?.item.restSeconds || restMain}s obwód ✏️
+          <button type="button" class="badge" style="background: rgba(0,229,255,0.14); color: var(--accent); border: 1px solid rgba(0,229,255,0.3); font-size: 10px; cursor: pointer; padding: 3px 8px; border-radius: 999px;" onclick="promptChangeSupersetRest('${escapeHtml(ssGroup)}')" title="Kliknij, aby zmienić czasy przerw dla całej Superserii ${escapeHtml(ssGroup)}">
+            ⏱️ ${currentSSRest}s w SS / ⏱️ ${currentRoundRest}s obwód ✏️
           </button>
         </div>
         <div style="display: flex; gap: 6px; flex-wrap: wrap;">
@@ -2289,10 +2315,19 @@ function promptChangeSupersetRest(ssGroup) {
   );
   if (groupMembers.length === 0) return;
 
-  const curMain = groupMembers.find(m => parseInt(m.restSeconds) > 0)?.restSeconds || STATE.activeWorkout.restSeconds || 90;
-  const curShort = groupMembers.find(m => parseInt(m.supersetRestSeconds) > 0)?.supersetRestSeconds || STATE.activeWorkout.supersetRestSeconds || 30;
+  STATE.activeWorkout.supersets = STATE.activeWorkout.supersets || {};
+  const ssCfg = STATE.activeWorkout.supersets[ssGroup] || {};
 
-  const inputMain = prompt(`⏱️ Dłuższy odpoczynek PO CAŁYM OBWODZIE dla Superserii ${ssGroup}:\n\nPodaj czas w sekundach (np. 60, 90, 120):`, curMain);
+  const curMain = parseInt(ssCfg.restSeconds)
+    || groupMembers.find(m => parseInt(m.restSeconds) > 0)?.restSeconds
+    || STATE.activeWorkout.restSeconds
+    || 90;
+  const curShort = parseInt(ssCfg.supersetRestSeconds)
+    || groupMembers.find(m => parseInt(m.supersetRestSeconds) > 0)?.supersetRestSeconds
+    || STATE.activeWorkout.supersetRestSeconds
+    || 30;
+
+  const inputMain = prompt(`⏱️ Dłuższy odpoczynek PO CAŁYM OBWODZIE dla całej Superserii ${ssGroup}:\n\nPodaj czas w sekundach (np. 60, 90, 120, 180):`, curMain);
   if (inputMain === null) return;
   const parsedMain = parseInt(inputMain);
 
@@ -2300,9 +2335,17 @@ function promptChangeSupersetRest(ssGroup) {
   if (inputShort === null) return;
   const parsedShort = parseInt(inputShort);
 
+  const finalMain = parsedMain > 0 ? parsedMain : curMain;
+  const finalShort = parsedShort > 0 ? parsedShort : curShort;
+
+  STATE.activeWorkout.supersets[ssGroup] = {
+    restSeconds: finalMain,
+    supersetRestSeconds: finalShort
+  };
+
   groupMembers.forEach(m => {
-    if (parsedMain > 0) m.restSeconds = parsedMain;
-    if (parsedShort > 0) m.supersetRestSeconds = parsedShort;
+    m.restSeconds = finalMain;
+    m.supersetRestSeconds = finalShort;
   });
 
   saveActiveWorkout();
@@ -2530,12 +2573,20 @@ function toggleSetComplete(exIdx, sIdx) {
         .map((item, idx) => ({ item, idx }))
         .filter(entry => (entry.item.supersetGroup || '').trim() === ssGroup);
 
-      // Check if this superset group has custom rest times defined on any member
-      const memberWithMain = groupMembers.find(m => parseInt(m.item.restSeconds) > 0);
-      if (memberWithMain) mainRest = parseInt(memberWithMain.item.restSeconds);
+      const ssCfg = (STATE.activeWorkout.supersets && STATE.activeWorkout.supersets[ssGroup]) || {};
+      if (parseInt(ssCfg.restSeconds) > 0) {
+        mainRest = parseInt(ssCfg.restSeconds);
+      } else {
+        const memberWithMain = groupMembers.find(m => parseInt(m.item.restSeconds) > 0);
+        if (memberWithMain) mainRest = parseInt(memberWithMain.item.restSeconds);
+      }
 
-      const memberWithShort = groupMembers.find(m => parseInt(m.item.supersetRestSeconds) > 0);
-      if (memberWithShort) shortRest = parseInt(memberWithShort.item.supersetRestSeconds);
+      if (parseInt(ssCfg.supersetRestSeconds) > 0) {
+        shortRest = parseInt(ssCfg.supersetRestSeconds);
+      } else {
+        const memberWithShort = groupMembers.find(m => parseInt(m.item.supersetRestSeconds) > 0);
+        if (memberWithShort) shortRest = parseInt(memberWithShort.item.supersetRestSeconds);
+      }
 
       // Check if inside THIS round (sIdx) there is still an incomplete exercise
       const incompleteInSameRound = groupMembers.find(
@@ -3327,8 +3378,11 @@ function saveParsedPlan() {
 // ============================================================================
 let editingPlanId = null;
 
+let currentModalPlanSupersets = {};
+
 function openNewPlanModal() {
   editingPlanId = null;
+  currentModalPlanSupersets = {};
   document.getElementById('plan-modal-title').textContent = 'Nowy Plan Treningowy';
   document.getElementById('modal-plan-name').value = '';
   document.getElementById('modal-plan-desc').value = '';
@@ -3338,6 +3392,7 @@ function openNewPlanModal() {
   addModalExerciseRow('Wyciskanie sztangi leżąc', 4, 8, 80, '', 'standard');
   addModalExerciseRow('Wyciskanie hantli skos', 3, 10, 26, 'A', 'dual_dumbbell');
   addModalExerciseRow('Pompki na poręczach (Dipy)', 3, 10, 0, 'A', 'bodyweight');
+  updateModalSupersetsView();
   const modal = document.getElementById('plan-modal');
   modal.style.display = 'flex';
 }
@@ -3346,6 +3401,19 @@ function openEditPlanModal(planId) {
   const plan = STATE.plans.find(p => p.id === planId);
   if (!plan) return;
   editingPlanId = planId;
+  currentModalPlanSupersets = JSON.parse(JSON.stringify(plan.supersets || {}));
+
+  // Backwards compatibility: if plan.supersets was not defined, populate from exercises
+  (plan.exercises || []).forEach(ex => {
+    const grp = (ex.supersetGroup || '').trim();
+    if (grp && !currentModalPlanSupersets[grp]) {
+      currentModalPlanSupersets[grp] = {
+        restSeconds: parseInt(ex.restSeconds) || null,
+        supersetRestSeconds: parseInt(ex.supersetRestSeconds) || null
+      };
+    }
+  });
+
   document.getElementById('plan-modal-title').textContent = 'Edycja Planu Treningowego';
   document.getElementById('modal-plan-name').value = plan.name || '';
   document.getElementById('modal-plan-desc').value = plan.description || '';
@@ -3361,6 +3429,7 @@ function openEditPlanModal(planId) {
     addModalExerciseRow('', 3, 10, 0, '', 'standard');
   }
 
+  updateModalSupersetsView();
   const modal = document.getElementById('plan-modal');
   modal.style.display = 'flex';
 }
@@ -3370,15 +3439,126 @@ function closePlanModal() {
   modal.style.display = 'none';
 }
 
+function removeModalExerciseRow(btn) {
+  const row = btn.closest('.modal-ex-row');
+  if (row) {
+    row.remove();
+    updateModalSupersetsView();
+  }
+}
+
 function handleModalSsChange(selectEl) {
   const row = selectEl.closest('.modal-ex-row');
   if (!row) return;
-  const isSs = Boolean(selectEl.value);
-  const ssBox = row.querySelector('.modal-ex-ss-rest-box');
-  const restLabel = row.querySelector('.modal-ex-rest-label');
-  if (ssBox) ssBox.style.display = isSs ? 'flex' : 'none';
-  if (restLabel) restLabel.textContent = isSs ? '⏱️ Po obwodzie:' : '⏱️ Odpoczynek:';
   row.dataset.manualEdited = '1';
+  updateModalSupersetsView();
+}
+
+function syncModalSsRestInput(ssGroup) {
+  const card = document.querySelector(`.modal-ss-config-card[data-ss-group="${ssGroup}"]`);
+  if (!card) return;
+  const shortInput = card.querySelector('.modal-ss-rest-short');
+  const mainInput = card.querySelector('.modal-ss-rest-main');
+  currentModalPlanSupersets[ssGroup] = {
+    restSeconds: (mainInput && mainInput.value.trim() !== '') ? parseInt(mainInput.value) : null,
+    supersetRestSeconds: (shortInput && shortInput.value.trim() !== '') ? parseInt(shortInput.value) : null
+  };
+}
+
+function updateModalSupersetsView() {
+  const listEl = document.getElementById('modal-exercises-list');
+  const ssSettingsContainer = document.getElementById('modal-supersets-settings');
+  if (!listEl || !ssSettingsContainer) return;
+
+  const rows = listEl.querySelectorAll('.modal-ex-row');
+  const activeSupersets = {}; // grp -> array of exercise names
+
+  rows.forEach(r => {
+    const ssSelect = r.querySelector('.modal-ex-ss');
+    const grp = ssSelect ? ssSelect.value.trim() : '';
+    const nameInput = r.querySelector('.modal-ex-name');
+    const name = nameInput ? nameInput.value.trim() : '';
+    const singleRestBox = r.querySelector('.modal-ex-single-rest-box');
+    const ssInfoBadge = r.querySelector('.modal-ex-ss-info-badge');
+
+    if (grp) {
+      if (!activeSupersets[grp]) activeSupersets[grp] = [];
+      activeSupersets[grp].push(name || 'Bez nazwy');
+      if (singleRestBox) singleRestBox.style.display = 'none';
+      if (ssInfoBadge) {
+        ssInfoBadge.style.display = 'flex';
+        const ssNameSpan = ssInfoBadge.querySelector('.modal-ex-ss-badge-name');
+        if (ssNameSpan) ssNameSpan.textContent = `Superseria ${grp}`;
+      }
+    } else {
+      if (singleRestBox) singleRestBox.style.display = 'flex';
+      if (ssInfoBadge) ssInfoBadge.style.display = 'none';
+    }
+  });
+
+  // Preserve any currently typed values in modal-supersets-settings before re-rendering
+  const existingCards = ssSettingsContainer.querySelectorAll('.modal-ss-config-card');
+  existingCards.forEach(c => {
+    const g = c.dataset.ssGroup;
+    if (g) {
+      const shortInput = c.querySelector('.modal-ss-rest-short');
+      const mainInput = c.querySelector('.modal-ss-rest-main');
+      currentModalPlanSupersets[g] = {
+        restSeconds: (mainInput && mainInput.value.trim() !== '') ? parseInt(mainInput.value) : null,
+        supersetRestSeconds: (shortInput && shortInput.value.trim() !== '') ? parseInt(shortInput.value) : null
+      };
+    }
+  });
+
+  const ssGroups = Object.keys(activeSupersets).sort();
+  if (ssGroups.length === 0) {
+    ssSettingsContainer.style.display = 'none';
+    ssSettingsContainer.innerHTML = '';
+    return;
+  }
+
+  const defaultMain = parseInt(document.getElementById('modal-plan-rest')?.value) || 90;
+  const defaultShort = parseInt(document.getElementById('modal-plan-ss-rest')?.value) || 30;
+
+  ssSettingsContainer.style.display = 'flex';
+  ssSettingsContainer.innerHTML = `
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px; margin-bottom: 2px;">
+      <span style="font-size: 12px; font-weight: 800; color: var(--accent);">🔗 PRZERWY DLA SUPERSERII (dla całej grupy):</span>
+    </div>
+    ${ssGroups.map(grp => {
+      const exNames = activeSupersets[grp].join(', ');
+      const cfg = currentModalPlanSupersets[grp] || {};
+      const mainVal = (cfg.restSeconds !== null && cfg.restSeconds !== undefined) ? cfg.restSeconds : '';
+      const shortVal = (cfg.supersetRestSeconds !== null && cfg.supersetRestSeconds !== undefined) ? cfg.supersetRestSeconds : '';
+
+      return `
+        <div class="modal-ss-config-card" data-ss-group="${escapeHtml(grp)}" style="background: rgba(0, 229, 255, 0.05); border: 1px solid rgba(0, 229, 255, 0.28); border-radius: 10px; padding: 9px 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 4px;">
+            <span style="font-size: 13px; font-weight: 800; color: var(--accent);">🔗 SUPERSERIA ${escapeHtml(grp)}</span>
+            <span style="font-size: 11px; color: var(--text-muted); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(exNames)}">
+              Ćwiczenia: <b style="color: var(--text);">${escapeHtml(exNames)}</b>
+            </span>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <div>
+              <label style="font-size: 10px; color: var(--accent); display: block; margin-bottom: 2px; font-weight: 700;">⚡ Wewnątrz obwodu (zmiana stacji)</label>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <input type="number" step="5" class="input-box modal-ss-rest-short" data-ss-group="${escapeHtml(grp)}" style="font-size: 12px; padding: 4px 6px; width: 70px; text-align: center;" placeholder="${defaultShort}" value="${shortVal}" oninput="syncModalSsRestInput('${escapeHtml(grp)}')">
+                <span style="font-size: 10px; color: var(--text-muted);">s (puste = ${defaultShort}s)</span>
+              </div>
+            </div>
+            <div>
+              <label style="font-size: 10px; color: #b9f6ca; display: block; margin-bottom: 2px; font-weight: 700;">⏱️ Po pełnym obwodzie</label>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <input type="number" step="5" class="input-box modal-ss-rest-main" data-ss-group="${escapeHtml(grp)}" style="font-size: 12px; padding: 4px 6px; width: 70px; text-align: center;" placeholder="${defaultMain}" value="${mainVal}" oninput="syncModalSsRestInput('${escapeHtml(grp)}')">
+                <span style="font-size: 10px; color: var(--text-muted);">s (puste = ${defaultMain}s)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('')}
+  `;
 }
 
 function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, supersetGroup = '', loadType = 'standard', exObj = null) {
@@ -3392,8 +3572,8 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
   const initUrl = (exObj && exObj.gifUrl) || (matchedGif ? matchedGif.g : '');
   const initGifName = (exObj && exObj.gifName) || (matchedGif ? matchedGif.n : '');
 
-  const exRest = (exObj && exObj.restSeconds) ? parseInt(exObj.restSeconds) : '';
-  const exSSRest = (exObj && exObj.supersetRestSeconds) ? parseInt(exObj.supersetRestSeconds) : '';
+  // Rest for single exercises
+  const exRest = (!supersetGroup && exObj && exObj.restSeconds) ? parseInt(exObj.restSeconds) : '';
 
   if (initSlug) row.dataset.gifSlug = initSlug;
   if (initUrl) row.dataset.gifUrl = initUrl;
@@ -3429,7 +3609,7 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
   row.innerHTML = `
     <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 6px;">
       <input type="text" class="input-box modal-ex-name" style="text-align: left; font-size: 13px; flex: 1;" placeholder="Nazwa ćwiczenia (np. RDL, Back Squat)" value="${escapeHtml(name)}" oninput="handleModalExNameInput(this)">
-      <button type="button" style="background: none; border: none; color: var(--danger); font-size: 18px; padding: 0 6px; cursor: pointer;" onclick="this.closest('.modal-ex-row').remove()" title="Usuń ćwiczenie">✕</button>
+      <button type="button" style="background: none; border: none; color: var(--danger); font-size: 18px; padding: 0 6px; cursor: pointer;" onclick="removeModalExerciseRow(this)" title="Usuń ćwiczenie">✕</button>
     </div>
 
     <!-- Dedicated GIF Assignment Bar inside Plan Editor Row -->
@@ -3476,18 +3656,22 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
       </div>
     </div>
 
-    <!-- Dedicated Rest Customization Bar for this exercise/superset -->
-    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; padding: 5px 8px; background: rgba(0,0,0,0.22); border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); flex-wrap: wrap;">
+    <!-- Rest bar: Shown ONLY for single/isolated exercises -->
+    <div class="modal-ex-single-rest-box" style="display: ${supersetGroup ? 'none' : 'flex'}; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; padding: 5px 8px; background: rgba(0,0,0,0.22); border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
       <div style="display: flex; align-items: center; gap: 6px;">
-        <span class="modal-ex-rest-label" style="font-size: 11px; color: #b9f6ca; font-weight: 700; white-space: nowrap;">${supersetGroup ? '⏱️ Po obwodzie:' : '⏱️ Odpoczynek:'}</span>
-        <input type="number" step="5" class="input-box modal-ex-rest" style="font-size: 12px; padding: 4px 6px; width: 75px; text-align: center;" placeholder="z planu" value="${exRest}" title="Własny czas odpoczynku po serii (lub po pełnym obwodzie) w sekundach. Puste = domyślny z planu." oninput="this.closest('.modal-ex-row').dataset.manualEdited='1'">
-        <span style="font-size: 10px; color: var(--text-muted); white-space: nowrap;">s (puste = z planu)</span>
+        <span style="font-size: 11px; color: #b9f6ca; font-weight: 700; white-space: nowrap;">⏱️ Odpoczynek po serii:</span>
+        <input type="number" step="5" class="input-box modal-ex-rest" style="font-size: 12px; padding: 4px 6px; width: 75px; text-align: center;" placeholder="z planu" value="${exRest}" title="Własny czas odpoczynku po serii w sekundach. Puste = domyślny z planu." oninput="this.closest('.modal-ex-row').dataset.manualEdited='1'">
+        <span style="font-size: 10px; color: var(--text-muted); white-space: nowrap;">s (puste = domyślny z planu)</span>
       </div>
-      <div class="modal-ex-ss-rest-box" style="display: ${supersetGroup ? 'flex' : 'none'}; align-items: center; gap: 4px;">
-        <span style="font-size: 11px; color: var(--accent); font-weight: 700; white-space: nowrap;">⚡ W SS:</span>
-        <input type="number" step="5" class="input-box modal-ex-ss-rest" style="font-size: 12px; padding: 4px 6px; width: 65px; text-align: center;" placeholder="z planu" value="${exSSRest}" title="Własny krótki odpoczynek wewnątrz superserii w sekundach" oninput="this.closest('.modal-ex-row').dataset.manualEdited='1'">
-        <span style="font-size: 10px; color: var(--text-muted);">s</span>
+    </div>
+
+    <!-- Superset Info Badge: Shown ONLY when exercise is assigned to a superset -->
+    <div class="modal-ex-ss-info-badge" style="display: ${supersetGroup ? 'flex' : 'none'}; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; padding: 5px 8px; background: rgba(0, 229, 255, 0.08); border-radius: 8px; border: 1px solid rgba(0, 229, 255, 0.22);">
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <span style="font-size: 11px; color: var(--accent); font-weight: 700;">🔗</span>
+        <span class="modal-ex-ss-badge-name" style="font-size: 11px; color: var(--accent); font-weight: 700;">Superseria ${escapeHtml(supersetGroup)}</span>
       </div>
+      <span style="font-size: 10px; color: var(--text-muted);">Przerwy określa konfiguracja Superserii powyżej ⬆️</span>
     </div>
   `;
   listEl.appendChild(row);
@@ -3495,10 +3679,12 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
 
 function handleModalExNameInput(inputEl) {
   const row = inputEl.closest('.modal-ex-row');
-  if (!row || row.dataset.gifLocked === '1') return;
-  const exName = inputEl.value.trim();
-  const matched = exName ? findExerciseGif(exName) : null;
-  updateModalRowGifPreview(row, matched);
+  if (row && row.dataset.gifLocked !== '1') {
+    const exName = inputEl.value.trim();
+    const matched = exName ? findExerciseGif(exName) : null;
+    updateModalRowGifPreview(row, matched);
+  }
+  updateModalSupersetsView();
 }
 
 function openGifModalFromPlanRow(btnEl) {
@@ -3558,6 +3744,20 @@ function saveModalPlan() {
   const restSeconds = parseInt(document.getElementById('modal-plan-rest').value) || 90;
   const supersetRestSeconds = parseInt(document.getElementById('modal-plan-ss-rest').value) || 30;
 
+  // Collect superset configurations from modal
+  const supersets = {};
+  const ssCards = document.querySelectorAll('#modal-supersets-settings .modal-ss-config-card');
+  ssCards.forEach(card => {
+    const grp = card.dataset.ssGroup;
+    if (!grp) return;
+    const shortRest = parseInt(card.querySelector('.modal-ss-rest-short')?.value) || null;
+    const mainRest = parseInt(card.querySelector('.modal-ss-rest-main')?.value) || null;
+    supersets[grp] = {
+      restSeconds: mainRest,
+      supersetRestSeconds: shortRest
+    };
+  });
+
   const rows = document.querySelectorAll('#modal-exercises-list .modal-ex-row');
   const exercises = [];
   rows.forEach(r => {
@@ -3569,8 +3769,15 @@ function saveModalPlan() {
     const isWeightHidden = weightContainer && weightContainer.style.display === 'none';
     const weight = isWeightHidden ? 0 : (parseFloat(r.querySelector('.modal-ex-weight').value) || 0);
     const supersetGroup = r.querySelector('.modal-ex-ss').value || '';
-    const customRest = parseInt(r.querySelector('.modal-ex-rest')?.value) || null;
-    const customSsRest = parseInt(r.querySelector('.modal-ex-ss-rest')?.value) || null;
+    
+    let customRest = null;
+    let customSsRest = null;
+    if (supersetGroup) {
+      customRest = supersets[supersetGroup]?.restSeconds || null;
+      customSsRest = supersets[supersetGroup]?.supersetRestSeconds || null;
+    } else {
+      customRest = parseInt(r.querySelector('.modal-ex-rest')?.value) || null;
+    }
 
     if (exName) {
       const existingGifObj = {
@@ -3625,6 +3832,7 @@ function saveModalPlan() {
       STATE.plans[idx].description = desc;
       STATE.plans[idx].restSeconds = restSeconds;
       STATE.plans[idx].supersetRestSeconds = supersetRestSeconds;
+      STATE.plans[idx].supersets = supersets;
       STATE.plans[idx].exercises = exercises;
     }
   } else {
@@ -3634,6 +3842,7 @@ function saveModalPlan() {
       description: desc,
       restSeconds: restSeconds,
       supersetRestSeconds: supersetRestSeconds,
+      supersets: supersets,
       exercises: exercises
     });
   }
