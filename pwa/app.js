@@ -21,7 +21,18 @@ const STATE = {
   activeWorkout: JSON.parse(localStorage.getItem('iron_active_workout')) || null,
   apiKey: localStorage.getItem('iron_gemini_api_key') || '',
   backupApiKey: localStorage.getItem('iron_gemini_backup_api_key') || '',
-  preferredGeminiTier: localStorage.getItem('iron_gemini_preferred_tier') || 'fast',
+  preferredGeminiTier: (() => {
+    const saved = localStorage.getItem('iron_gemini_preferred_tier');
+    // Auto-migrate legacy 'smart' to 'fast' because Google AI Studio free tier gives 0 quota for Pro models
+    if (!saved || saved === 'smart') {
+      localStorage.setItem('iron_gemini_preferred_tier', 'fast');
+      return 'fast';
+    }
+    return saved;
+  })(),
+  keyCooldowns: {},
+  unavailableModels: new Set(),
+  lastWorkingKey: null,
   lastUsedGeminiModel: null,
   lastGeminiFallback: null,
   timerInterval: null,
@@ -3171,11 +3182,11 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
   const primaryKey = (STATE.apiKey || '').trim();
   const backupKey = (STATE.backupApiKey || '').trim();
 
-  const keysToTry = [];
-  if (primaryKey) keysToTry.push({ key: primaryKey, label: 'Klucz główny (Projekt 1)' });
-  if (backupKey && backupKey !== primaryKey) keysToTry.push({ key: backupKey, label: 'Klucz zapasowy (Projekt 2)' });
+  const rawKeys = [];
+  if (primaryKey) rawKeys.push({ key: primaryKey, label: 'Klucz główny (Projekt 1)', id: 'p1' });
+  if (backupKey && backupKey !== primaryKey) rawKeys.push({ key: backupKey, label: 'Klucz zapasowy (Projekt 2)', id: 'p2' });
 
-  if (keysToTry.length === 0) {
+  if (rawKeys.length === 0) {
     alert('Podaj klucz Gemini API w zakładce Ustawienia!');
     showView('settings');
     throw new Error('Brak klucza Gemini API');
@@ -3201,7 +3212,6 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
   ];
 
   // Quality-First Tier Ordering:
-  // We prioritize higher tier models across ALL keys before degrading to lower tiers!
   const orderedTiers = [];
   if (preferredTier === 'smart') {
     orderedTiers.push({ tierNum: 1, name: 'Pro', models: ACTIVE_TIER_PRO });
@@ -3210,13 +3220,28 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
   } else if (preferredTier === 'lite') {
     orderedTiers.push({ tierNum: 3, name: 'Lite', models: ACTIVE_TIER_LITE });
     orderedTiers.push({ tierNum: 2, name: 'Flash', models: ACTIVE_TIER_FLASH });
-    orderedTiers.push({ tierNum: 1, name: 'Pro', models: ACTIVE_TIER_PRO });
   } else {
-    // Default 'fast'
+    // Default 'fast' -> prioritize Flash (3.8, 3.6), fall back to Lite (500 req/day).
+    // Pro is intentionally omitted from 'fast' because free accounts have 0/0 quota for Pro, which causes slow 404 delays.
     orderedTiers.push({ tierNum: 2, name: 'Flash', models: ACTIVE_TIER_FLASH });
     orderedTiers.push({ tierNum: 3, name: 'Lite', models: ACTIVE_TIER_LITE });
-    orderedTiers.push({ tierNum: 1, name: 'Pro', models: ACTIVE_TIER_PRO });
   }
+
+  // Healthy Key Sorting:
+  // Keys with an active 429 quota cooldown are placed last.
+  // The key that succeeded on the last request is tried FIRST!
+  STATE.keyCooldowns = STATE.keyCooldowns || {};
+  STATE.unavailableModels = STATE.unavailableModels || new Set();
+
+  const now = Date.now();
+  const keysToTry = [...rawKeys].sort((a, b) => {
+    const aCooldown = (STATE.keyCooldowns[a.key] || 0) > now ? 1 : 0;
+    const bCooldown = (STATE.keyCooldowns[b.key] || 0) > now ? 1 : 0;
+    if (aCooldown !== bCooldown) return aCooldown - bCooldown;
+    if (STATE.lastWorkingKey === a.key) return -1;
+    if (STATE.lastWorkingKey === b.key) return 1;
+    return 0;
+  });
 
   const parts = [{ text: prompt }];
   if (Array.isArray(inlineData)) {
@@ -3254,6 +3279,11 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
     for (let mIdx = 0; mIdx < tierModels.length; mIdx++) {
       const modelName = tierModels[mIdx];
 
+      // Skip models known to not exist or 404
+      if (STATE.unavailableModels.has(modelName)) {
+        continue;
+      }
+
       if (quotaExhaustedKeyIndices.size >= keysToTry.length) {
         break;
       }
@@ -3266,19 +3296,28 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
         const { key, label } = keysToTry[kIdx];
         attemptCount++;
 
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout per call
+
         try {
           const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`;
           const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: parts }] })
+            body: JSON.stringify({ contents: [{ parts: parts }] }),
+            signal: controller.signal
           });
+          clearTimeout(timeoutId);
 
           if (response.ok) {
             const data = await response.json();
             const resParts = data.candidates?.[0]?.content?.parts || [];
             const text = resParts.map(p => p.text || '').join('').trim();
             if (text) {
+              // Mark this key as healthy and working
+              delete STATE.keyCooldowns[key];
+              STATE.lastWorkingKey = key;
+
               const isFallback = (attemptCount > 1 || kIdx > 0 || tIdx > 0);
               if (isFallback) {
                 const reasonsSummary = allAttempts.map(a => `${a.model} [${a.keyLabel}] (${a.reason})`).join(', ');
@@ -3307,8 +3346,11 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
             if (status === 429 || rawMsg.toLowerCase().includes('quota') || rawMsg.toLowerCase().includes('resource_exhausted')) {
               reason = 'Wyczerpany limit (Quota / 429)';
               quotaExhaustedKeyIndices.add(kIdx);
+              // Cooldown key for 30 minutes so other calls skip it immediately
+              STATE.keyCooldowns[key] = Date.now() + (30 * 60 * 1000);
             } else if (status === 404) {
               reason = 'Model niedostępny (404)';
+              STATE.unavailableModels.add(modelName);
             } else if (status === 503 || status === 500) {
               reason = 'Serwer przeciążony (503)';
             }
@@ -3317,8 +3359,11 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
             console.warn(`[Gemini Auto-Fallback] ${label} | Model ${modelName} zwrócił ${reason}. Przechodzę do kolejnej próby...`);
           }
         } catch (networkErr) {
-          allAttempts.push({ keyLabel: label, model: modelName, status: 0, reason: 'Błąd sieci', details: networkErr.message });
-          console.warn(`[Gemini Auto-Fallback] Błąd sieci dla modelu ${modelName} [${label}]:`, networkErr);
+          clearTimeout(timeoutId);
+          const isTimeout = networkErr.name === 'AbortError';
+          const reason = isTimeout ? 'Timeout połączenia (20s)' : 'Błąd sieci';
+          allAttempts.push({ keyLabel: label, model: modelName, status: 0, reason, details: networkErr.message });
+          console.warn(`[Gemini Auto-Fallback] ${reason} dla modelu ${modelName} [${label}]:`, networkErr);
         }
       }
     }
@@ -4657,7 +4702,7 @@ Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown o strukturze:
       ? `${prompt}\n\nDodatkowe dane tekstowe z załączonych plików:\n${textSnippets.join('\n\n')}`
       : prompt;
 
-    const rawResponse = await callGemini(fullPrompt, 'smart', inlineParts);
+    const rawResponse = await callGemini(fullPrompt, 'fast', inlineParts);
     const parsedRoot = extractJsonFromGemini(rawResponse);
 
     const rawEntries = Array.isArray(parsedRoot)
@@ -5203,7 +5248,7 @@ Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown:
 }`;
 
   try {
-    const raw = await callGemini(prompt, 'smart');
+    const raw = await callGemini(prompt, 'fast');
     const parsed = extractJsonFromGemini(raw);
 
     const proteinG = Math.max(40, parseInt(parsed.proteinG) || 180);
@@ -5339,7 +5384,7 @@ Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown:
     // Keep a copy of the analyzed photos so follow-up corrections in refineMealEstimateWithAI can still reference them
     STATE.lastAnalyzedMealPhotos = [...photos];
 
-    const rawResponse = await callGemini(prompt, 'smart', inlineParts);
+    const rawResponse = await callGemini(prompt, 'fast', inlineParts);
     const parsed = extractJsonFromGemini(rawResponse);
 
     // Clear the prompt text field immediately after analysis as requested!
@@ -5417,7 +5462,7 @@ Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown:
       : (STATE.pendingMealPhotos || []);
     const inlineParts = photos.map(p => ({ mimeType: p.mimeType, data: p.data }));
 
-    const rawResponse = await callGemini(prompt, 'smart', inlineParts);
+    const rawResponse = await callGemini(prompt, 'fast', inlineParts);
     const parsed = extractJsonFromGemini(rawResponse);
 
     if (followupInput) followupInput.value = '';
@@ -6130,7 +6175,7 @@ Przygotuj pogłębioną, spersonalizowaną analizę w języku polskim:
 Używaj czytelnego formatowania punktowego.`;
 
   try {
-    const tier = STATE.preferredGeminiTier || 'smart';
+    const tier = STATE.preferredGeminiTier || 'fast';
     const feedback = await callGemini(prompt, tier);
     // Only save and display if session still exists in history
     const stillExists = STATE.history.some(s => s.id === session.id);
@@ -6371,7 +6416,7 @@ Udziel naturalnej, merytorycznej, spersonalizowanej odpowiedzi po polsku jako Tr
 `;
 
   try {
-    const tier = STATE.preferredGeminiTier || 'smart';
+    const tier = STATE.preferredGeminiTier || 'fast';
     const ans = await callGemini(fullPrompt, tier);
     const wasFallback = Boolean(STATE.lastGeminiFallback && STATE.lastGeminiFallback.usedModel);
     const fallbackNote = wasFallback
@@ -6438,8 +6483,13 @@ function renderCoachChat() {
         color: var(--accent);
         font-size: 13px;
         border: 1px dashed var(--accent);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        animation: coachPulse 1.2s infinite ease-in-out;
       ">
-        ⏳ Trener analizuje i pisze odpowiedź w tym wątku... (możesz w tym czasie przełączyć się na inny czat)
+        <span style="font-size: 16px;">⚡</span>
+        <span>Trener analizuje Twoje dane i generuje odpowiedź...</span>
       </div>
     </div>
   ` : '';
@@ -6610,6 +6660,8 @@ async function testApiKeysConnection() {
         clearTimeout(timeoutId);
 
         if (res.ok) {
+          delete (STATE.keyCooldowns || {})[key];
+          STATE.lastWorkingKey = key;
           const quotaNote = quotaHit ? ' <span style="font-size: 11px; color: #ffb74d;">(Flash osiągnął limit, ale Flash-Lite ma 500 zapytań/dzień!)</span>' : '';
           return {
             label,
@@ -6648,6 +6700,7 @@ async function testApiKeysConnection() {
     }
 
     if (quotaHit) {
+      (STATE.keyCooldowns = STATE.keyCooldowns || {})[key] = Date.now() + (30 * 60 * 1000);
       return {
         label,
         ok: false,
