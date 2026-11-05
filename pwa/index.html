@@ -1312,12 +1312,15 @@
 
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; background: var(--surface-elevated); padding: 10px; border-radius: 10px; border: 1px solid var(--border);">
         <div>
-          <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">⏱️ Przerwa główna / po SS (s)</label>
-          <input type="number" step="5" id="modal-plan-rest" class="input-box" value="90" title="Przerwa między seriami pojedynczych ćwiczeń oraz po pełnym obwodzie superserii">
+          <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">⏱️ Domyślna przerwa w planie (s)</label>
+          <input type="number" step="5" id="modal-plan-rest" class="input-box" value="90" title="Domyślna przerwa między seriami pojedynczych ćwiczeń oraz po pełnym obwodzie superserii">
         </div>
         <div>
-          <label style="font-size: 11px; color: var(--accent); display: block; margin-bottom: 4px;">⚡ Krótka przerwa w SS (s)</label>
-          <input type="number" step="5" id="modal-plan-ss-rest" class="input-box" value="30" title="Krótka przerwa przy przejściu między ćwiczeniami wewnątrz superserii">
+          <label style="font-size: 11px; color: var(--accent); display: block; margin-bottom: 4px;">⚡ Domyślna krótka w SS (s)</label>
+          <input type="number" step="5" id="modal-plan-ss-rest" class="input-box" value="30" title="Domyślna krótka przerwa przy przejściu między ćwiczeniami wewnątrz superserii">
+        </div>
+        <div style="grid-column: 1 / -1; font-size: 10px; color: var(--text-muted); margin-top: -2px;">
+          💡 Wskazówka: Możesz też ustawić indywidualny czas odpoczynku dla każdego konkretnego ćwiczenia lub superserii poniżej!
         </div>
       </div>
 
@@ -1394,6 +1397,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=33"></script>
+  <script src="app.js?v=34"></script>
 </body>
 </html>

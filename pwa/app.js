@@ -1186,7 +1186,7 @@ function renderPlans() {
                 ${ssTag}${escapeHtml(ex.name)}
               </div>
               <div style="font-size: 10px; color: ${hasGif ? 'var(--success)' : 'var(--text-muted)'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                ${ex.sets || 3}×${ex.reps || 10} (${loadInfo}) • ${hasGif ? `🎬 ${escapeHtml(gifName || 'Przypisany GIF')}` : '⚠️ Brak GIFa'}
+                ${ex.sets || 3}×${ex.reps || 10} (${loadInfo})${ex.restSeconds ? ` • ⏱️ ${ex.restSeconds}s` : ''}${ex.supersetRestSeconds ? ` • ⚡ ${ex.supersetRestSeconds}s` : ''} • ${hasGif ? `🎬 ${escapeHtml(gifName || 'Przypisany GIF')}` : '⚠️ Brak GIFa'}
               </div>
             </div>
           </div>
@@ -1703,6 +1703,8 @@ function startWorkout(planId) {
       muscle: ex.muscle || 'Inne',
       supersetGroup: ex.supersetGroup || '',
       loadType: loadType,
+      restSeconds: parseInt(ex.restSeconds) || null,
+      supersetRestSeconds: parseInt(ex.supersetRestSeconds) || null,
       gifSlug: ex.gifSlug || (matchedGif ? matchedGif.s : ''),
       gifUrl: ex.gifUrl || (matchedGif ? matchedGif.g : ''),
       gifName: ex.gifName || (matchedGif ? matchedGif.n : ''),
@@ -2009,7 +2011,9 @@ function renderSupersetGroupCard(groupMembers, ssGroup, restSS, restMain) {
       <div class="superset-group-header" style="flex-direction: column; align-items: stretch; gap: 8px; margin-bottom: 10px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <span style="font-size: 14px; font-weight: 800; color: var(--accent);">🔗 SUPERSERIA ${escapeHtml(ssGroup)} (${exCount} ćwiczenia na przemian)</span>
-          <span class="badge" style="background: rgba(0,229,255,0.14); color: var(--accent); font-size: 10px;">⏱️ ${restSS}s w SS / ⏱️ ${restMain}s obwód</span>
+          <button type="button" class="badge" style="background: rgba(0,229,255,0.14); color: var(--accent); border: 1px solid rgba(0,229,255,0.3); font-size: 10px; cursor: pointer; padding: 3px 8px; border-radius: 999px;" onclick="promptChangeSupersetRest('${escapeHtml(ssGroup)}')" title="Kliknij, aby zmienić czasy przerw dla tej superserii">
+            ⏱️ ${groupMembers.find(m => parseInt(m.item.supersetRestSeconds) > 0)?.item.supersetRestSeconds || restSS}s w SS / ⏱️ ${groupMembers.find(m => parseInt(m.item.restSeconds) > 0)?.item.restSeconds || restMain}s obwód ✏️
+          </button>
         </div>
         <div style="display: flex; gap: 6px; flex-wrap: wrap;">
           ${headerQuickGifs}
@@ -2126,6 +2130,9 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
                 ${loadBadgeHtml}
                 ${nextBadge}
                 ${progBadgeHtml}
+                <button type="button" class="badge" style="background: rgba(0, 230, 118, 0.12); color: var(--success); border: 1px solid rgba(0, 230, 118, 0.35); font-size: 10px; cursor: pointer; padding: 2px 7px; border-radius: 999px;" onclick="promptChangeExerciseRest(${exIdx})" title="Kliknij, aby zmienić czas odpoczynku dla tego ćwiczenia">
+                  ⏱️ Odpoczynek: ${parseInt(ex.restSeconds || STATE.activeWorkout.restSeconds) || 90}s ✏️
+                </button>
               </div>
             </div>
           </div>
@@ -2258,6 +2265,48 @@ function toggleBodyweightExtraLoad(exIdx, enable) {
   saveActiveWorkout();
   renderActiveExercises();
   updateWorkoutStats();
+}
+
+function promptChangeExerciseRest(exIdx) {
+  if (!STATE.activeWorkout) return;
+  const ex = STATE.activeWorkout.exercises[exIdx];
+  if (!ex) return;
+  const cur = parseInt(ex.restSeconds || STATE.activeWorkout.restSeconds) || 90;
+  const input = prompt(`⏱️ Czas odpoczynku po serii dla ćwiczenia:\n"${ex.name}"\n\nPodaj czas w sekundach (np. 45, 60, 90, 120, 180):`, cur);
+  if (input === null) return;
+  const parsed = parseInt(input);
+  if (parsed > 0) {
+    ex.restSeconds = parsed;
+    saveActiveWorkout();
+    renderActiveExercises();
+  }
+}
+
+function promptChangeSupersetRest(ssGroup) {
+  if (!STATE.activeWorkout) return;
+  const groupMembers = STATE.activeWorkout.exercises.filter(
+    item => (item.supersetGroup || '').trim() === ssGroup
+  );
+  if (groupMembers.length === 0) return;
+
+  const curMain = groupMembers.find(m => parseInt(m.restSeconds) > 0)?.restSeconds || STATE.activeWorkout.restSeconds || 90;
+  const curShort = groupMembers.find(m => parseInt(m.supersetRestSeconds) > 0)?.supersetRestSeconds || STATE.activeWorkout.supersetRestSeconds || 30;
+
+  const inputMain = prompt(`⏱️ Dłuższy odpoczynek PO CAŁYM OBWODZIE dla Superserii ${ssGroup}:\n\nPodaj czas w sekundach (np. 60, 90, 120):`, curMain);
+  if (inputMain === null) return;
+  const parsedMain = parseInt(inputMain);
+
+  const inputShort = prompt(`⚡ Krótki odpoczynek MIĘDZY ĆWICZENIAMI wewnątrz Superserii ${ssGroup}:\n\nPodaj czas w sekundach (np. 15, 30, 45):`, curShort);
+  if (inputShort === null) return;
+  const parsedShort = parseInt(inputShort);
+
+  groupMembers.forEach(m => {
+    if (parsedMain > 0) m.restSeconds = parsedMain;
+    if (parsedShort > 0) m.supersetRestSeconds = parsedShort;
+  });
+
+  saveActiveWorkout();
+  renderActiveExercises();
 }
 
 function getEffectiveSetWeight(ex, set) {
@@ -2472,14 +2521,21 @@ function toggleSetComplete(exIdx, sIdx) {
 
     if (navigator.vibrate) navigator.vibrate(50);
 
-    const mainRest = parseInt(ex.restSeconds || STATE.activeWorkout.restSeconds) || 90;
-    const shortRest = parseInt(ex.supersetRestSeconds || STATE.activeWorkout.supersetRestSeconds) || 30;
+    let mainRest = parseInt(ex.restSeconds || STATE.activeWorkout.restSeconds) || 90;
+    let shortRest = parseInt(ex.supersetRestSeconds || STATE.activeWorkout.supersetRestSeconds) || 30;
 
     if (ssGroup) {
       // Find all exercises belonging to this superset
       const groupMembers = STATE.activeWorkout.exercises
         .map((item, idx) => ({ item, idx }))
         .filter(entry => (entry.item.supersetGroup || '').trim() === ssGroup);
+
+      // Check if this superset group has custom rest times defined on any member
+      const memberWithMain = groupMembers.find(m => parseInt(m.item.restSeconds) > 0);
+      if (memberWithMain) mainRest = parseInt(memberWithMain.item.restSeconds);
+
+      const memberWithShort = groupMembers.find(m => parseInt(m.item.supersetRestSeconds) > 0);
+      if (memberWithShort) shortRest = parseInt(memberWithShort.item.supersetRestSeconds);
 
       // Check if inside THIS round (sIdx) there is still an incomplete exercise
       const incompleteInSameRound = groupMembers.find(
@@ -3250,6 +3306,8 @@ function saveParsedPlan() {
           weight: parseFloat(ex.weight) || 0,
           supersetGroup: ex.supersetGroup || '',
           loadType: ex.loadType || 'standard',
+          restSeconds: parseInt(ex.restSeconds) || null,
+          supersetRestSeconds: parseInt(ex.supersetRestSeconds) || null,
           gifSlug: ex.gifSlug || (matchedGif ? matchedGif.s : ''),
           gifUrl: ex.gifUrl || (matchedGif ? matchedGif.g : ''),
           gifName: ex.gifName || (matchedGif ? matchedGif.n : '')
@@ -3312,6 +3370,17 @@ function closePlanModal() {
   modal.style.display = 'none';
 }
 
+function handleModalSsChange(selectEl) {
+  const row = selectEl.closest('.modal-ex-row');
+  if (!row) return;
+  const isSs = Boolean(selectEl.value);
+  const ssBox = row.querySelector('.modal-ex-ss-rest-box');
+  const restLabel = row.querySelector('.modal-ex-rest-label');
+  if (ssBox) ssBox.style.display = isSs ? 'flex' : 'none';
+  if (restLabel) restLabel.textContent = isSs ? '⏱️ Po obwodzie:' : '⏱️ Odpoczynek:';
+  row.dataset.manualEdited = '1';
+}
+
 function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, supersetGroup = '', loadType = 'standard', exObj = null) {
   const listEl = document.getElementById('modal-exercises-list');
   const row = document.createElement('div');
@@ -3322,6 +3391,9 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
   const initSlug = (exObj && exObj.gifSlug) || (matchedGif ? matchedGif.s : '');
   const initUrl = (exObj && exObj.gifUrl) || (matchedGif ? matchedGif.g : '');
   const initGifName = (exObj && exObj.gifName) || (matchedGif ? matchedGif.n : '');
+
+  const exRest = (exObj && exObj.restSeconds) ? parseInt(exObj.restSeconds) : '';
+  const exSSRest = (exObj && exObj.supersetRestSeconds) ? parseInt(exObj.supersetRestSeconds) : '';
 
   if (initSlug) row.dataset.gifSlug = initSlug;
   if (initUrl) row.dataset.gifUrl = initUrl;
@@ -3378,7 +3450,7 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
     </div>
 
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;">
-      <select class="input-box modal-ex-ss" style="font-size: 11px; padding: 6px 4px; color: var(--accent);">
+      <select class="input-box modal-ex-ss" style="font-size: 11px; padding: 6px 4px; color: var(--accent);" onchange="handleModalSsChange(this)">
         ${ssOptions.map(o => `<option value="${o.val}" ${supersetGroup === o.val ? 'selected' : ''}>${o.label}</option>`).join('')}
       </select>
       <select class="input-box modal-ex-loadtype" style="font-size: 11px; padding: 6px 4px; color: var(--primary);" onchange="handleModalLoadTypeChange(this)">
@@ -3401,6 +3473,20 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
       <div class="modal-bw-add-container" style="${hideWeightBox ? 'display: flex;' : 'display: none;'} flex-direction: column; align-items: center; justify-content: center;">
         <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 6px 8px; width: 100%; color: var(--primary);" onclick="enableModalBwExtraWeight(this)">➕ Dołóż ciężar</button>
         <span style="font-size: 9px; color: var(--success); display: block; text-align: center; margin-top: 2px;">MASA CIAŁA</span>
+      </div>
+    </div>
+
+    <!-- Dedicated Rest Customization Bar for this exercise/superset -->
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; padding: 5px 8px; background: rgba(0,0,0,0.22); border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); flex-wrap: wrap;">
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <span class="modal-ex-rest-label" style="font-size: 11px; color: #b9f6ca; font-weight: 700; white-space: nowrap;">${supersetGroup ? '⏱️ Po obwodzie:' : '⏱️ Odpoczynek:'}</span>
+        <input type="number" step="5" class="input-box modal-ex-rest" style="font-size: 12px; padding: 4px 6px; width: 75px; text-align: center;" placeholder="z planu" value="${exRest}" title="Własny czas odpoczynku po serii (lub po pełnym obwodzie) w sekundach. Puste = domyślny z planu." oninput="this.closest('.modal-ex-row').dataset.manualEdited='1'">
+        <span style="font-size: 10px; color: var(--text-muted); white-space: nowrap;">s (puste = z planu)</span>
+      </div>
+      <div class="modal-ex-ss-rest-box" style="display: ${supersetGroup ? 'flex' : 'none'}; align-items: center; gap: 4px;">
+        <span style="font-size: 11px; color: var(--accent); font-weight: 700; white-space: nowrap;">⚡ W SS:</span>
+        <input type="number" step="5" class="input-box modal-ex-ss-rest" style="font-size: 12px; padding: 4px 6px; width: 65px; text-align: center;" placeholder="z planu" value="${exSSRest}" title="Własny krótki odpoczynek wewnątrz superserii w sekundach" oninput="this.closest('.modal-ex-row').dataset.manualEdited='1'">
+        <span style="font-size: 10px; color: var(--text-muted);">s</span>
       </div>
     </div>
   `;
@@ -3483,6 +3569,8 @@ function saveModalPlan() {
     const isWeightHidden = weightContainer && weightContainer.style.display === 'none';
     const weight = isWeightHidden ? 0 : (parseFloat(r.querySelector('.modal-ex-weight').value) || 0);
     const supersetGroup = r.querySelector('.modal-ex-ss').value || '';
+    const customRest = parseInt(r.querySelector('.modal-ex-rest')?.value) || null;
+    const customSsRest = parseInt(r.querySelector('.modal-ex-ss-rest')?.value) || null;
 
     if (exName) {
       const existingGifObj = {
@@ -3515,6 +3603,8 @@ function saveModalPlan() {
         weight,
         supersetGroup,
         loadType,
+        restSeconds: customRest,
+        supersetRestSeconds: customSsRest,
         muscle: (matched && matched.m) || 'Ogólne',
         gifSlug,
         gifUrl,
