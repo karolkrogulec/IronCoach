@@ -751,27 +751,31 @@
         </div>
       </div>
 
-      <!-- SUB-VIEW 2: FITDAYS SCALE REPORT -->
+      <!-- SUB-VIEW 2: FITDAYS SCALE & MULTI-FILE SMART IMPORTER -->
       <div id="body-subview-scale" style="display: none;">
         <div class="card" style="border-color: rgba(0, 229, 255, 0.35);">
           <div class="card-title">
-            <span>⚖️ Parametry z Wagi (Fitdays)</span>
-            <span class="badge badge-cyan">Gemini Vision</span>
+            <span>⚖️ Smart Import Wagi i Proporcji</span>
+            <span class="badge badge-cyan">Multi-Plik AI</span>
           </div>
           <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 12px;">
-            Wgraj zrzut ekranu / zdjęcie lub PDF z aplikacji wagi. AI odczyta wszystkie 21 wskaźników oraz analizę segmentową kończyn.
+            Możesz zaznaczyć i wrzucić <b>kilka zdjęć, zrzutów ekranu, plików PDF lub CSV naraz</b> (np. 3 części długiego raportu z wagi lub osobno wagę i obwody). Aplikacja automatycznie:
+            <br>• <b>poskłada części z tego samego dnia w jeden kompletny raport</b>,
+            <br>• <b>wykryje i pominie duplikaty</b>, jeśli wrzucisz to samo dwa razy.
           </p>
 
           <div style="display: flex; gap: 8px; margin-bottom: 12px;">
             <button class="btn btn-accent" onclick="document.getElementById('scale-file-input').click()">
-              📥 Importuj raport z wagi (Zdjęcie / PDF / CSV)
+              📥 Wgraj 1 lub kilka plików (Zdjęcia / PDF / CSV)
             </button>
-            <input type="file" id="scale-file-input" style="display: none;" accept="image/*,.pdf,.csv,.txt" onchange="importScaleReportFile(event)">
+            <input type="file" id="scale-file-input" style="display: none;" multiple accept="image/*,.pdf,.csv,.txt,.json" onchange="importScaleReportFile(event)">
           </div>
 
           <div id="scale-import-loading" style="display: none; text-align: center; padding: 14px; color: var(--accent); background: var(--surface-elevated); border-radius: 10px; margin-bottom: 12px;">
-            ⏳ Gemini Vision odczytuje wszystkie parametry i analizę segmentową z raportu wagi...
+            ⏳ Gemini Pro analizuje przesłane pliki, składa dane z tych samych dni i sprawdza duplikaty...
           </div>
+
+          <div id="scale-import-summary" style="display: none; padding: 10px 12px; border-radius: 10px; background: rgba(0, 230, 118, 0.1); border: 1px solid rgba(0, 230, 118, 0.35); color: var(--text); font-size: 12px; margin-bottom: 12px; line-height: 1.5;"></div>
 
           <div id="scale-latest-report-container"></div>
         </div>
@@ -782,9 +786,149 @@
         <div class="card">
           <div class="card-title">
             <span>📜 Historia Pomiarów Ciała</span>
+            <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 8px; color: var(--accent);" onclick="manualConsolidateMeasurements()">🧩 Scal dni i usuń duplikaty</button>
           </div>
           <div id="body-history-list"></div>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VIEW: NUTRITION & CALORIE DIARY (AI PHOTO MEAL ANALYZER) -->
+  <section id="view-nutrition" class="view">
+    <div class="container">
+      <!-- 1. Date Navigator & Daily Calorie/Macro Summary Card -->
+      <div class="card" style="padding: 14px; border-color: rgba(0, 230, 118, 0.35);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 6px;">
+          <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 10px; font-size: 12px;" onclick="changeNutritionDay(-1)">◀</button>
+          <div style="text-align: center; flex: 1;">
+            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Dziennik Żywieniowy</div>
+            <div id="nutrition-date-label" style="font-size: 15px; font-weight: 800; color: var(--text);">Dzisiaj</div>
+          </div>
+          <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 10px; font-size: 12px;" onclick="changeNutritionDay(1)">▶</button>
+          <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 10px; font-size: 11px; color: var(--primary); border-color: rgba(255,179,0,0.35);" onclick="toggleNutritionGoalsDrawer()">🎯 Cel</button>
+        </div>
+
+        <!-- Collapsible Calorie & Macro Goal Editor -->
+        <div id="nutrition-goals-drawer" style="display: none; background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 6px; flex-wrap: wrap;">
+            <span style="font-size: 13px; font-weight: 800; color: var(--primary);">🎯 Twój Dzienny Cel Kalorii i Makro</span>
+            <button type="button" class="btn btn-sm btn-accent" style="font-size: 11px; padding: 4px 10px;" onclick="calculateNutritionGoalsWithAI()">🤖 Wylicz przez AI</button>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px;">
+            <div>
+              <label style="font-size: 10px; color: var(--text-muted); display: block; margin-bottom: 2px;">KCAL</label>
+              <input type="number" step="50" id="goal-kcal-input" class="input-box" style="font-size: 13px; padding: 6px;" placeholder="2500">
+            </div>
+            <div>
+              <label style="font-size: 10px; color: var(--accent); display: block; margin-bottom: 2px;">BIAŁKO (g)</label>
+              <input type="number" step="5" id="goal-protein-input" class="input-box" style="font-size: 13px; padding: 6px;" placeholder="180">
+            </div>
+            <div>
+              <label style="font-size: 10px; color: var(--primary); display: block; margin-bottom: 2px;">WĘGLE (g)</label>
+              <input type="number" step="5" id="goal-carbs-input" class="input-box" style="font-size: 13px; padding: 6px;" placeholder="260">
+            </div>
+            <div>
+              <label style="font-size: 10px; color: var(--success); display: block; margin-bottom: 2px;">TŁUSZCZ (g)</label>
+              <input type="number" step="5" id="goal-fat-input" class="input-box" style="font-size: 13px; padding: 6px;" placeholder="75">
+            </div>
+          </div>
+          <button type="button" class="btn btn-sm btn-primary" style="width: 100%; padding: 8px;" onclick="saveNutritionGoals()">💾 Zapisz Cel Kalorii i Makro</button>
+        </div>
+
+        <!-- Daily Progress Bars -->
+        <div id="nutrition-daily-progress"></div>
+      </div>
+
+      <!-- 2. AI Photo Camera & High-Model Meal Estimator -->
+      <div class="card" style="padding: 14px;">
+        <div class="card-title" style="margin-bottom: 8px;">
+          <span>📸 Dodaj Posiłek (Analiza Zdjęcia AI)</span>
+          <span id="nutrition-model-badge" class="badge badge-cyan">Gemini Pro Vision</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 10px;">
+          Zrób zdjęcie talerza aparatem lub wgraj z galerii (możesz też dodać zdjęcie etykiety). Wysoki model Gemini Pro oszacuje gramaturę, kalorie i makroskładniki.
+        </p>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+          <button type="button" class="btn btn-primary" style="padding: 10px 8px; font-size: 13px;" onclick="document.getElementById('meal-camera-input').click()">
+            📸 Zrób zdjęcie
+          </button>
+          <button type="button" class="btn btn-secondary" style="padding: 10px 8px; font-size: 13px; color: var(--accent); border-color: rgba(0,229,255,0.35);" onclick="document.getElementById('meal-gallery-input').click()">
+            🖼️ Z galerii (1 lub kilka)
+          </button>
+          <input type="file" id="meal-camera-input" style="display: none;" accept="image/*" capture="environment" onchange="handleMealPhotosSelected(event)">
+          <input type="file" id="meal-gallery-input" style="display: none;" accept="image/*" multiple onchange="handleMealPhotosSelected(event)">
+        </div>
+
+        <!-- Selected Photos Preview Strip -->
+        <div id="meal-photos-preview" style="display: none; gap: 8px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 8px;"></div>
+
+        <!-- Optional Description / Context Input -->
+        <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+          <input type="text" id="meal-desc-input" class="input-box" style="text-align: left; font-size: 13px; flex: 1;" placeholder="Opcjonalny opis (np. 200g kurczaka, sos jogurtowy — lub sam opis bez zdjęcia)">
+        </div>
+
+        <div style="display: flex; gap: 8px;">
+          <button type="button" id="analyze-meal-btn" class="btn btn-accent" style="flex: 2; padding: 10px; font-size: 13px;" onclick="analyzeMealWithHighModel()">
+            🧠 Oszacuj Kalorie i Makro przez AI
+          </button>
+          <button type="button" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 12px;" onclick="openManualMealEditor()">
+            ✍️ Wpisz ręcznie
+          </button>
+        </div>
+
+        <div id="meal-ai-loading" style="display: none; text-align: center; padding: 14px; color: var(--accent); background: var(--surface-elevated); border-radius: 10px; margin-top: 10px;">
+          ⏳ Wysoki model Gemini Pro analizuje posiłek, szacuje gramaturę składników i wylicza makro...
+        </div>
+
+        <!-- Editable AI Meal Preview / Manual Entry Box -->
+        <div id="meal-editor-box" style="display: none; background: var(--surface-elevated); border: 1px solid var(--accent); border-radius: 12px; padding: 12px; margin-top: 12px;">
+          <div style="font-size: 12px; font-weight: 800; color: var(--accent); margin-bottom: 6px;" id="meal-editor-header">✨ Oszacowanie AI (możesz skorygować przed zapisem):</div>
+          <input type="text" id="edit-meal-name" class="input-box" style="text-align: left; font-size: 14px; margin-bottom: 8px;" placeholder="Nazwa posiłku (np. Kurczak z ryżem i brokułami)">
+          <div id="edit-meal-ingredients" style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px; line-height: 1.4;"></div>
+
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px;">
+            <div>
+              <label style="font-size: 9px; color: var(--text-muted); display: block; text-align: center;">KCAL</label>
+              <input type="number" id="edit-meal-kcal" class="input-box" style="font-size: 13px; padding: 6px;">
+            </div>
+            <div>
+              <label style="font-size: 9px; color: var(--accent); display: block; text-align: center;">BIAŁKO (g)</label>
+              <input type="number" step="0.5" id="edit-meal-protein" class="input-box" style="font-size: 13px; padding: 6px;">
+            </div>
+            <div>
+              <label style="font-size: 9px; color: var(--primary); display: block; text-align: center;">WĘGLE (g)</label>
+              <input type="number" step="0.5" id="edit-meal-carbs" class="input-box" style="font-size: 13px; padding: 6px;">
+            </div>
+            <div>
+              <label style="font-size: 9px; color: var(--success); display: block; text-align: center;">TŁUSZCZ (g)</label>
+              <input type="number" step="0.5" id="edit-meal-fat" class="input-box" style="font-size: 13px; padding: 6px;">
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 8px;">
+            <button type="button" class="btn btn-sm btn-primary" style="flex: 2; padding: 9px;" onclick="saveEditedMealToDiary()">✅ Dodaj do Dziennika</button>
+            <button type="button" class="btn btn-sm btn-secondary" style="flex: 1; padding: 9px;" onclick="closeMealEditorBox()">Anuluj</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Today's Logged Meals List -->
+      <div class="card" style="padding: 14px;">
+        <div class="card-title" style="margin-bottom: 10px;">
+          <span>🍽️ Posiłki w wybranym dniu</span>
+          <span id="nutrition-meals-count" class="badge">0 posiłków</span>
+        </div>
+        <div id="nutrition-meals-list"></div>
+      </div>
+
+      <!-- 4. Recent Days Calorie & Macro History -->
+      <div class="card" style="padding: 14px;">
+        <div class="card-title" style="margin-bottom: 10px;">
+          <span>📅 Historia Dziennika (Ostatnie Dni)</span>
+        </div>
+        <div id="nutrition-days-history"></div>
       </div>
     </div>
   </section>
@@ -866,11 +1010,15 @@
     </div>
   </section>
 
-  <!-- Bottom Nav (4 Balanced Daily Tabs) -->
+  <!-- Bottom Nav (5 Balanced Daily Tabs) -->
   <nav class="bottom-nav">
     <button class="nav-item active" onclick="showView('home')">
       <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
       Trening
+    </button>
+    <button class="nav-item" onclick="showView('nutrition')">
+      <svg viewBox="0 0 24 24"><path d="M18 8h1a4 4 0 0 1 0 8h-1"></path><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path><line x1="6" y1="1" x2="6" y2="4"></line><line x1="10" y1="1" x2="10" y2="4"></line><line x1="14" y1="1" x2="14" y2="4"></line></svg>
+      Dieta
     </button>
     <button class="nav-item" onclick="showView('body')">
       <svg viewBox="0 0 24 24"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>
@@ -981,6 +1129,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=23"></script>
+  <script src="app.js?v=24"></script>
 </body>
 </html>

@@ -38,7 +38,18 @@ const STATE = {
     goalNotes: ''
   },
   bodyMeasurements: JSON.parse(localStorage.getItem('iron_body_measurements')) || [],
-  selectedBodyMeasurementId: null
+  selectedBodyMeasurementId: null,
+  nutritionGoals: JSON.parse(localStorage.getItem('iron_nutrition_goals')) || {
+    kcal: 2500,
+    proteinG: 180,
+    carbsG: 260,
+    fatG: 75
+  },
+  nutritionDiary: JSON.parse(localStorage.getItem('iron_nutrition_diary')) || [],
+  selectedNutritionDate: new Date().toISOString().slice(0, 10),
+  pendingMealPhotos: [],
+  editingMealId: null,
+  lastUsedGeminiModel: ''
 };
 
 // Initialize
@@ -47,6 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
   checkSharedParams();
   loadApiKey();
   initBodyMeasurements();
+  initNutritionView();
   loadUserProfile();
   loadExerciseGifsDatabase();
   renderPlans();
@@ -1038,7 +1050,7 @@ function showView(viewName) {
   const target = document.getElementById(`view-${viewName}`);
   if (target) target.classList.add('active');
 
-  const navMap = { 'home': 0, 'body': 1, 'analysis': 2, 'coach': 3 };
+  const navMap = { 'home': 0, 'nutrition': 1, 'body': 2, 'analysis': 3, 'coach': 4 };
   const navBtns = document.querySelectorAll('.bottom-nav .nav-item');
   if (navMap[viewName] !== undefined && navBtns[navMap[viewName]]) {
     navBtns[navMap[viewName]].classList.add('active');
@@ -1046,6 +1058,8 @@ function showView(viewName) {
 
   if (viewName === 'home') {
     renderHomeKpis();
+  } else if (viewName === 'nutrition') {
+    renderNutritionView();
   } else if (viewName === 'body') {
     renderBodyMeasurementsView();
   } else if (viewName === 'analysis') {
@@ -2056,7 +2070,7 @@ async function finishCurrentWorkout() {
 }
 
 // ============================================================================
-// GEMINI AI INTEGRATION (Supports Text & Multimodal Image/PDF)
+// GEMINI AI INTEGRATION (Supports Text & Multi-Image/PDF Multimodal Requests)
 // ============================================================================
 async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
   const key = STATE.apiKey.trim();
@@ -2079,10 +2093,28 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
     console.error('List models failed', e);
   }
 
+  const scoreSmartModel = (name) => {
+    const n = name.toLowerCase();
+    if (n.includes('2.5-pro')) return 100;
+    if (n.includes('2.0-pro')) return 95;
+    if (n.includes('1.5-pro-latest')) return 90;
+    if (n.includes('1.5-pro')) return 85;
+    if (n.includes('pro') && !n.includes('flash')) return 80;
+    if (n.includes('2.5-flash')) return 70;
+    if (n.includes('2.0-flash')) return 65;
+    if (n.includes('1.5-flash')) return 60;
+    if (n.includes('flash')) return 50;
+    return 10;
+  };
+
   let modelsToTry = [];
   if (availableModels.length > 0) {
-    const proModels = availableModels.filter(m => m.includes('pro') && !m.includes('flash'));
-    const flashModels = availableModels.filter(m => m.includes('flash'));
+    const proModels = availableModels
+      .filter(m => m.includes('pro') && !m.includes('flash'))
+      .sort((a, b) => scoreSmartModel(b) - scoreSmartModel(a));
+    const flashModels = availableModels
+      .filter(m => m.includes('flash'))
+      .sort((a, b) => scoreSmartModel(b) - scoreSmartModel(a));
     const others = availableModels.filter(m => !m.includes('flash') && !m.includes('pro'));
 
     if (preferredTier === 'smart') {
@@ -2092,12 +2124,23 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
     }
   } else {
     modelsToTry = preferredTier === 'smart'
-      ? ['gemini-1.5-pro-latest', 'gemini-1.5-pro', 'gemini-1.5-flash-latest']
-      : ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-1.5-pro-latest'];
+      ? ['gemini-2.5-pro', 'gemini-1.5-pro-latest', 'gemini-1.5-pro', 'gemini-2.5-flash', 'gemini-1.5-flash-latest']
+      : ['gemini-2.5-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-1.5-pro-latest'];
   }
 
   const parts = [{ text: prompt }];
-  if (inlineData && inlineData.data && inlineData.mimeType) {
+  if (Array.isArray(inlineData)) {
+    inlineData.forEach(item => {
+      if (item && item.data && item.mimeType) {
+        parts.push({
+          inlineData: {
+            mimeType: item.mimeType,
+            data: item.data
+          }
+        });
+      }
+    });
+  } else if (inlineData && inlineData.data && inlineData.mimeType) {
     parts.push({
       inlineData: {
         mimeType: inlineData.mimeType,
@@ -2122,7 +2165,14 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
       if (response.ok) {
         const data = await response.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) return text;
+        if (text) {
+          STATE.lastUsedGeminiModel = model;
+          const modelBadge = document.getElementById('nutrition-model-badge');
+          if (modelBadge && preferredTier === 'smart') {
+            modelBadge.textContent = `🤖 ${model}`;
+          }
+          return text;
+        }
       } else {
         const err = await response.json().catch(() => ({}));
         lastError = new Error(err.error?.message || `HTTP ${response.status}`);
@@ -2543,8 +2593,206 @@ function saveModalPlan() {
 }
 
 // ============================================================================
-// BODY MEASUREMENTS, FITDAYS SMART SCALE IMPORT, CHARTS & CIRCUMFERENCES
+// BODY MEASUREMENTS, MULTI-FILE SMART IMPORTER, DEDUPLICATION & SAME-DAY MERGE
 // ============================================================================
+const SCALAR_BODY_KEYS = [
+  'weightKg', 'bmi', 'bodyFatPct', 'fatMassKg', 'ffmKg', 'muscleMassKg',
+  'muscleRatePct', 'skeletalMusclePct', 'boneMassKg', 'proteinMassKg',
+  'proteinPct', 'waterMassKg', 'bodyWaterPct', 'subcutaneousFatPct',
+  'visceralFat', 'bmrKcal', 'bodyAge', 'whr', 'idealWeightKg',
+  'obesityLevel', 'bodyType',
+  'waistCm', 'beltCm', 'chestCm', 'shouldersCm', 'bicepsCm', 'thighCm'
+];
+
+function getMeasurementDayKey(entry) {
+  if (!entry) return new Date().toISOString().slice(0, 10);
+  if (entry.dayKey && /^\d{4}-\d{2}-\d{2}$/.test(entry.dayKey)) {
+    return entry.dayKey;
+  }
+  if (entry.isoDate && typeof entry.isoDate === 'string') {
+    const mIso = entry.isoDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (mIso) return `${mIso[1]}-${mIso[2]}-${mIso[3]}`;
+  }
+  if (entry.dateLabel && typeof entry.dateLabel === 'string') {
+    const mPl = entry.dateLabel.match(/(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
+    if (mPl) {
+      const dd = mPl[1].padStart(2, '0');
+      const mm = mPl[2].padStart(2, '0');
+      const yyyy = mPl[3];
+      return `${yyyy}-${mm}-${dd}`;
+    }
+    const mIso2 = entry.dateLabel.match(/(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
+    if (mIso2) {
+      return `${mIso2[1]}-${mIso2[2].padStart(2, '0')}-${mIso2[3].padStart(2, '0')}`;
+    }
+  }
+  const ts = entry.timestamp && !isNaN(entry.timestamp) ? entry.timestamp : Date.now();
+  const d = new Date(ts);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function mergeNestedStatusObject(targetObj, sourceObj) {
+  if (!sourceObj || typeof sourceObj !== 'object') return targetObj || null;
+  const out = { ...(targetObj || {}) };
+  Object.keys(sourceObj).forEach(k => {
+    const v = sourceObj[k];
+    if (v != null && v !== '') {
+      out[k] = v;
+    }
+  });
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function mergeSegmentalObject(targetSeg, sourceSeg) {
+  if (!sourceSeg || typeof sourceSeg !== 'object') return targetSeg || null;
+  const out = { ...(targetSeg || {}) };
+  ['leftArm', 'rightArm', 'trunk', 'leftLeg', 'rightLeg'].forEach(limb => {
+    const srcLimb = sourceSeg[limb];
+    if (srcLimb && typeof srcLimb === 'object') {
+      const curLimb = out[limb] || { kg: null, pct: null, status: '' };
+      out[limb] = {
+        kg: srcLimb.kg != null && !isNaN(parseFloat(srcLimb.kg)) ? parseFloat(srcLimb.kg) : curLimb.kg,
+        pct: srcLimb.pct != null && !isNaN(parseFloat(srcLimb.pct)) ? parseFloat(srcLimb.pct) : curLimb.pct,
+        status: srcLimb.status || curLimb.status || ''
+      };
+    }
+  });
+  const hasAny = Object.values(out).some(l => l && (l.kg != null || l.pct != null));
+  return hasAny ? out : null;
+}
+
+function mergeWeightControlObject(targetWc, sourceWc) {
+  if (!sourceWc || typeof sourceWc !== 'object') return targetWc || null;
+  const out = { ...(targetWc || {}) };
+  ['targetWeightKg', 'weightControlKg', 'fatControlKg', 'muscleControlKg'].forEach(k => {
+    if (sourceWc[k] != null && !isNaN(parseFloat(sourceWc[k]))) {
+      out[k] = parseFloat(sourceWc[k]);
+    }
+  });
+  const hasAny = Object.values(out).some(v => v != null);
+  return hasAny ? out : null;
+}
+
+// Upsert and merge a body measurement into STATE.bodyMeasurements by dayKey (YYYY-MM-DD).
+// Returns { status: 'new' | 'merged' | 'duplicate', entry }
+function upsertAndMergeBodyMeasurement(incoming) {
+  if (!incoming) return { status: 'duplicate', entry: null };
+
+  const dayKey = getMeasurementDayKey(incoming);
+  incoming.dayKey = dayKey;
+
+  const existing = STATE.bodyMeasurements.find(m => getMeasurementDayKey(m) === dayKey);
+  if (!existing) {
+    STATE.bodyMeasurements.unshift(incoming);
+    return { status: 'new', entry: incoming };
+  }
+
+  let addedOrChangedAnyField = false;
+
+  // Check scalar keys
+  SCALAR_BODY_KEYS.forEach(k => {
+    const incVal = incoming[k];
+    if (incVal != null && incVal !== '') {
+      if (existing[k] == null || existing[k] === '') {
+        existing[k] = incVal;
+        addedOrChangedAnyField = true;
+      } else if (String(existing[k]) !== String(incVal)) {
+        existing[k] = incVal;
+        addedOrChangedAnyField = true;
+      }
+    }
+  });
+
+  // Check nested statuses
+  if (incoming.statuses && typeof incoming.statuses === 'object') {
+    const beforeJson = JSON.stringify(existing.statuses || {});
+    existing.statuses = mergeNestedStatusObject(existing.statuses, incoming.statuses);
+    if (JSON.stringify(existing.statuses || {}) !== beforeJson) {
+      addedOrChangedAnyField = true;
+    }
+  }
+
+  // Check segmentalFat
+  if (incoming.segmentalFat && typeof incoming.segmentalFat === 'object') {
+    const beforeJson = JSON.stringify(existing.segmentalFat || {});
+    existing.segmentalFat = mergeSegmentalObject(existing.segmentalFat, incoming.segmentalFat);
+    if (JSON.stringify(existing.segmentalFat || {}) !== beforeJson) {
+      addedOrChangedAnyField = true;
+    }
+  }
+
+  // Check segmentalMuscle
+  if (incoming.segmentalMuscle && typeof incoming.segmentalMuscle === 'object') {
+    const beforeJson = JSON.stringify(existing.segmentalMuscle || {});
+    existing.segmentalMuscle = mergeSegmentalObject(existing.segmentalMuscle, incoming.segmentalMuscle);
+    if (JSON.stringify(existing.segmentalMuscle || {}) !== beforeJson) {
+      addedOrChangedAnyField = true;
+    }
+  }
+
+  // Check weightControl
+  if (incoming.weightControl && typeof incoming.weightControl === 'object') {
+    const beforeJson = JSON.stringify(existing.weightControl || {});
+    existing.weightControl = mergeWeightControlObject(existing.weightControl, incoming.weightControl);
+    if (JSON.stringify(existing.weightControl || {}) !== beforeJson) {
+      addedOrChangedAnyField = true;
+    }
+  }
+
+  if (!addedOrChangedAnyField) {
+    return { status: 'duplicate', entry: existing };
+  }
+
+  // Update source label to reflect merged data
+  const hasScaleData = existing.bodyFatPct != null || existing.muscleMassKg != null || existing.bmi != null;
+  const hasCircData = existing.waistCm != null || existing.beltCm != null || existing.chestCm != null || existing.bicepsCm != null || existing.thighCm != null || existing.shouldersCm != null;
+  if (hasScaleData && hasCircData) {
+    existing.source = 'Połączono (Waga + Obwody)';
+  } else if (incoming.source && existing.source && !existing.source.includes(incoming.source)) {
+    existing.source = 'Połączony raport dnia';
+  }
+
+  existing.dayKey = dayKey;
+  return { status: 'merged', entry: existing };
+}
+
+// Consolidate any existing same-day entries in STATE.bodyMeasurements
+function consolidateSameDayBodyMeasurements() {
+  if (!Array.isArray(STATE.bodyMeasurements) || STATE.bodyMeasurements.length <= 1) {
+    return { mergedCount: 0, duplicateCount: 0 };
+  }
+
+  // Process oldest to newest so newer values on the same day win
+  const chronological = [...STATE.bodyMeasurements].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  STATE.bodyMeasurements = [];
+
+  let mergedCount = 0;
+  let duplicateCount = 0;
+
+  chronological.forEach(item => {
+    const res = upsertAndMergeBodyMeasurement(item);
+    if (res.status === 'merged') mergedCount++;
+    else if (res.status === 'duplicate') duplicateCount++;
+  });
+
+  STATE.bodyMeasurements.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  localStorage.setItem('iron_body_measurements', JSON.stringify(STATE.bodyMeasurements));
+  return { mergedCount, duplicateCount };
+}
+
+function manualConsolidateMeasurements() {
+  const { mergedCount, duplicateCount } = consolidateSameDayBodyMeasurements();
+  renderBodyMeasurementsView();
+  if (mergedCount === 0 && duplicateCount === 0) {
+    alert('✅ Wszystkie pomiary są już uporządkowane — każdy dzień ma jeden spójny wpis i brak duplikatów.');
+  } else {
+    alert(`🧩 Uporządkowano historię pomiarów!\n• Połączono częściowe pomiary z tego samego dnia: ${mergedCount}\n• Usunięto dokładne duplikaty: ${duplicateCount}`);
+  }
+}
+
 function initBodyMeasurements() {
   if (!Array.isArray(STATE.bodyMeasurements)) {
     STATE.bodyMeasurements = [];
@@ -2564,6 +2812,9 @@ function initBodyMeasurements() {
       loadUserProfile();
     }
   }
+
+  // Automatically consolidate any same-day records or duplicates on startup
+  consolidateSameDayBodyMeasurements();
 
   // Ensure sorted newest first
   STATE.bodyMeasurements.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
@@ -2777,162 +3028,289 @@ function renderLatestScaleReport() {
   `;
 }
 
-// Import Fitdays image/PDF/CSV report using Gemini Vision
+// Helper to resize image files on canvas before sending to Gemini Vision
+async function fileToGeminiInlinePart(file, maxDim = 1500, quality = 0.84) {
+  if (file.type === 'application/pdf') {
+    const base64Data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    return { mimeType: 'application/pdf', data: base64Data };
+  }
+
+  if (file.type.startsWith('image/')) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          let w = img.width;
+          let h = img.height;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          const dataUrl = canvas.toDataURL('image/jpeg', quality);
+          resolve({
+            mimeType: 'image/jpeg',
+            data: dataUrl.split(',')[1] || '',
+            previewDataUrl: dataUrl
+          });
+        };
+        img.onerror = reject;
+        img.src = e.target.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  return null;
+}
+
+function normalizeParsedScaleEntry(parsed, idx = 0) {
+  let parsedTime = Date.now();
+  if (parsed.isoDate) {
+    const t = new Date(parsed.isoDate).getTime();
+    if (!isNaN(t) && t > 946684800000) parsedTime = t;
+  } else if (parsed.dateLabel) {
+    const mPl = String(parsed.dateLabel).match(/(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
+    if (mPl) {
+      const t = new Date(`${mPl[3]}-${mPl[2].padStart(2, '0')}-${mPl[1].padStart(2, '0')}T12:00:00`).getTime();
+      if (!isNaN(t)) parsedTime = t;
+    }
+  }
+
+  const entry = {
+    id: 'scan-' + Date.now() + '-' + idx + '-' + Math.random().toString(36).slice(2, 6),
+    timestamp: parsedTime,
+    isoDate: parsed.isoDate || null,
+    dateLabel: parsed.dateLabel || new Date(parsedTime).toLocaleString('pl-PL'),
+    source: parsed.source || 'AI Multi-Import',
+    weightKg: parseFloat(parsed.weightKg) || null,
+    bmi: parseFloat(parsed.bmi) || null,
+    bodyFatPct: parseFloat(parsed.bodyFatPct) || null,
+    fatMassKg: parseFloat(parsed.fatMassKg) || null,
+    ffmKg: parseFloat(parsed.ffmKg) || null,
+    muscleMassKg: parseFloat(parsed.muscleMassKg) || null,
+    muscleRatePct: parseFloat(parsed.muscleRatePct) || null,
+    skeletalMusclePct: parseFloat(parsed.skeletalMusclePct) || null,
+    boneMassKg: parseFloat(parsed.boneMassKg) || null,
+    proteinMassKg: parseFloat(parsed.proteinMassKg) || null,
+    proteinPct: parseFloat(parsed.proteinPct) || null,
+    waterMassKg: parseFloat(parsed.waterMassKg) || null,
+    bodyWaterPct: parseFloat(parsed.bodyWaterPct) || null,
+    subcutaneousFatPct: parseFloat(parsed.subcutaneousFatPct) || null,
+    visceralFat: parseFloat(parsed.visceralFat) || null,
+    bmrKcal: parseInt(parsed.bmrKcal) || null,
+    bodyAge: parseInt(parsed.bodyAge) || null,
+    whr: parseFloat(parsed.whr) || null,
+    idealWeightKg: parseFloat(parsed.idealWeightKg) || null,
+    obesityLevel: parsed.obesityLevel || null,
+    bodyType: parsed.bodyType || null,
+    statuses: parsed.statuses || null,
+    segmentalFat: parsed.segmentalFat || null,
+    segmentalMuscle: parsed.segmentalMuscle || null,
+    weightControl: parsed.weightControl || null,
+    waistCm: parseFloat(parsed.waistCm) || null,
+    beltCm: parseFloat(parsed.beltCm) || null,
+    chestCm: parseFloat(parsed.chestCm) || null,
+    shouldersCm: parseFloat(parsed.shouldersCm) || null,
+    bicepsCm: parseFloat(parsed.bicepsCm) || null,
+    thighCm: parseFloat(parsed.thighCm) || null
+  };
+  entry.dayKey = getMeasurementDayKey(entry);
+  return entry;
+}
+
+// Import 1 or MULTIPLE Fitdays screenshots, PDFs, CSVs, or circumference notes using Gemini Vision
 async function importScaleReportFile(event) {
-  const file = event.target.files[0];
-  if (!file) return;
+  const files = Array.from(event.target.files || []);
+  if (files.length === 0) return;
 
   const loadingEl = document.getElementById('scale-import-loading');
+  const loadingTextEl = document.getElementById('scale-import-loading-text');
+  const summaryEl = document.getElementById('scale-import-summary');
+
   if (loadingEl) loadingEl.style.display = 'block';
+  if (summaryEl) summaryEl.style.display = 'none';
+  if (loadingTextEl) {
+    loadingTextEl.textContent = `⏳ AI analizuje ${files.length} plik(ów), łączy częściowe zrzuty i wykrywa duplikaty...`;
+  }
+
+  const todayIso = new Date().toISOString().slice(0, 10);
 
   const prompt = `
-Jesteś ekspertem analizy składu ciała. Odczytaj z przesłanego raportu wagi (np. Fitdays) WSZYSTKIE parametry widoczne w dokumencie i zwróć je WYŁĄCZNIE jako poprawny obiekt JSON bez znaczników markdown (jeśli jakiegoś pola nie ma w pliku, wpisz null):
+Jesteś ekspertem analizy składu ciała i antropometrii. Użytkownik przesłał ${files.length} plik(ów) (mogą to być częściowe zrzuty ekranu z aplikacji wagi np. Fitdays, raporty PDF, zdjęcia tabel, notatki z obwodami ciała w cm lub pliki CSV).
+Twoje zadanie:
+1. Odczytaj WSZYSTKIE dane o wadze, składzie ciała (21 parametrów Fitdays + analiza segmentowa + kontrola wagi) ORAZ obwodach ciała w centymetrach (talia, pas, klatka, ramiona/barki, biceps, udo) ze wszystkich załączonych plików.
+2. Jeśli kilka zrzutów ekranu lub plików dotyczy TEGO SAMEGO DNIA (np. jeden zrzut pokazuje górę tabeli Fitdays, drugi dół tabeli lub analizę segmentową, a trzeci obwody z tego samego dnia), POŁĄCZ je od razu w jeden kompletny wpis dla tego dnia!
+3. Jeśli wśród plików jest dokładnie ten sam zrzut wrzucony podwójnie, pomiń duplikat.
+4. Jeśli na którymś zrzucie nie widać daty, użyj daty z pozostałych zrzutów z tej samej serii lub dzisiejszej daty (${todayIso}).
+
+Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown o strukturze:
 {
-  "dateLabel": "DD.MM.YYYY, HH:MM (odczytaj dokładną datę i godzinę z nagłówka dokumentu)",
-  "isoDate": "YYYY-MM-DDTHH:MM:00 (odczytaj z nagłówka dokumentu w formacie ISO)",
-  "weightKg": null,
-  "bmi": null,
-  "bodyFatPct": null,
-  "fatMassKg": null,
-  "ffmKg": null,
-  "muscleMassKg": null,
-  "muscleRatePct": null,
-  "skeletalMusclePct": null,
-  "boneMassKg": null,
-  "proteinMassKg": null,
-  "proteinPct": null,
-  "waterMassKg": null,
-  "bodyWaterPct": null,
-  "subcutaneousFatPct": null,
-  "visceralFat": null,
-  "bmrKcal": null,
-  "bodyAge": null,
-  "whr": null,
-  "idealWeightKg": null,
-  "obesityLevel": null,
-  "bodyType": null,
-  "statuses": {
-    "weightKg": "odczytaj ocenę z prawej kolumny np. Wysoki / Standardowy / Doskonałe / Niski lub pusty string",
-    "bmi": "",
-    "bodyFatPct": "",
-    "fatMassKg": "",
-    "muscleMassKg": "",
-    "muscleRatePct": "",
-    "skeletalMusclePct": "",
-    "boneMassKg": "",
-    "proteinMassKg": "",
-    "proteinPct": "",
-    "waterMassKg": "",
-    "bodyWaterPct": "",
-    "subcutaneousFatPct": "",
-    "visceralFat": "",
-    "bodyAge": "",
-    "whr": ""
-  },
-  "segmentalFat": {
-    "leftArm": { "kg": null, "pct": null, "status": "" },
-    "rightArm": { "kg": null, "pct": null, "status": "" },
-    "trunk": { "kg": null, "pct": null, "status": "" },
-    "leftLeg": { "kg": null, "pct": null, "status": "" },
-    "rightLeg": { "kg": null, "pct": null, "status": "" }
-  },
-  "segmentalMuscle": {
-    "leftArm": { "kg": null, "pct": null, "status": "" },
-    "rightArm": { "kg": null, "pct": null, "status": "" },
-    "trunk": { "kg": null, "pct": null, "status": "" },
-    "leftLeg": { "kg": null, "pct": null, "status": "" },
-    "rightLeg": { "kg": null, "pct": null, "status": "" }
-  },
-  "weightControl": {
-    "targetWeightKg": null,
-    "weightControlKg": null,
-    "fatControlKg": null,
-    "muscleControlKg": null
-  }
-}
-Zwróć wyłącznie czysty JSON z liczbami odczytanymi z załączonego pliku.`;
+  "entries": [
+    {
+      "dateLabel": "DD.MM.YYYY, HH:MM",
+      "isoDate": "YYYY-MM-DDTHH:MM:00",
+      "weightKg": null,
+      "bmi": null,
+      "bodyFatPct": null,
+      "fatMassKg": null,
+      "ffmKg": null,
+      "muscleMassKg": null,
+      "muscleRatePct": null,
+      "skeletalMusclePct": null,
+      "boneMassKg": null,
+      "proteinMassKg": null,
+      "proteinPct": null,
+      "waterMassKg": null,
+      "bodyWaterPct": null,
+      "subcutaneousFatPct": null,
+      "visceralFat": null,
+      "bmrKcal": null,
+      "bodyAge": null,
+      "whr": null,
+      "idealWeightKg": null,
+      "obesityLevel": null,
+      "bodyType": null,
+      "waistCm": null,
+      "beltCm": null,
+      "chestCm": null,
+      "shouldersCm": null,
+      "bicepsCm": null,
+      "thighCm": null,
+      "statuses": {
+        "weightKg": "",
+        "bmi": "",
+        "bodyFatPct": "",
+        "fatMassKg": "",
+        "muscleMassKg": "",
+        "muscleRatePct": "",
+        "skeletalMusclePct": "",
+        "boneMassKg": "",
+        "proteinMassKg": "",
+        "proteinPct": "",
+        "waterMassKg": "",
+        "bodyWaterPct": "",
+        "subcutaneousFatPct": "",
+        "visceralFat": "",
+        "bodyAge": "",
+        "whr": ""
+      },
+      "segmentalFat": {
+        "leftArm": { "kg": null, "pct": null, "status": "" },
+        "rightArm": { "kg": null, "pct": null, "status": "" },
+        "trunk": { "kg": null, "pct": null, "status": "" },
+        "leftLeg": { "kg": null, "pct": null, "status": "" },
+        "rightLeg": { "kg": null, "pct": null, "status": "" }
+      },
+      "segmentalMuscle": {
+        "leftArm": { "kg": null, "pct": null, "status": "" },
+        "rightArm": { "kg": null, "pct": null, "status": "" },
+        "trunk": { "kg": null, "pct": null, "status": "" },
+        "leftLeg": { "kg": null, "pct": null, "status": "" },
+        "rightLeg": { "kg": null, "pct": null, "status": "" }
+      },
+      "weightControl": {
+        "targetWeightKg": null,
+        "weightControlKg": null,
+        "fatControlKg": null,
+        "muscleControlKg": null
+      }
+    }
+  ]
+}`;
 
   try {
-    let rawResponse = '';
-    if (file.type.startsWith('image/') || file.type === 'application/pdf') {
-      const base64Data = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const res = String(reader.result || '');
-          resolve(res.split(',')[1] || '');
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      rawResponse = await callGemini(prompt, 'fast', {
-        mimeType: file.type || 'image/jpeg',
-        data: base64Data
-      });
-    } else {
-      const textContent = await file.text();
-      rawResponse = await callGemini(prompt + '\n\nDane tekstowe z pliku:\n' + textContent, 'fast');
+    const inlineParts = [];
+    const textSnippets = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      if (f.type.startsWith('image/') || f.type === 'application/pdf') {
+        const part = await fileToGeminiInlinePart(f, 1500, 0.84);
+        if (part) inlineParts.push({ mimeType: part.mimeType, data: part.data });
+      } else {
+        const txt = await f.text();
+        textSnippets.push(`--- Plik ${i + 1}: ${f.name} ---\n${txt}`);
+      }
     }
 
+    const fullPrompt = textSnippets.length > 0
+      ? `${prompt}\n\nDodatkowe dane tekstowe z załączonych plików:\n${textSnippets.join('\n\n')}`
+      : prompt;
+
+    const rawResponse = await callGemini(fullPrompt, 'smart', inlineParts);
     const cleaned = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
+    const parsedRoot = JSON.parse(cleaned);
 
-    const parsedTime = parsed.isoDate ? new Date(parsed.isoDate).getTime() : Date.now();
-    const validTimestamp = !isNaN(parsedTime) && parsedTime > 1000000000000 ? parsedTime : Date.now();
+    const rawEntries = Array.isArray(parsedRoot)
+      ? parsedRoot
+      : (Array.isArray(parsedRoot.entries) ? parsedRoot.entries : [parsedRoot]);
 
-    const newEntry = {
-      id: 'scan-' + Date.now(),
-      timestamp: validTimestamp,
-      dateLabel: parsed.dateLabel || new Date(validTimestamp).toLocaleString('pl-PL'),
-      source: 'Fitdays (Import)',
-      weightKg: parseFloat(parsed.weightKg) || null,
-      bmi: parseFloat(parsed.bmi) || null,
-      bodyFatPct: parseFloat(parsed.bodyFatPct) || null,
-      fatMassKg: parseFloat(parsed.fatMassKg) || null,
-      ffmKg: parseFloat(parsed.ffmKg) || null,
-      muscleMassKg: parseFloat(parsed.muscleMassKg) || null,
-      muscleRatePct: parseFloat(parsed.muscleRatePct) || null,
-      skeletalMusclePct: parseFloat(parsed.skeletalMusclePct) || null,
-      boneMassKg: parseFloat(parsed.boneMassKg) || null,
-      proteinMassKg: parseFloat(parsed.proteinMassKg) || null,
-      proteinPct: parseFloat(parsed.proteinPct) || null,
-      waterMassKg: parseFloat(parsed.waterMassKg) || null,
-      bodyWaterPct: parseFloat(parsed.bodyWaterPct) || null,
-      subcutaneousFatPct: parseFloat(parsed.subcutaneousFatPct) || null,
-      visceralFat: parseFloat(parsed.visceralFat) || null,
-      bmrKcal: parseInt(parsed.bmrKcal) || null,
-      bodyAge: parseInt(parsed.bodyAge) || null,
-      whr: parseFloat(parsed.whr) || null,
-      idealWeightKg: parseFloat(parsed.idealWeightKg) || null,
-      obesityLevel: parsed.obesityLevel || null,
-      bodyType: parsed.bodyType || null,
-      statuses: parsed.statuses || null,
-      segmentalFat: parsed.segmentalFat || null,
-      segmentalMuscle: parsed.segmentalMuscle || null,
-      weightControl: parsed.weightControl || null,
-      waistCm: null,
-      beltCm: null,
-      chestCm: null,
-      shouldersCm: null,
-      bicepsCm: null,
-      thighCm: null
-    };
+    let addedNew = 0;
+    let mergedSameDay = 0;
+    let skippedDuplicates = 0;
+    let lastAffectedEntry = null;
 
-    STATE.bodyMeasurements.unshift(newEntry);
+    rawEntries.forEach((rawItem, idx) => {
+      const normEntry = normalizeParsedScaleEntry(rawItem, idx);
+      const hasAnyValue = SCALAR_BODY_KEYS.some(k => normEntry[k] != null) || normEntry.segmentalFat || normEntry.segmentalMuscle;
+      if (!hasAnyValue) return;
+
+      const res = upsertAndMergeBodyMeasurement(normEntry);
+      if (res.status === 'new') addedNew++;
+      else if (res.status === 'merged') mergedSameDay++;
+      else if (res.status === 'duplicate') skippedDuplicates++;
+
+      if (res.entry) lastAffectedEntry = res.entry;
+    });
+
     STATE.bodyMeasurements.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-    STATE.selectedBodyMeasurementId = newEntry.id;
+    if (lastAffectedEntry) {
+      STATE.selectedBodyMeasurementId = lastAffectedEntry.id;
+    }
     localStorage.setItem('iron_body_measurements', JSON.stringify(STATE.bodyMeasurements));
 
-    // Also update current weight in userProfile if present
-    if (newEntry.weightKg) {
-      STATE.userProfile.weightKg = newEntry.weightKg;
+    // Update current weight in userProfile from the newest measurement that has weightKg
+    const newestWithWeight = STATE.bodyMeasurements.find(m => m.weightKg);
+    if (newestWithWeight && newestWithWeight.weightKg) {
+      STATE.userProfile.weightKg = newestWithWeight.weightKg;
       localStorage.setItem('iron_user_profile', JSON.stringify(STATE.userProfile));
       loadUserProfile();
     }
 
     renderBodyMeasurementsView();
-    alert(`✅ Pomyślnie zaimportowano raport z wagi (${newEntry.weightKg || ''} kg, BF: ${newEntry.bodyFatPct || ''}% )!`);
+
+    if (summaryEl) {
+      summaryEl.innerHTML = `
+        <div style="font-weight: 800; color: var(--success); margin-bottom: 4px;">
+          ✅ Przeanalizowano plików: ${files.length}
+        </div>
+        <div style="color: var(--text);">
+          🆕 Nowe dni pomiarowe: <b>${addedNew}</b> •
+          🧩 Połączono z tego samego dnia: <b>${mergedSameDay}</b> •
+          ♻️ Pominięto duplikaty: <b>${skippedDuplicates}</b>
+        </div>
+      `;
+      summaryEl.style.display = 'block';
+    }
   } catch (err) {
-    alert('Błąd podczas odczytu pliku z wagi: ' + err.message);
+    alert('Błąd podczas analizy plików z pomiarami: ' + err.message);
   } finally {
     if (loadingEl) loadingEl.style.display = 'none';
     event.target.value = '';
@@ -2984,18 +3362,12 @@ function saveBodyCircumferences() {
     thighCm
   };
 
-  // Also attach to the selected/latest scale report if it has no circumferences yet so the user sees them together
-  const firstEntry = STATE.bodyMeasurements[0];
-  if (firstEntry && !firstEntry.waistCm && !firstEntry.bicepsCm && !firstEntry.chestCm) {
-    firstEntry.waistCm = waistCm;
-    firstEntry.beltCm = beltCm;
-    firstEntry.chestCm = chestCm;
-    firstEntry.shouldersCm = shouldersCm;
-    firstEntry.bicepsCm = bicepsCm;
-    firstEntry.thighCm = thighCm;
+  // Upsert & merge into today's entry if one already exists on the same day
+  const res = upsertAndMergeBodyMeasurement(newEntry);
+  if (res.entry) {
+    STATE.selectedBodyMeasurementId = res.entry.id;
   }
 
-  STATE.bodyMeasurements.unshift(newEntry);
   STATE.bodyMeasurements.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   localStorage.setItem('iron_body_measurements', JSON.stringify(STATE.bodyMeasurements));
 
@@ -3011,6 +3383,9 @@ function saveBodyCircumferences() {
 
   const statusEl = document.getElementById('circ-save-status');
   if (statusEl) {
+    statusEl.textContent = res.status === 'merged'
+      ? '✅ Obwody połączono z dzisiejszym pomiarem i zaktualizowano na wykresie!'
+      : '✅ Obwody zapisane i zaktualizowane na wykresie!';
     statusEl.style.display = 'block';
     setTimeout(() => { statusEl.style.display = 'none'; }, 3500);
   }
@@ -3194,6 +3569,564 @@ function deleteBodyMeasurement(id) {
 }
 
 // ============================================================================
+// NUTRITION GOALS, HIGH-MODEL AI MEAL PHOTO ANALYZER & DAILY FOOD DIARY
+// ============================================================================
+function initNutritionView() {
+  if (!STATE.nutritionGoals || typeof STATE.nutritionGoals !== 'object') {
+    STATE.nutritionGoals = { kcal: 2500, proteinG: 180, carbsG: 260, fatG: 75 };
+  }
+  if (!Array.isArray(STATE.nutritionDiary)) {
+    STATE.nutritionDiary = [];
+  }
+  if (!STATE.selectedNutritionDate) {
+    STATE.selectedNutritionDate = new Date().toISOString().slice(0, 10);
+  }
+  renderNutritionView();
+}
+
+function getTodayIsoDate() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatNutritionDateHeading(isoDateStr) {
+  const today = getTodayIsoDate();
+  const d = new Date(`${isoDateStr}T12:00:00`);
+  if (isNaN(d.getTime())) return isoDateStr;
+
+  const yesterdayDate = new Date();
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+  const yesterdayIso = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`;
+
+  const dateFmt = d.toLocaleDateString('pl-PL', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
+  if (isoDateStr === today) return `Dzisiaj (${dateFmt})`;
+  if (isoDateStr === yesterdayIso) return `Wczoraj (${dateFmt})`;
+  return dateFmt;
+}
+
+function changeNutritionDay(deltaDays) {
+  const cur = new Date(`${STATE.selectedNutritionDate || getTodayIsoDate()}T12:00:00`);
+  if (isNaN(cur.getTime())) {
+    STATE.selectedNutritionDate = getTodayIsoDate();
+  } else {
+    cur.setDate(cur.getDate() + deltaDays);
+    const yyyy = cur.getFullYear();
+    const mm = String(cur.getMonth() + 1).padStart(2, '0');
+    const dd = String(cur.getDate()).padStart(2, '0');
+    STATE.selectedNutritionDate = `${yyyy}-${mm}-${dd}`;
+  }
+  renderNutritionView();
+}
+
+function selectNutritionDay(isoDateStr) {
+  if (!isoDateStr) return;
+  STATE.selectedNutritionDate = isoDateStr;
+  renderNutritionView();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function toggleNutritionGoalsDrawer() {
+  const drawer = document.getElementById('nutrition-goals-drawer');
+  if (!drawer) return;
+  const isHidden = drawer.style.display === 'none' || !drawer.style.display;
+  drawer.style.display = isHidden ? 'block' : 'none';
+}
+
+function saveNutritionGoals() {
+  const kcal = Math.max(500, parseInt(document.getElementById('goal-kcal')?.value) || 2500);
+  const proteinG = Math.max(10, parseInt(document.getElementById('goal-protein')?.value) || 180);
+  const carbsG = Math.max(0, parseInt(document.getElementById('goal-carbs')?.value) || 260);
+  const fatG = Math.max(10, parseInt(document.getElementById('goal-fat')?.value) || 75);
+
+  STATE.nutritionGoals = { kcal, proteinG, carbsG, fatG };
+  localStorage.setItem('iron_nutrition_goals', JSON.stringify(STATE.nutritionGoals));
+  renderNutritionView();
+
+  const statusEl = document.getElementById('nutrition-goals-status');
+  if (statusEl) {
+    statusEl.textContent = `✅ Zapisano cel: ${kcal} kcal (B: ${proteinG}g, W: ${carbsG}g, T: ${fatG}g)`;
+    statusEl.style.display = 'block';
+    setTimeout(() => { statusEl.style.display = 'none'; }, 3500);
+  }
+}
+
+async function calculateNutritionGoalsWithAI() {
+  const statusEl = document.getElementById('nutrition-goals-status');
+  if (statusEl) {
+    statusEl.style.color = 'var(--accent)';
+    statusEl.textContent = '⏳ AI analizuje Twój profil, BMR z wagi Fitdays oraz treningi i wylicza optymalne makro...';
+    statusEl.style.display = 'block';
+  }
+
+  const { profileSection, plansSection } = buildCoachProfileAndPlansContext();
+
+  const prompt = `
+Jesteś dietetykiem sportowym w aplikacji IronCoach. Na podstawie poniższego profilu użytkownika, jego raportu składu ciała z wagi Fitdays (w tym BMR, % tkanki tłuszczowej, masy mięśniowej), obwodów ciała oraz planu treningowego, wylicz optymalny DZIENNY cel kaloryczny i makroskładniki.
+
+=== PROFIL I SKŁAD CIAŁA UŻYTKOWNIKA ===
+${profileSection}
+
+=== PLANY TRENINGOWE ===
+${plansSection}
+
+Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown:
+{
+  "kcal": 2650,
+  "proteinG": 190,
+  "carbsG": 295,
+  "fatG": 78,
+  "explanation": "Krótkie 1-zdaniowe wyjaśnienie po polsku (np. dlaczego tyle kcal i białka względem BMR i celu)"
+}`;
+
+  try {
+    const raw = await callGemini(prompt, 'smart');
+    const cleaned = raw.replace(/```json/g, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+
+    const kcal = parseInt(parsed.kcal) || 2500;
+    const proteinG = parseInt(parsed.proteinG) || 180;
+    const carbsG = parseInt(parsed.carbsG) || 260;
+    const fatG = parseInt(parsed.fatG) || 75;
+
+    const kEl = document.getElementById('goal-kcal');
+    const pEl = document.getElementById('goal-protein');
+    const cEl = document.getElementById('goal-carbs');
+    const fEl = document.getElementById('goal-fat');
+    if (kEl) kEl.value = kcal;
+    if (pEl) pEl.value = proteinG;
+    if (cEl) cEl.value = carbsG;
+    if (fEl) fEl.value = fatG;
+
+    STATE.nutritionGoals = { kcal, proteinG, carbsG, fatG };
+    localStorage.setItem('iron_nutrition_goals', JSON.stringify(STATE.nutritionGoals));
+    renderNutritionView();
+
+    if (statusEl) {
+      statusEl.style.color = 'var(--success)';
+      statusEl.textContent = `🤖 Wyliczono i zapisano: ${kcal} kcal (B: ${proteinG}g, W: ${carbsG}g, T: ${fatG}g). ${parsed.explanation || ''}`;
+      statusEl.style.display = 'block';
+    }
+  } catch (err) {
+    if (statusEl) statusEl.style.display = 'none';
+    alert('Błąd wyliczania celu przez AI: ' + err.message);
+  }
+}
+
+async function handleMealPhotosSelected(event) {
+  const files = Array.from(event.target.files || []);
+  if (files.length === 0) return;
+
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) continue;
+    try {
+      const fullPart = await fileToGeminiInlinePart(file, 1280, 0.82);
+      const thumbPart = await fileToGeminiInlinePart(file, 110, 0.65);
+      if (fullPart) {
+        STATE.pendingMealPhotos.push({
+          mimeType: fullPart.mimeType,
+          data: fullPart.data,
+          previewUrl: fullPart.previewDataUrl,
+          thumbUrl: thumbPart ? thumbPart.previewDataUrl : fullPart.previewDataUrl
+        });
+      }
+    } catch (e) {
+      console.warn('Could not process meal photo', e);
+    }
+  }
+
+  event.target.value = '';
+  renderPendingMealPhotosPreview();
+}
+
+function removePendingMealPhoto(index) {
+  STATE.pendingMealPhotos.splice(index, 1);
+  renderPendingMealPhotosPreview();
+}
+
+function renderPendingMealPhotosPreview() {
+  const container = document.getElementById('meal-photos-preview');
+  if (!container) return;
+
+  if (!STATE.pendingMealPhotos || STATE.pendingMealPhotos.length === 0) {
+    container.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+
+  container.style.display = 'flex';
+  container.innerHTML = STATE.pendingMealPhotos.map((p, idx) => `
+    <div style="position: relative; width: 72px; height: 72px; border-radius: 10px; overflow: hidden; border: 1px solid var(--accent); flex-shrink: 0;">
+      <img src="${p.previewUrl}" alt="Posiłek" style="width: 100%; height: 100%; object-fit: cover;">
+      <button
+        onclick="removePendingMealPhoto(${idx})"
+        style="position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%; background: rgba(0,0,0,0.75); color: #fff; border: none; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center;"
+      >✕</button>
+    </div>
+  `).join('');
+}
+
+async function analyzeMealWithHighModel() {
+  const hint = (document.getElementById('meal-text-hint')?.value || '').trim();
+  const photos = STATE.pendingMealPhotos || [];
+
+  if (photos.length === 0 && !hint) {
+    return alert('Zrób zdjęcie posiłku aparatem, wybierz zdjęcie z galerii lub wpisz krótki opis posiłku!');
+  }
+
+  const loadingEl = document.getElementById('meal-ai-loading');
+  if (loadingEl) loadingEl.style.display = 'block';
+
+  const prompt = `
+Jesteś zaawansowanym dietetykiem klinicznym i sportowym. Przeanalizuj załączone zdjęcie/zdjęcia posiłku (lub etykietę wartości odżywczych) oraz opis od użytkownika: "${hint || 'brak dodatkowego opisu'}".
+Twoje zadanie:
+1. Rozpoznaj wszystkie składniki widoczne na talerzu/opakowaniu i oszacuj ich gramaturę (w gramach lub ml) na podstawie wielkości porcji.
+2. Oblicz łączną kaloryczność (kcal), ilość białka (proteinG), węglowodanów przyswajalnych (carbsG) oraz tłuszczów (fatG).
+3. Dodaj krótki, praktyczny komentarz trenerski (1-2 zdania, np. jakość białka, indeks glikemiczny, jak posiłek wpisuje się w cel sylwetkowy).
+
+Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown:
+{
+  "name": "Nazwa posiłku (np. Pierś z kurczaka z ryżem i brokułami)",
+  "ingredientsSummary": "Kurczak ~200g, ryż biały ugotowany ~180g, brokuły ~100g, oliwa ~10g",
+  "kcal": 640,
+  "proteinG": 52,
+  "carbsG": 68,
+  "fatG": 16,
+  "coachComment": "Świetny posiłek potreningowy o wysokiej zawartości pełnowartościowego białka."
+}`;
+
+  try {
+    const inlineParts = photos.map(p => ({ mimeType: p.mimeType, data: p.data }));
+    // Use 'smart' tier so callGemini prioritizes Gemini 2.5 Pro / 1.5 Pro
+    const rawResponse = await callGemini(prompt, 'smart', inlineParts);
+    const cleaned = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+
+    STATE.editingMealId = null;
+    openMealEditorWithValues({
+      name: parsed.name || (hint ? hint.slice(0, 45) : 'Posiłek ze zdjęcia'),
+      kcal: Math.round(parseFloat(parsed.kcal) || 0),
+      proteinG: Math.round(parseFloat(parsed.proteinG) || 0),
+      carbsG: Math.round(parseFloat(parsed.carbsG) || 0),
+      fatG: Math.round(parseFloat(parsed.fatG) || 0),
+      ingredientsSummary: parsed.ingredientsSummary || '',
+      coachComment: parsed.coachComment || '',
+      modelUsed: STATE.lastUsedGeminiModel || 'Gemini Pro'
+    });
+  } catch (err) {
+    alert('Błąd analizy posiłku przez AI: ' + err.message);
+  } finally {
+    if (loadingEl) loadingEl.style.display = 'none';
+  }
+}
+
+function openMealEditorWithValues(data) {
+  const box = document.getElementById('meal-editor-box');
+  if (!box) return;
+
+  document.getElementById('edit-meal-name').value = data.name || '';
+  document.getElementById('edit-meal-kcal').value = data.kcal ?? '';
+  document.getElementById('edit-meal-protein').value = data.proteinG ?? '';
+  document.getElementById('edit-meal-carbs').value = data.carbsG ?? '';
+  document.getElementById('edit-meal-fat').value = data.fatG ?? '';
+
+  const notesEl = document.getElementById('edit-meal-ai-notes');
+  if (notesEl) {
+    const parts = [];
+    if (data.modelUsed) parts.push(`🤖 Model: <b>${escapeHtml(data.modelUsed)}</b>`);
+    if (data.ingredientsSummary) parts.push(`⚖️ Składniki: ${escapeHtml(data.ingredientsSummary)}`);
+    if (data.coachComment) parts.push(`💡 Trener: <i>${escapeHtml(data.coachComment)}</i>`);
+    if (parts.length > 0) {
+      notesEl.innerHTML = parts.join('<br>');
+      notesEl.style.display = 'block';
+      notesEl.dataset.ingredients = data.ingredientsSummary || '';
+      notesEl.dataset.comment = data.coachComment || '';
+    } else {
+      notesEl.style.display = 'none';
+      notesEl.innerHTML = '';
+      notesEl.dataset.ingredients = '';
+      notesEl.dataset.comment = '';
+    }
+  }
+
+  box.style.display = 'block';
+}
+
+function openManualMealEditor() {
+  STATE.editingMealId = null;
+  const hint = (document.getElementById('meal-text-hint')?.value || '').trim();
+  openMealEditorWithValues({
+    name: hint || '',
+    kcal: '',
+    proteinG: '',
+    carbsG: '',
+    fatG: '',
+    ingredientsSummary: '',
+    coachComment: ''
+  });
+}
+
+function closeMealEditorBox() {
+  const box = document.getElementById('meal-editor-box');
+  if (box) box.style.display = 'none';
+  STATE.editingMealId = null;
+}
+
+function saveEditedMealToDiary() {
+  const name = (document.getElementById('edit-meal-name')?.value || '').trim() || 'Posiłek';
+  const kcal = Math.max(0, Math.round(parseFloat(document.getElementById('edit-meal-kcal')?.value) || 0));
+  const proteinG = Math.max(0, Math.round(parseFloat(document.getElementById('edit-meal-protein')?.value) || 0));
+  const carbsG = Math.max(0, Math.round(parseFloat(document.getElementById('edit-meal-carbs')?.value) || 0));
+  const fatG = Math.max(0, Math.round(parseFloat(document.getElementById('edit-meal-fat')?.value) || 0));
+
+  if (kcal === 0 && proteinG === 0 && carbsG === 0 && fatG === 0) {
+    return alert('Podaj kalorie lub makroskładniki posiłku!');
+  }
+
+  const notesEl = document.getElementById('edit-meal-ai-notes');
+  const ingredientsSummary = notesEl?.dataset?.ingredients || '';
+  const coachComment = notesEl?.dataset?.comment || '';
+  const thumbUrl = STATE.pendingMealPhotos?.[0]?.thumbUrl || null;
+  const dateKey = STATE.selectedNutritionDate || getTodayIsoDate();
+
+  if (STATE.editingMealId) {
+    const existing = STATE.nutritionDiary.find(m => m.id === STATE.editingMealId);
+    if (existing) {
+      existing.name = name;
+      existing.kcal = kcal;
+      existing.proteinG = proteinG;
+      existing.carbsG = carbsG;
+      existing.fatG = fatG;
+      if (thumbUrl) existing.thumbUrl = thumbUrl;
+    }
+  } else {
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+    STATE.nutritionDiary.unshift({
+      id: 'meal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+      dateKey,
+      timeLabel: timeStr,
+      timestamp: Date.now(),
+      name,
+      kcal,
+      proteinG,
+      carbsG,
+      fatG,
+      ingredientsSummary,
+      coachComment,
+      thumbUrl
+    });
+  }
+
+  STATE.editingMealId = null;
+  STATE.pendingMealPhotos = [];
+  const hintInput = document.getElementById('meal-text-hint');
+  if (hintInput) hintInput.value = '';
+
+  renderPendingMealPhotosPreview();
+  closeMealEditorBox();
+
+  localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
+  renderNutritionView();
+  renderHomeKpis();
+}
+
+function editDiaryMeal(mealId) {
+  const meal = STATE.nutritionDiary.find(m => m.id === mealId);
+  if (!meal) return;
+  STATE.editingMealId = meal.id;
+  openMealEditorWithValues({
+    name: meal.name,
+    kcal: meal.kcal,
+    proteinG: meal.proteinG,
+    carbsG: meal.carbsG,
+    fatG: meal.fatG,
+    ingredientsSummary: meal.ingredientsSummary || '',
+    coachComment: meal.coachComment || ''
+  });
+  const box = document.getElementById('meal-editor-box');
+  if (box) box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function deleteDiaryMeal(mealId) {
+  if (!confirm('Czy na pewno chcesz usunąć ten posiłek z dziennika?')) return;
+  STATE.nutritionDiary = STATE.nutritionDiary.filter(m => m.id !== mealId);
+  localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
+  renderNutritionView();
+  renderHomeKpis();
+}
+
+function getNutritionDayTotals(dateKey) {
+  const meals = (STATE.nutritionDiary || []).filter(m => m.dateKey === dateKey);
+  return meals.reduce((acc, m) => {
+    acc.kcal += (parseFloat(m.kcal) || 0);
+    acc.proteinG += (parseFloat(m.proteinG) || 0);
+    acc.carbsG += (parseFloat(m.carbsG) || 0);
+    acc.fatG += (parseFloat(m.fatG) || 0);
+    acc.count += 1;
+    return acc;
+  }, { kcal: 0, proteinG: 0, carbsG: 0, fatG: 0, count: 0, meals });
+}
+
+function renderNutritionView() {
+  const dateKey = STATE.selectedNutritionDate || getTodayIsoDate();
+  const goals = STATE.nutritionGoals || { kcal: 2500, proteinG: 180, carbsG: 260, fatG: 75 };
+
+  // Populate goal inputs if empty
+  const kEl = document.getElementById('goal-kcal');
+  const pEl = document.getElementById('goal-protein');
+  const cEl = document.getElementById('goal-carbs');
+  const fEl = document.getElementById('goal-fat');
+  if (kEl && document.activeElement !== kEl) kEl.value = goals.kcal;
+  if (pEl && document.activeElement !== pEl) pEl.value = goals.proteinG;
+  if (cEl && document.activeElement !== cEl) cEl.value = goals.carbsG;
+  if (fEl && document.activeElement !== fEl) fEl.value = goals.fatG;
+
+  const dateLabelEl = document.getElementById('nutrition-current-date-label');
+  if (dateLabelEl) {
+    dateLabelEl.textContent = formatNutritionDateHeading(dateKey);
+  }
+
+  const totals = getNutritionDayTotals(dateKey);
+
+  // 1. Render Progress Bars
+  const progContainer = document.getElementById('nutrition-daily-progress');
+  if (progContainer) {
+    const kcalPct = Math.min(100, Math.round((totals.kcal / (goals.kcal || 1)) * 100));
+    const kcalRemaining = goals.kcal - Math.round(totals.kcal);
+    const pPct = Math.min(100, Math.round((totals.proteinG / (goals.proteinG || 1)) * 100));
+    const cPct = Math.min(100, Math.round((totals.carbsG / (goals.carbsG || 1)) * 100));
+    const fPct = Math.min(100, Math.round((totals.fatG / (goals.fatG || 1)) * 100));
+
+    progContainer.innerHTML = `
+      <div style="background: var(--surface-elevated); padding: 12px; border-radius: 12px; border: 1px solid var(--border);">
+        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px;">
+          <div>
+            <span style="font-size: 24px; font-weight: 900; color: var(--primary);">${Math.round(totals.kcal)}</span>
+            <span style="font-size: 13px; color: var(--text-muted);"> / ${goals.kcal} kcal</span>
+          </div>
+          <span style="font-size: 12px; font-weight: 700; color: ${kcalRemaining >= 0 ? 'var(--accent)' : 'var(--danger)'};">
+            ${kcalRemaining >= 0 ? `Pozostało: ${kcalRemaining} kcal` : `Nadwyżka: +${Math.abs(kcalRemaining)} kcal`}
+          </span>
+        </div>
+        <div style="width: 100%; height: 10px; background: #12151b; border-radius: 999px; overflow: hidden; margin-bottom: 12px; border: 1px solid var(--border);">
+          <div style="width: ${kcalPct}%; height: 100%; background: linear-gradient(90deg, var(--primary), var(--accent)); border-radius: 999px; transition: width 0.25s;"></div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+          <div style="background: #12151b; padding: 8px; border-radius: 8px; border: 1px solid var(--border);">
+            <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+              <span style="color: var(--text-muted); font-weight: 700;">🥩 Białko</span>
+              <b style="color: var(--success);">${Math.round(totals.proteinG)}/${goals.proteinG}g</b>
+            </div>
+            <div style="width: 100%; height: 6px; background: #1e232d; border-radius: 999px; overflow: hidden;">
+              <div style="width: ${pPct}%; height: 100%; background: var(--success);"></div>
+            </div>
+          </div>
+
+          <div style="background: #12151b; padding: 8px; border-radius: 8px; border: 1px solid var(--border);">
+            <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+              <span style="color: var(--text-muted); font-weight: 700;">🍚 Węgle</span>
+              <b style="color: var(--accent);">${Math.round(totals.carbsG)}/${goals.carbsG}g</b>
+            </div>
+            <div style="width: 100%; height: 6px; background: #1e232d; border-radius: 999px; overflow: hidden;">
+              <div style="width: ${cPct}%; height: 100%; background: var(--accent);"></div>
+            </div>
+          </div>
+
+          <div style="background: #12151b; padding: 8px; border-radius: 8px; border: 1px solid var(--border);">
+            <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+              <span style="color: var(--text-muted); font-weight: 700;">🥑 Tłuszcz</span>
+              <b style="color: var(--primary);">${Math.round(totals.fatG)}/${goals.fatG}g</b>
+            </div>
+            <div style="width: 100%; height: 6px; background: #1e232d; border-radius: 999px; overflow: hidden;">
+              <div style="width: ${fPct}%; height: 100%; background: var(--primary);"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // 2. Render Meals List for selected day
+  const mealsListEl = document.getElementById('nutrition-meals-list');
+  const countBadge = document.getElementById('nutrition-meals-count');
+  if (countBadge) countBadge.textContent = `${totals.count}`;
+
+  if (mealsListEl) {
+    if (totals.meals.length === 0) {
+      mealsListEl.innerHTML = `
+        <p style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 14px 0;">
+          Brak zapisanych posiłków w tym dniu. Zrób zdjęcie talerza powyżej lub dodaj posiłek ręcznie!
+        </p>
+      `;
+    } else {
+      mealsListEl.innerHTML = totals.meals.map(m => `
+        <div style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; display: flex; gap: 10px; align-items: flex-start;">
+          ${m.thumbUrl ? `<img src="${m.thumbUrl}" alt="Posiłek" style="width: 54px; height: 54px; border-radius: 8px; object-fit: cover; flex-shrink: 0; border: 1px solid var(--border);">` : ''}
+          <div style="flex: 1; min-width: 0;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 6px;">
+              <div style="font-weight: 800; font-size: 14px; color: var(--text);">
+                ${escapeHtml(m.name)}
+                ${m.timeLabel ? `<span style="font-size: 11px; color: var(--text-muted); font-weight: 500; margin-left: 4px;">${escapeHtml(m.timeLabel)}</span>` : ''}
+              </div>
+              <span style="font-weight: 900; font-size: 14px; color: var(--primary); white-space: nowrap;">${Math.round(m.kcal)} kcal</span>
+            </div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 3px;">
+              🥩 B: <b style="color: var(--success);">${Math.round(m.proteinG)}g</b> •
+              🍚 W: <b style="color: var(--accent);">${Math.round(m.carbsG)}g</b> •
+              🥑 T: <b style="color: var(--primary);">${Math.round(m.fatG)}g</b>
+            </div>
+            ${m.ingredientsSummary ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">⚖️ ${escapeHtml(m.ingredientsSummary)}</div>` : ''}
+            ${m.coachComment ? `<div style="font-size: 11px; color: var(--accent); margin-top: 3px;">💡 ${escapeHtml(m.coachComment)}</div>` : ''}
+            <div style="display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px;">
+              <button class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="editDiaryMeal('${m.id}')">✏️ Edytuj</button>
+              <button class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px; color: var(--danger);" onclick="deleteDiaryMeal('${m.id}')">Usuń</button>
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
+
+  // 3. Render 7-Day History Summary
+  const histEl = document.getElementById('nutrition-days-history');
+  if (histEl) {
+    const uniqueDates = Array.from(new Set([
+      getTodayIsoDate(),
+      ...STATE.nutritionDiary.map(m => m.dateKey).filter(Boolean)
+    ])).sort((a, b) => b.localeCompare(a)).slice(0, 7);
+
+    histEl.innerHTML = uniqueDates.map(dKey => {
+      const dt = getNutritionDayTotals(dKey);
+      const isSelected = dKey === dateKey;
+      const pct = Math.min(100, Math.round((dt.kcal / (goals.kcal || 1)) * 100));
+      return `
+        <div
+          onclick="selectNutritionDay('${dKey}')"
+          style="cursor: pointer; background: var(--surface-elevated); border: 1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}; border-radius: 10px; padding: 9px 12px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;"
+        >
+          <div>
+            <div style="font-size: 13px; font-weight: 800; color: ${isSelected ? 'var(--accent)' : 'var(--text)'};">
+              ${escapeHtml(formatNutritionDateHeading(dKey))}
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted);">
+              Posiłków: ${dt.count} • B: ${Math.round(dt.proteinG)}g • W: ${Math.round(dt.carbsG)}g • T: ${Math.round(dt.fatG)}g
+            </div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 14px; font-weight: 900; color: var(--primary);">${Math.round(dt.kcal)} / ${goals.kcal} kcal</div>
+            <div style="font-size: 11px; color: var(--text-muted);">${pct}% celu</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+}
+
+// ============================================================================
 // COACH AI ANALYSIS & CONVERSATIONAL CHAT (Includes Profile, Fitdays Scan, Circumferences, Duration, Rests & LoadTypes)
 // ============================================================================
 function buildCoachProfileAndPlansContext() {
@@ -3258,6 +4191,25 @@ function buildCoachProfileAndPlansContext() {
     return `- ${m.dateLabel || new Date(m.timestamp).toLocaleDateString('pl-PL')}: ${items.join(', ')}`;
   }).join('\n');
 
+  // Build Nutrition Goals & Daily Food Diary summary for LLM
+  const ng = STATE.nutritionGoals || { kcal: 2500, proteinG: 180, carbsG: 260, fatG: 75 };
+  const todayKey = getTodayIsoDate();
+  const todayTotals = getNutritionDayTotals(todayKey);
+  const recentDietDays = Array.from(new Set([todayKey, ...(STATE.nutritionDiary || []).map(m => m.dateKey).filter(Boolean)]))
+    .sort((a, b) => b.localeCompare(a))
+    .slice(0, 7)
+    .map(dKey => {
+      const t = getNutritionDayTotals(dKey);
+      const mealsNames = t.meals.map(m => `${m.name} (${m.kcal}kcal, B:${m.proteinG}g)`).join('; ');
+      return `- ${dKey}: łącznie ${Math.round(t.kcal)}/${ng.kcal} kcal (B: ${Math.round(t.proteinG)}/${ng.proteinG}g, W: ${Math.round(t.carbsG)}/${ng.carbsG}g, T: ${Math.round(t.fatG)}/${ng.fatG}g)${mealsNames ? ` | Posiłki: ${mealsNames}` : ''}`;
+    }).join('\n');
+
+  const nutritionContext = [
+    `• Dzienny cel kaloryczny i makro: ${ng.kcal} kcal | Białko: ${ng.proteinG}g | Węglowodany: ${ng.carbsG}g | Tłuszcze: ${ng.fatG}g`,
+    `• Dzisiejsze spożycie (${todayKey}): ${Math.round(todayTotals.kcal)} kcal (B: ${Math.round(todayTotals.proteinG)}g, W: ${Math.round(todayTotals.carbsG)}g, T: ${Math.round(todayTotals.fatG)}g w ${todayTotals.count} posiłkach)`,
+    recentDietDays ? `• Historia dziennika żywieniowego (ostatnie dni):\n${recentDietDays}` : null
+  ].filter(Boolean).join('\n');
+
   const profileSection = [
     `• Waga użytkownika: ${weightVal > 0 ? weightVal + ' kg' : 'nie podano'}`,
     `• Wzrost użytkownika: ${heightVal > 0 ? heightVal + ' cm' + bmiStr : 'nie podano'}`,
@@ -3265,7 +4217,8 @@ function buildCoachProfileAndPlansContext() {
     p.goalNotes ? `• Dodatkowe priorytety / uwagi / kontuzje: ${p.goalNotes}` : null,
     `\n=== PEŁNY RAPORT SKŁADU CIAŁA Z WAGI (FITDAYS) ===\n${fitdaysContext}`,
     `\n=== OBWODY CIAŁA (CM) ===\n${circContext}`,
-    `\n=== HISTORIA ZMIAN PARAMETRÓW CIAŁA I OBWODÓW W CZASIE ===\n${bodyTrendContext}`
+    `\n=== HISTORIA ZMIAN PARAMETRÓW CIAŁA I OBWODÓW W CZASIE ===\n${bodyTrendContext}`,
+    `\n=== DZIENNIK ŻYWIENIOWY, KALORIE I MAKROSKŁADNIKI ===\n${nutritionContext}`
   ].filter(Boolean).join('\n');
 
   const plansSection = (STATE.plans && STATE.plans.length > 0)
@@ -3794,10 +4747,12 @@ function exportDataJson() {
   }));
 
   const backup = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     exportedAt: new Date().toISOString(),
     userProfile: STATE.userProfile,
     bodyMeasurements: STATE.bodyMeasurements,
+    nutritionGoals: STATE.nutritionGoals,
+    nutritionDiary: STATE.nutritionDiary,
     plans: enrichedPlans,
     history: STATE.history,
     customGifMap: JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}'),
@@ -3839,16 +4794,36 @@ function importDataJson(event) {
       }
 
       if (Array.isArray(data.bodyMeasurements)) {
-        const mergedMeasurements = [...STATE.bodyMeasurements];
         data.bodyMeasurements.forEach(item => {
-          const idx = mergedMeasurements.findIndex(x => x.id === item.id);
-          if (idx !== -1) mergedMeasurements[idx] = item;
-          else mergedMeasurements.push(item);
+          upsertAndMergeBodyMeasurement(item);
         });
-        mergedMeasurements.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-        STATE.bodyMeasurements = mergedMeasurements;
+        STATE.bodyMeasurements.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         localStorage.setItem('iron_body_measurements', JSON.stringify(STATE.bodyMeasurements));
         renderBodyMeasurementsView();
+      }
+
+      if (data.nutritionGoals && typeof data.nutritionGoals === 'object') {
+        STATE.nutritionGoals = {
+          kcal: parseInt(data.nutritionGoals.kcal) || 2500,
+          proteinG: parseInt(data.nutritionGoals.proteinG) || 180,
+          carbsG: parseInt(data.nutritionGoals.carbsG) || 260,
+          fatG: parseInt(data.nutritionGoals.fatG) || 75
+        };
+        localStorage.setItem('iron_nutrition_goals', JSON.stringify(STATE.nutritionGoals));
+      }
+
+      if (Array.isArray(data.nutritionDiary)) {
+        const mergedDiary = [...(STATE.nutritionDiary || [])];
+        data.nutritionDiary.forEach(meal => {
+          if (!meal || !meal.id) return;
+          const idx = mergedDiary.findIndex(x => x.id === meal.id);
+          if (idx !== -1) mergedDiary[idx] = meal;
+          else mergedDiary.push(meal);
+        });
+        mergedDiary.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        STATE.nutritionDiary = mergedDiary;
+        localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
+        renderNutritionView();
       }
 
       // 1. Safely normalize and import plans (including direct gifUrl and gifSlug per exercise!)
