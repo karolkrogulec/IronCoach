@@ -3153,27 +3153,22 @@ function updateGeminiModelBadges(model, isFallback = false, keyLabel = '') {
 
   const coachBadge = document.getElementById('coach-model-badge');
   if (coachBadge) {
-    coachBadge.textContent = isFallback ? `🤖 ${model}${keyTag} (fallback)` : `🤖 ${model}${keyTag}`;
-    coachBadge.title = `Model: ${model} | ${keyLabel || 'Klucz główny'}${isFallback ? ' (użyty przez fallback)' : ''}`;
+    coachBadge.textContent = `🤖 ${model}${keyTag}`;
+    coachBadge.title = `Model: ${model} | ${keyLabel || 'Klucz główny'}`;
     coachBadge.style.display = 'inline-block';
-    if (isFallback) {
-      coachBadge.style.color = '#ffb74d';
-      coachBadge.style.borderColor = 'rgba(255, 183, 77, 0.4)';
-    } else {
-      coachBadge.style.color = 'var(--accent)';
-      coachBadge.style.borderColor = 'rgba(0, 229, 255, 0.25)';
-    }
+    coachBadge.style.color = 'var(--accent)';
+    coachBadge.style.borderColor = 'rgba(0, 229, 255, 0.25)';
   }
 
   const nutritionBadge = document.getElementById('nutrition-model-badge');
   if (nutritionBadge) {
-    nutritionBadge.textContent = isFallback ? `🤖 ${model}${keyTag} (fallback)` : `🤖 ${model}${keyTag}`;
+    nutritionBadge.textContent = `🤖 ${model}${keyTag}`;
   }
 
   const settingsInfo = document.getElementById('gemini-last-used-info');
   if (settingsInfo) {
     const keyInfo = keyLabel ? ` [${keyLabel}]` : '';
-    settingsInfo.innerHTML = `Ostatnio użyty model: <b>${escapeHtml(model)}</b>${escapeHtml(keyInfo)} ${isFallback ? '<span style="color: #ffb74d;">(aktywowany fallback)</span>' : '<span style="color: var(--success);">(główny)</span>'}`;
+    settingsInfo.innerHTML = `Ostatnio użyty model: <b>${escapeHtml(model)}</b>${escapeHtml(keyInfo)} <span style="color: var(--success);">(aktywny)</span>`;
     settingsInfo.style.display = 'block';
   }
 }
@@ -6203,6 +6198,15 @@ Używaj czytelnego formatowania punktowego.`;
 // ============================================================================
 // MULTI-THREAD COACH CHAT (Simultaneous Conversations Support)
 // ============================================================================
+function stripFallbackDisclaimer(text) {
+  if (!text || typeof text !== 'string') return text;
+  return text
+    .replace(/\n*\s*\*?\([⚡💡]?\s*Odpowiedź wygenerowana przez model fallback[\s\S]*?\)\*?/gi, '')
+    .replace(/\n*\s*[⚡💡]?\s*Odpowiedź wygenerowana przez model fallback[^\n]*/gi, '')
+    .replace(/\n*\s*z powodu wyczerpania limitu na modelu wyższym[^\n]*/gi, '')
+    .trim();
+}
+
 function initCoachThreads() {
   if (!Array.isArray(STATE.coachThreads)) {
     STATE.coachThreads = [];
@@ -6242,8 +6246,8 @@ function initCoachThreads() {
   STATE.coachThreads.forEach(t => {
     t.isThinking = false;
     (t.messages || []).forEach(m => {
-      if (m.text && m.text.includes('Odpowiedź wygenerowana przez model fallback')) {
-        m.text = m.text.replace(/\n*\s*\*\([⚡💡]?\s*Odpowiedź wygenerowana przez model fallback[^*]*\)\*/gi, '').trim();
+      if (m.text && (m.text.includes('Odpowiedź wygenerowana') || m.text.includes('wyczerpania limitu'))) {
+        m.text = stripFallbackDisclaimer(m.text);
         threadsModified = true;
       }
     });
@@ -6462,7 +6466,7 @@ function renderCoachChat() {
 
   const bubblesHtml = msgs.map(m => {
     const isUser = m.role === 'user';
-    const textToDisplay = (m.text || '').replace(/\n*\s*\*\([⚡💡]?\s*Odpowiedź wygenerowana przez model fallback[^*]*\)\*/gi, '').trim();
+    const textToDisplay = stripFallbackDisclaimer(m.text || '');
     return `
       <div style="display: flex; justify-content: ${isUser ? 'flex-end' : 'flex-start'}; margin-bottom: 10px;">
         <div style="
