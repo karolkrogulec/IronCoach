@@ -1193,21 +1193,23 @@
 
         <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Klucz główny (Projekt 1)</label>
         <div style="position: relative; margin-bottom: 8px;">
-          <input type="password" id="gemini-api-key" class="input-box" style="text-align: left; padding-right: 42px;" placeholder="AIzaSy... (Klucz główny)" autocomplete="off" autocapitalize="none" spellcheck="false">
+          <input type="password" id="gemini-api-key" class="input-box" style="text-align: left; padding-right: 42px;" placeholder="AIzaSy... (Klucz główny)" autocomplete="off" autocapitalize="none" spellcheck="false" oninput="saveApiKey()">
           <button type="button" onclick="toggleApiKeyVisibility('gemini-api-key')" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 16px; cursor: pointer;" title="Pokaż/Ukryj klucz">👁️</button>
         </div>
 
         <label style="font-size: 11px; color: var(--accent); display: block; margin-bottom: 3px;">Klucz zapasowy (Projekt 2 — osobna darmowa pula tokenów)</label>
         <div style="position: relative; margin-bottom: 10px;">
-          <input type="password" id="gemini-backup-api-key" class="input-box" style="text-align: left; padding-right: 42px;" placeholder="AIzaSy... (Klucz zapasowy z drugiego projektu)" autocomplete="off" autocapitalize="none" spellcheck="false">
+          <input type="password" id="gemini-backup-api-key" class="input-box" style="text-align: left; padding-right: 42px;" placeholder="AIzaSy... (Klucz zapasowy z drugiego projektu)" autocomplete="off" autocapitalize="none" spellcheck="false" oninput="saveApiKey()">
           <button type="button" onclick="toggleApiKeyVisibility('gemini-backup-api-key')" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 16px; cursor: pointer;" title="Pokaż/Ukryj klucz">👁️</button>
         </div>
 
-        <div style="display: flex; gap: 8px; margin-bottom: 14px;">
-          <button class="btn btn-primary" onclick="saveApiKey()">Zapisz Klucze</button>
-          <a href="https://aistudio.google.com/app/apikey" target="_blank" class="btn btn-secondary" style="text-decoration: none; width: auto; font-size: 13px;">Utwórz nowy projekt w AI Studio ↗</a>
+        <div style="display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;">
+          <button class="btn btn-primary" style="flex: 1; min-width: 120px;" onclick="saveApiKey()">💾 Zapisz Klucze</button>
+          <button type="button" class="btn btn-secondary" style="flex: 1; min-width: 140px;" onclick="testApiKeysConnection()">🧪 Przetestuj klucze</button>
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" class="btn btn-secondary" style="text-decoration: none; width: 100%; font-size: 13px; text-align: center;">Utwórz nowy projekt w AI Studio ↗</a>
         </div>
-        <p id="api-key-status" style="color: var(--success); font-size: 13px; margin-top: -6px; margin-bottom: 10px; display: none;">✅ Zapisano pomyślnie!</p>
+        <p id="api-key-status" style="color: var(--success); font-size: 13px; margin-top: -4px; margin-bottom: 8px; display: none;">✅ Zapisano pomyślnie!</p>
+        <div id="api-key-test-results" style="display: none; background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 12px;"></div>
 
         <div style="border-top: 1px solid var(--border); padding-top: 10px; margin-top: 6px;">
           <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Preferowany poziom / model główny</label>
@@ -1427,6 +1429,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=39"></script>
+  <script src="app.js?v=40"></script>
 </body>
 </html>

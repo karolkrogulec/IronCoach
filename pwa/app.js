@@ -3370,14 +3370,36 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
   }
 
   // Only reached if ALL keys and ALL tiers/models failed!
-  const quotaFailures = allAttempts.filter(a => a.status === 429 || (a.details && a.details.toLowerCase().includes('quota')));
-  if (quotaFailures.length > 0) {
-    throw new Error(`Wyczerpano limity zapytań (Quota / 429) dla wszystkich skonfigurowanych projektów. Utwórz nowy darmowy projekt w Google AI Studio lub odczekaj na reset dobowy.`);
-  }
+  const keyDiagnostics = keysToTry.map((kObj) => {
+    const kAttempts = allAttempts.filter(a => a.keyLabel === kObj.label);
+    if (kAttempts.length === 0) {
+      return `• ${kObj.label}: nie sprawdzono`;
+    }
 
-  const primaryFailure = allAttempts.find(a => a.status !== 404) || allAttempts[0];
-  const failureMsg = primaryFailure ? `${primaryFailure.reason}: ${primaryFailure.details || ''}` : 'Brak dostępnego modelu Gemini dla skonfigurowanych kluczy.';
-  throw new Error(failureMsg);
+    const authFailure = kAttempts.find(a => a.status === 400 || a.status === 403 || (a.details && (a.details.toLowerCase().includes('api_key') || a.details.toLowerCase().includes('permission'))));
+    if (authFailure) {
+      return `• ${kObj.label}: ❌ Błąd klucza (${authFailure.details || authFailure.reason})`;
+    }
+
+    const quotaFailure = kAttempts.find(a => a.status === 429 || (a.details && a.details.toLowerCase().includes('quota')));
+    if (quotaFailure) {
+      return `• ${kObj.label}: ⏳ Wyczerpany limit (Quota / 429)`;
+    }
+
+    const last = kAttempts[kAttempts.length - 1];
+    return `• ${kObj.label}: ⚠️ ${last.reason} (${last.details || ''})`;
+  }).join('\n');
+
+  if (keysToTry.length === 1) {
+    throw new Error(`Wykryto tylko 1 aktywny klucz API:\n${keyDiagnostics}\n\n👉 Limit dobowy tego projektu został wyczerpany. Wklej Klucz zapasowy z NOWEGO projektu w Ustawieniach i kliknij 'Zapisz Klucze'.`);
+  } else {
+    const bothQuota = keysToTry.every(k => allAttempts.some(a => a.keyLabel === k.label && (a.status === 429 || (a.details && a.details.toLowerCase().includes('quota')))));
+    if (bothQuota) {
+      throw new Error(`Oba skonfigurowane klucze zwróciły wyczerpanie limitu (Quota / 429):\n${keyDiagnostics}\n\n⚠️ Ważne: Jeśli Klucz zapasowy został utworzony w TYM SAMYM projekcie Google co główny, dzielą one ten sam limit! W Google AI Studio kliknij 'Create API key' i koniecznie wybierz opcję 'Create API key in NEW project' (w osobnym nowym projekcie).`);
+    } else {
+      throw new Error(`Błąd połączenia ze skonfigurowanymi projektami:\n${keyDiagnostics}`);
+    }
+  }
 }
 
 // Parse Note from Google Keep (supports supersets & rest times)
@@ -6595,6 +6617,57 @@ function saveApiKey() {
     status.style.display = 'block';
     setTimeout(() => { status.style.display = 'none'; }, 3000);
   }
+}
+
+async function testApiKeysConnection() {
+  const primaryKey = (document.getElementById('gemini-api-key')?.value || STATE.apiKey || '').trim();
+  const backupKey = (document.getElementById('gemini-backup-api-key')?.value || STATE.backupApiKey || '').trim();
+
+  const statusEl = document.getElementById('api-key-test-results');
+  if (!statusEl) return;
+
+  statusEl.style.display = 'block';
+  statusEl.innerHTML = '<span style="color: var(--accent);">⏳ Testuję zapytanie do Google AI Studio...</span>';
+
+  const testKey = async (key, label) => {
+    if (!key) return `• <b>${label}</b>: <span style="color: var(--text-muted);">⚪ Brak wpisanego klucza</span>`;
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: 'ping' }] }] })
+      });
+      if (res.ok) {
+        return `• <b>${label}</b>: <span style="color: var(--success); font-weight: 700;">✅ Działa! Połączenie nawiązane, wolna pula dostępna.</span>`;
+      }
+      const err = await res.json().catch(() => ({}));
+      const msg = err.error?.message || `HTTP ${res.status}`;
+      if (res.status === 429 || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource_exhausted')) {
+        return `• <b>${label}</b>: <span style="color: #ffb74d; font-weight: 700;">⏳ Limit dobowy wyczerpany (Quota 429)</span>`;
+      }
+      if (res.status === 400 || res.status === 403) {
+        return `• <b>${label}</b>: <span style="color: var(--danger); font-weight: 700;">❌ Błąd klucza (${escapeHtml(msg)})</span>`;
+      }
+      return `• <b>${label}</b>: <span style="color: var(--danger);">⚠️ Błąd ${res.status}: ${escapeHtml(msg)}</span>`;
+    } catch (e) {
+      return `• <b>${label}</b>: <span style="color: var(--danger);">⚠️ Błąd połączenia sieciowego: ${escapeHtml(e.message)}</span>`;
+    }
+  };
+
+  const res1 = await testKey(primaryKey, 'Klucz główny');
+  const res2 = await testKey(backupKey, 'Klucz zapasowy');
+
+  let hint = '';
+  if (primaryKey && backupKey && primaryKey === backupKey) {
+    hint = '<div style="margin-top: 8px; color: #ffb74d;">⚠️ <b>Uwaga:</b> Oba wpisane klucze są identyczne! Klucz zapasowy musi pochodzić z osobnego projektu.</div>';
+  } else if (res1.includes('429') && res2.includes('429')) {
+    hint = '<div style="margin-top: 8px; color: #ffb74d;">💡 <b>Diagnoza:</b> Oba klucze zwróciły Quota 429. Oznacza to, że klucz zapasowy został wygenerowany w <u>tym samym projekcie Google Cloud</u> co klucz główny i dzielą tę samą wyczerpaną pulę. W Google AI Studio kliknij "Create API key in <b>NEW project</b>".</div>';
+  } else if (res1.includes('429') && res2.includes('Działa')) {
+    hint = '<div style="margin-top: 8px; color: var(--success);">🎉 <b>Super!</b> Klucz zapasowy działa i ma osobną pulę — asystent AI przejmie z niego odpowiedzi!</div>';
+  }
+
+  statusEl.innerHTML = `<div style="text-align: left; font-size: 12px; line-height: 1.6;">${res1}<br>${res2}${hint}</div>`;
 }
 
 function buildFullBackupObject() {
