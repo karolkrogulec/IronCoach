@@ -390,11 +390,40 @@
       align-items: center;
       gap: 14px;
       text-align: center;
-      transition: background 0.25s, border-color 0.25s;
+      transition: background 0.25s, border-color 0.25s, box-shadow 0.25s;
     }
     #rest-timer-bar.overtime .focus-overlay-card {
-      border-color: #FFB300;
-      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.9), 0 0 40px rgba(255, 179, 0, 0.35);
+      background: linear-gradient(160deg, #4a0d0d 0%, #7a1515 100%) !important;
+      border-color: #FF1744 !important;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.9), 0 0 40px rgba(255, 23, 68, 0.5) !important;
+    }
+    #rest-timer-bar.overtime #timer-badge-pill {
+      background: rgba(255, 23, 68, 0.25) !important;
+      color: #FF8A80 !important;
+      border-color: rgba(255, 23, 68, 0.5) !important;
+    }
+    #rest-timer-bar.overtime #timer-confirm-btn {
+      background: #FF1744 !important;
+      color: #ffffff !important;
+      box-shadow: 0 6px 20px rgba(255, 23, 68, 0.5) !important;
+    }
+    #rest-timer-bar.overtime #timer-display {
+      color: #FF8A80 !important;
+      border-color: rgba(255, 23, 68, 0.45) !important;
+      background: rgba(0, 0, 0, 0.45) !important;
+      text-shadow: 0 4px 16px rgba(255, 23, 68, 0.35) !important;
+    }
+    #rest-timer-bar.overtime #timer-target-ref {
+      color: #FFCDD2 !important;
+    }
+    #rest-timer-bar.overtime #timer-quick-adjust-row button {
+      color: #FFCDD2 !important;
+      border-color: rgba(255, 23, 68, 0.4) !important;
+      background: rgba(0, 0, 0, 0.45) !important;
+    }
+    @keyframes pulseOvertime {
+      0% { transform: scale(1); }
+      100% { transform: scale(1.03); }
     }
     .timer-label-row {
       display: flex;
@@ -512,17 +541,24 @@
     </div>
   </header>
 
-  <!-- Full-Screen Focus Overlay (Technical Break & Rest Lock + Stopwatch 1s Upwards) -->
+  <!-- Full-Screen Focus Overlay (Technical Break & Rest Lock) -->
   <div id="rest-timer-bar">
     <div class="focus-overlay-card" id="focus-overlay-card">
       <div class="timer-label-row">
-        <span style="font-size: 11px; background: rgba(0,0,0,0.35); padding: 4px 10px; border-radius: 999px; color: #00E676; border: 1px solid rgba(0,230,118,0.4);">🔒 EKRAN PRZERWY TECHNICZNEJ I ODPOCZYNKU</span>
-        <span id="timer-mode-label" style="font-size: 14px; color: #ffffff; margin-top: 4px;">⏱️ PRZERWA TECHNICZNA / ODPOCZYNEK</span>
-        <span id="timer-overtime-badge" style="display: none; color: #FFE082; font-size: 12px; font-weight: 800;">✅ ODPOCZYNEK OSIĄGNIĘTY — GOTOWY DO SERII</span>
+        <span id="timer-badge-pill" style="font-size: 11px; background: rgba(0,0,0,0.35); padding: 4px 10px; border-radius: 999px; color: #00E676; border: 1px solid rgba(0,230,118,0.4);">🔒 EKRAN PRZERWY I ODPOCZYNKU</span>
+        <span id="timer-mode-label" style="font-size: 14px; color: #ffffff; margin-top: 4px;">⏱️ ODPOCZYNEK / PRZERWA TECHNICZNA</span>
+        <span id="timer-overtime-badge" style="display: none; color: #ffffff; font-size: 12px; font-weight: 800; background: rgba(255, 23, 68, 0.35); padding: 3px 10px; border-radius: 8px; border: 1px solid #FF1744; margin-top: 4px; animation: pulseOvertime 1.2s infinite alternate;">⚠️ ZA DŁUGI ODPOCZYNEK</span>
       </div>
 
-      <div class="timer-big-seconds" id="timer-display">1s</div>
-      <div id="timer-target-ref" style="font-size: 12px; color: #d0f8ce; font-weight: 700; margin-top: -6px;">Stoper w górę od 1s • Cel odpoczynku: 90s</div>
+      <div class="timer-big-seconds" id="timer-display">90s</div>
+      <div id="timer-target-ref" style="font-size: 12px; color: #d0f8ce; font-weight: 700; margin-top: -6px;">⏱️ Planowany odpoczynek: 90s (odliczanie w dół)</div>
+
+      <!-- Quick +/- buttons for rest countdown (hidden for technical breaks) -->
+      <div id="timer-quick-adjust-row" style="display: flex; gap: 8px; margin-top: 2px;">
+        <button type="button" class="btn btn-sm btn-secondary" style="font-size: 12px; padding: 5px 12px; border-radius: 8px; color: #d7ffe8; border-color: rgba(0,230,118,0.3); background: rgba(0,0,0,0.35);" onclick="addTimerSeconds(-15)">-15s</button>
+        <button type="button" class="btn btn-sm btn-secondary" style="font-size: 12px; padding: 5px 12px; border-radius: 8px; color: #d7ffe8; border-color: rgba(0,230,118,0.3); background: rgba(0,0,0,0.35);" onclick="addTimerSeconds(15)">+15s</button>
+        <button type="button" class="btn btn-sm btn-secondary" style="font-size: 12px; padding: 5px 12px; border-radius: 8px; color: #d7ffe8; border-color: rgba(0,230,118,0.3); background: rgba(0,0,0,0.35);" onclick="addTimerSeconds(30)">+30s</button>
+      </div>
 
       <div id="timer-effort-strip" style="width: 100%; margin: 2px 0;"></div>
 
@@ -1352,6 +1388,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=30"></script>
+  <script src="app.js?v=31"></script>
 </body>
 </html>

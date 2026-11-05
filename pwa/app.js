@@ -22,8 +22,11 @@ const STATE = {
   apiKey: localStorage.getItem('iron_gemini_api_key') || '',
   timerInterval: null,
   timerSeconds: 0,
-  timerElapsedSeconds: 1,
+  timerElapsedSeconds: 0,
+  timerRemainingSeconds: 90,
   timerTargetSeconds: 90,
+  timerIsTechnical: false,
+  timerRefText: null,
   currentRestInfo: null,
   workoutDurationInterval: null,
   wakeLockSentinel: null,
@@ -2400,8 +2403,7 @@ function toggleSetComplete(exIdx, sIdx) {
 
     if (navigator.vibrate) navigator.vibrate(50);
 
-    const mainRest = parseInt(STATE.activeWorkout.restSeconds) || 90;
-    const shortRest = parseInt(STATE.activeWorkout.supersetRestSeconds) || 30;
+    const mainRest = parseInt(ex.restSeconds || STATE.activeWorkout.restSeconds) || 90;
 
     if (ssGroup) {
       // Find all exercises belonging to this superset
@@ -2418,13 +2420,13 @@ function toggleSetComplete(exIdx, sIdx) {
         // Exercise finished, but round NOT finished yet: Short technical break to switch station/equipment
         const nextExName = incompleteInSameRound.item.name;
         startRestTimer(
-          shortRest,
-          `⚡ PRZERWA TECHNICZNA • PRZEJŚCIE DO: ${nextExName}`,
+          0,
+          `⚡ PRZERWA TECHNICZNA • PRZYGOTUJ: ${nextExName}`,
           ex.name,
           set.num,
           'superset-short',
-          `Przejście między ćwiczeniami w superserii • Cel: ${shortRest}s`,
-          `✅ OK / Gotowe (Rozpocznij: ${nextExName})`
+          `🔧 Czas na przygotowanie stanowiska pod kolejne ćwiczenie • Brak limitu czasu`,
+          `✅ Gotowe — Stanowisko przygotowane (Rozpocznij: ${nextExName})`
         );
       } else {
         // Round sIdx is fully complete!
@@ -2432,25 +2434,25 @@ function toggleSetComplete(exIdx, sIdx) {
         const hasNextRound = (sIdx + 1) < maxSets;
 
         if (hasNextRound) {
-          // Long rest between rounds
+          // Long rest between rounds (countdown with overtime)
           startRestTimer(
             mainRest,
             `🟢 ODPOCZYNEK PO OBWODZIE ${sIdx + 1}/${maxSets} (SUPERSERIA ${ssGroup})`,
             ex.name,
             set.num,
             'superset-round',
-            `Regeneracja przed Obwodem ${sIdx + 2}/${maxSets} • Cel: ${mainRest}s`,
+            `⏱️ Planowany odpoczynek między obwodami: ${mainRest}s`,
             `✅ OK / Gotowe (Rozpocznij Obwód ${sIdx + 2}/${maxSets})`
           );
         } else {
-          // Superset fully completed!
+          // Superset fully completed! (countdown with overtime)
           startRestTimer(
             mainRest,
             `🎉 UKOŃCZONO SUPERSERIĘ ${ssGroup}! (${maxSets} obwodów)`,
             ex.name,
             set.num,
             'superset-done',
-            `Odpoczynek po zakończeniu całej superserii • Cel: ${mainRest}s`,
+            `⏱️ Planowany odpoczynek po superserii: ${mainRest}s`,
             `✅ OK / Gotowe (Przejdź do kolejnego zadania)`
           );
         }
@@ -2459,25 +2461,25 @@ function toggleSetComplete(exIdx, sIdx) {
       // Standard isolated exercise
       const isLastSet = sIdx >= ex.sets.length - 1;
       if (!isLastSet) {
-        // Rest between sets
+        // Rest between sets (countdown with overtime)
         startRestTimer(
           mainRest,
           `⏱️ ODPOCZYNEK MIĘDZY SERIAMI (SERIA ${set.num}/${ex.sets.length})`,
           ex.name,
           set.num,
           'standard',
-          `Regeneracja przed Serią ${set.num + 1}/${ex.sets.length} • Cel: ${mainRest}s`,
+          `⏱️ Planowany odpoczynek przed Serią ${set.num + 1}/${ex.sets.length}: ${mainRest}s`,
           `✅ OK / Gotowe (Rozpocznij Serię ${set.num + 1}/${ex.sets.length})`
         );
       } else {
-        // Exercise complete
+        // Exercise complete (countdown with overtime)
         startRestTimer(
           mainRest,
           `🟢 UKOŃCZONO ĆWICZENIE: ${ex.name} (${ex.sets.length} serii)`,
           ex.name,
           set.num,
           'exercise-done',
-          `Przerwa techniczna przed kolejnym ćwiczeniem • Cel: ${mainRest}s`,
+          `⏱️ Planowany odpoczynek przed kolejnym ćwiczeniem: ${mainRest}s`,
           `✅ OK / Gotowe (Przejdź do kolejnego ćwiczenia)`
         );
       }
@@ -2546,11 +2548,11 @@ function updateWorkoutStats() {
 }
 
 // ============================================================================
-// MODULE 1: FOCUS OVERLAY — TECHNICAL BREAK & REST LOCK (Stopwatch counting UP from 1s)
+// MODULE 1: FOCUS OVERLAY — DUAL MODE: TECHNICAL BREAK (Count UP) vs REST TIMER (Count DOWN + Red Overtime)
 // ============================================================================
 function startRestTimer(
   targetSeconds = 90,
-  labelText = '🟢 PRZERWA TECHNICZNA I ODPOCZYNEK',
+  labelText = '🟢 ODPOCZYNEK MIĘDZY SERIAMI',
   afterExercise = '',
   afterSet = 1,
   restType = 'standard',
@@ -2558,12 +2560,18 @@ function startRestTimer(
   btnText = null
 ) {
   clearInterval(STATE.timerInterval);
-  STATE.timerElapsedSeconds = 1;
-  STATE.timerTargetSeconds = parseInt(targetSeconds) || 90;
-  STATE.timerSeconds = STATE.timerElapsedSeconds;
+
+  const isTechnical = (restType === 'superset-short');
+  STATE.timerIsTechnical = isTechnical;
+  STATE.timerElapsedSeconds = 0;
+  STATE.timerTargetSeconds = isTechnical ? 0 : (parseInt(targetSeconds) || 90);
+  STATE.timerRemainingSeconds = STATE.timerTargetSeconds;
+  STATE.timerSeconds = isTechnical ? 1 : STATE.timerRemainingSeconds;
+  STATE.timerRefText = refText;
+
   STATE.currentRestInfo = {
     startedAt: Date.now(),
-    plannedSeconds: STATE.timerTargetSeconds,
+    plannedSeconds: isTechnical ? 0 : STATE.timerTargetSeconds,
     afterExercise: afterExercise,
     afterSet: afterSet,
     type: restType,
@@ -2574,31 +2582,60 @@ function startRestTimer(
   document.body.classList.add('focus-lock');
 
   const bar = document.getElementById('rest-timer-bar');
+  const badgePill = document.getElementById('timer-badge-pill');
   const modeLabel = document.getElementById('timer-mode-label');
-  const targetRef = document.getElementById('timer-target-ref');
   const confirmBtn = document.getElementById('timer-confirm-btn');
+  const quickAdjust = document.getElementById('timer-quick-adjust-row');
+  const overtimeBadge = document.getElementById('timer-overtime-badge');
 
-  if (modeLabel) modeLabel.textContent = labelText;
-  if (targetRef) {
-    targetRef.textContent = refText || `${afterExercise ? afterExercise + ' (S' + afterSet + ') • ' : ''}Cel odpoczynku: ${STATE.timerTargetSeconds}s`;
-  }
-  if (confirmBtn) {
-    confirmBtn.textContent = btnText || '✅ OK / Gotowe (Kolejny zestaw)';
-  }
   if (bar) {
     bar.classList.remove('overtime');
     bar.style.display = 'flex';
   }
 
+  if (badgePill) {
+    if (isTechnical) {
+      badgePill.textContent = '🔧 PRZYGOTOWANIE STANOWISKA';
+    } else {
+      badgePill.textContent = '⏱️ CZAS NA ODPOCZYNEK';
+    }
+  }
+
+  if (modeLabel) modeLabel.textContent = labelText;
+
+  if (confirmBtn) {
+    confirmBtn.textContent = btnText || (isTechnical ? '✅ Gotowe — Stanowisko przygotowane' : '✅ OK / Gotowe (Kolejna seria)');
+  }
+
+  if (quickAdjust) {
+    quickAdjust.style.display = isTechnical ? 'none' : 'flex';
+  }
+
+  if (overtimeBadge) {
+    overtimeBadge.style.display = 'none';
+  }
+
+  // Initial UI render
   updateTimerDisplayUI();
 
   STATE.timerInterval = setInterval(() => {
     STATE.timerElapsedSeconds++;
-    STATE.timerSeconds = STATE.timerElapsedSeconds;
-    if (STATE.timerElapsedSeconds === STATE.timerTargetSeconds) {
-      if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 250]);
+
+    if (STATE.timerIsTechnical) {
+      // Technical break: counts upwards continuously from 1s, never overtime
+      STATE.timerSeconds = Math.max(1, STATE.timerElapsedSeconds);
+      updateTimerDisplayUI();
+    } else {
+      // Planned rest: counts downwards from targetSeconds
+      STATE.timerRemainingSeconds--;
+      STATE.timerSeconds = STATE.timerRemainingSeconds;
+
+      if (STATE.timerRemainingSeconds === 0) {
+        if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 250]);
+      }
+
+      updateTimerDisplayUI();
     }
-    updateTimerDisplayUI();
   }, 1000);
 }
 
@@ -2606,28 +2643,62 @@ function updateTimerDisplayUI() {
   const bar = document.getElementById('rest-timer-bar');
   const display = document.getElementById('timer-display');
   const overtimeBadge = document.getElementById('timer-overtime-badge');
+  const targetRef = document.getElementById('timer-target-ref');
   if (!display || !bar) return;
 
-  const elapsed = Math.max(1, STATE.timerElapsedSeconds || 1);
-  const target = STATE.timerTargetSeconds || 90;
-
-  display.textContent = `${elapsed}s`;
-
-  if (elapsed >= target) {
-    if (overtimeBadge) {
-      overtimeBadge.style.display = 'inline-block';
-      const extra = elapsed - target;
-      overtimeBadge.textContent = extra > 0
-        ? `✅ ODPOCZYNEK OSIĄGNIĘTY (+${extra}s)`
-        : `✅ ODPOCZYNEK OSIĄGNIĘTY — GOTOWY DO SERII`;
+  if (STATE.timerIsTechnical) {
+    // Technical Break: Count UP from 1s indefinitely
+    const elapsed = Math.max(1, STATE.timerElapsedSeconds || 1);
+    display.textContent = `${elapsed}s`;
+    bar.classList.remove('overtime');
+    if (overtimeBadge) overtimeBadge.style.display = 'none';
+    if (targetRef) {
+      targetRef.textContent = STATE.timerRefText || '🔧 Czas na przygotowanie stanowiska • Stoper liczy czas w górę (brak limitu)';
     }
   } else {
-    if (overtimeBadge) overtimeBadge.style.display = 'none';
+    // Planned Rest: Count DOWN from targetSeconds
+    const remaining = STATE.timerRemainingSeconds;
+    const target = STATE.timerTargetSeconds || 90;
+
+    if (remaining > 0) {
+      // On track: green background
+      bar.classList.remove('overtime');
+      display.textContent = `${remaining}s`;
+      if (overtimeBadge) overtimeBadge.style.display = 'none';
+      if (targetRef) {
+        targetRef.textContent = STATE.timerRefText || `⏱️ Planowany odpoczynek: ${target}s (odliczanie w dół)`;
+      }
+    } else if (remaining === 0) {
+      // Hit 0s
+      bar.classList.remove('overtime');
+      display.textContent = `0s`;
+      if (overtimeBadge) {
+        overtimeBadge.style.display = 'inline-block';
+        overtimeBadge.textContent = `🔔 CZAS MINĄŁ — ROZPOCZNIJ SERIĘ!`;
+      }
+      if (targetRef) {
+        targetRef.textContent = `🔔 Koniec zaplanowanego odpoczynku (${target}s)`;
+      }
+    } else {
+      // Overtime! (remaining < 0) -> Count in reverse (+1s, +2s...) with RED background
+      bar.classList.add('overtime');
+      const overSec = Math.abs(remaining);
+      display.textContent = `+${overSec}s`;
+      if (overtimeBadge) {
+        overtimeBadge.style.display = 'inline-block';
+        overtimeBadge.textContent = `⚠️ ZA DŁUGI ODPOCZYNEK: +${overSec}s`;
+      }
+      if (targetRef) {
+        targetRef.textContent = `⚠️ Przekroczono zaplanowany czas odpoczynku (${target}s)`;
+      }
+    }
   }
 }
 
 function addTimerSeconds(secs) {
+  if (STATE.timerIsTechnical) return;
   STATE.timerTargetSeconds = Math.max(10, (STATE.timerTargetSeconds || 90) + secs);
+  STATE.timerRemainingSeconds = (STATE.timerRemainingSeconds || 0) + secs;
   if (STATE.currentRestInfo) {
     STATE.currentRestInfo.plannedSeconds = STATE.timerTargetSeconds;
   }
@@ -2639,9 +2710,10 @@ function finalizeCurrentRestLog(nextExerciseName = null, nextSetNum = null) {
   if (!STATE.activeWorkout.restLogs) STATE.activeWorkout.restLogs = [];
 
   if (STATE.currentRestInfo && !STATE.currentRestInfo.logged) {
+    const isTech = (STATE.currentRestInfo.type === 'superset-short');
     const actualSec = Math.max(1, STATE.timerElapsedSeconds || Math.round((Date.now() - STATE.currentRestInfo.startedAt) / 1000));
-    const plannedSec = STATE.currentRestInfo.plannedSeconds || 90;
-    const overtimeSec = Math.max(0, actualSec - plannedSec);
+    const plannedSec = isTech ? 0 : (STATE.currentRestInfo.plannedSeconds || 90);
+    const overtimeSec = isTech ? 0 : Math.max(0, actualSec - plannedSec);
 
     STATE.activeWorkout.restLogs.push({
       afterExercise: STATE.currentRestInfo.afterExercise,
