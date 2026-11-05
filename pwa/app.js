@@ -3167,54 +3167,12 @@ function updateGeminiModelBadges(model, isFallback = false, keyLabel = '') {
   }
 }
 
-async function discoverGeminiModelsForKey(key) {
-  const discovered = [];
-  const versions = ['v1', 'v1beta'];
-  const errors = [];
-
-  for (const ver of versions) {
-    try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/${ver}/models?key=${key}`);
-      const data = await res.json();
-      if (data.models && Array.isArray(data.models)) {
-        for (const m of data.models) {
-          const rawName = (m.name || '').replace(/^models\//, '');
-          if (!rawName) continue;
-          const methods = m.supportedGenerationMethods || [];
-          if (methods.includes('generateContent')) {
-            const n = rawName.toLowerCase();
-            if (!n.startsWith('gemini-')) continue;
-            if (n === 'gemini-pro' || n === 'gemini-pro-vision') continue; // legacy 1.0 deprecated
-            if (n.includes('embedding') || n.includes('aqa') || n.includes('imagen')) continue;
-
-            if (!discovered.some(d => d.name === rawName && d.apiVersion === ver)) {
-              discovered.push({
-                name: rawName,
-                apiVersion: ver,
-                displayName: m.displayName || rawName,
-                tier: getGeminiModelTier(rawName),
-                score: getGeminiModelVersionScore(rawName)
-              });
-            }
-          }
-        }
-      } else if (data.error) {
-        errors.push({ version: ver, ...data.error });
-      }
-    } catch (e) {
-      errors.push({ version: ver, message: e.message });
-    }
-  }
-
-  return { models: discovered, errors };
-}
-
 async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
   const primaryKey = (STATE.apiKey || '').trim();
   const backupKey = (STATE.backupApiKey || '').trim();
 
   const keysToTry = [];
-  if (primaryKey) keysToTry.push({ key: primaryKey, label: 'Klucz główny' });
+  if (primaryKey) keysToTry.push({ key: primaryKey, label: 'Klucz główny (Projekt 1)' });
   if (backupKey && backupKey !== primaryKey) keysToTry.push({ key: backupKey, label: 'Klucz zapasowy (Projekt 2)' });
 
   if (keysToTry.length === 0) {
@@ -3223,69 +3181,41 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
     throw new Error('Brak klucza Gemini API');
   }
 
-  // Discover actual available models dynamically across both v1 and v1beta
-  let discoveredList = [];
-  for (const { key } of keysToTry) {
-    const disc = await discoverGeminiModelsForKey(key);
-    if (disc.models && disc.models.length > 0) {
-      discoveredList = disc.models;
-      break;
-    }
-  }
-
-  const STATIC_FALLBACKS = [
-    // Tier 1 Pro
-    { name: 'gemini-3.1-pro', apiVersion: 'v1beta', tier: 1, score: 42 },
-    { name: 'gemini-2.5-pro', apiVersion: 'v1beta', tier: 1, score: 30 },
-    { name: 'gemini-1.5-pro', apiVersion: 'v1', tier: 1, score: 20 },
-    // Tier 2 Flash (matches active AI Studio models)
-    { name: 'gemini-3.8-flash', apiVersion: 'v1beta', tier: 2, score: 50 },
-    { name: 'gemini-3.6-flash', apiVersion: 'v1beta', tier: 2, score: 48 },
-    { name: 'gemini-3-flash', apiVersion: 'v1beta', tier: 2, score: 40 },
-    { name: 'gemini-2.5-flash', apiVersion: 'v1beta', tier: 2, score: 30 },
-    { name: 'gemini-2-flash', apiVersion: 'v1beta', tier: 2, score: 22 },
-    { name: 'gemini-1.5-flash', apiVersion: 'v1', tier: 2, score: 20 },
-    // Tier 3 Lite (500 requests/day in AI Studio!)
-    { name: 'gemini-3.5-flash-lite', apiVersion: 'v1beta', tier: 3, score: 45 },
-    { name: 'gemini-3.1-flash-lite', apiVersion: 'v1beta', tier: 3, score: 42 },
-    { name: 'gemini-2.5-flash-lite', apiVersion: 'v1beta', tier: 3, score: 30 },
-    { name: 'gemini-2-flash-lite', apiVersion: 'v1beta', tier: 3, score: 22 },
-    { name: 'gemini-1.5-flash-8b', apiVersion: 'v1', tier: 3, score: 10 }
+  // Active models confirmed from Google AI Studio dashboard
+  const ACTIVE_TIER_FLASH = [
+    'gemini-3.8-flash',
+    'gemini-3.6-flash',
+    'gemini-3-flash',
+    'gemini-2.5-flash'
   ];
 
-  const pool = discoveredList.length > 0 ? discoveredList : STATIC_FALLBACKS;
+  const ACTIVE_TIER_LITE = [
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
+    'gemini-2.5-flash-lite'
+  ];
 
-  const tier1Models = pool.filter(m => m.tier === 1);
-  const tier2Models = pool.filter(m => m.tier === 2);
-  const tier3Models = pool.filter(m => m.tier === 3);
-  const tier4Models = pool.filter(m => m.tier === 4);
-
-  const sortByScore = (list) => [...list].sort((a, b) => b.score - a.score);
-
-  const sortedTier1 = sortByScore(tier1Models);
-  const sortedTier2 = sortByScore(tier2Models);
-  const sortedTier3 = sortByScore(tier3Models);
-  const sortedTier4 = sortByScore(tier4Models);
+  const ACTIVE_TIER_PRO = [
+    'gemini-3.1-pro',
+    'gemini-2.5-pro'
+  ];
 
   // Quality-First Tier Ordering:
   // We prioritize higher tier models across ALL keys before degrading to lower tiers!
   const orderedTiers = [];
   if (preferredTier === 'smart') {
-    orderedTiers.push({ tierNum: 1, name: 'Pro', models: sortedTier1 });
-    orderedTiers.push({ tierNum: 2, name: 'Flash', models: sortedTier2 });
-    orderedTiers.push({ tierNum: 3, name: 'Lite', models: sortedTier3 });
-    if (sortedTier4.length > 0) orderedTiers.push({ tierNum: 4, name: 'Exp', models: sortedTier4 });
+    orderedTiers.push({ tierNum: 1, name: 'Pro', models: ACTIVE_TIER_PRO });
+    orderedTiers.push({ tierNum: 2, name: 'Flash', models: ACTIVE_TIER_FLASH });
+    orderedTiers.push({ tierNum: 3, name: 'Lite', models: ACTIVE_TIER_LITE });
   } else if (preferredTier === 'lite') {
-    orderedTiers.push({ tierNum: 3, name: 'Lite', models: sortedTier3 });
-    orderedTiers.push({ tierNum: 2, name: 'Flash', models: sortedTier2 });
-    orderedTiers.push({ tierNum: 1, name: 'Pro', models: sortedTier1 });
-    if (sortedTier4.length > 0) orderedTiers.push({ tierNum: 4, name: 'Exp', models: sortedTier4 });
+    orderedTiers.push({ tierNum: 3, name: 'Lite', models: ACTIVE_TIER_LITE });
+    orderedTiers.push({ tierNum: 2, name: 'Flash', models: ACTIVE_TIER_FLASH });
+    orderedTiers.push({ tierNum: 1, name: 'Pro', models: ACTIVE_TIER_PRO });
   } else {
     // Default 'fast'
-    orderedTiers.push({ tierNum: 2, name: 'Flash', models: sortedTier2 });
-    orderedTiers.push({ tierNum: 3, name: 'Lite', models: sortedTier3 });
-    orderedTiers.push({ tierNum: 1, name: 'Pro', models: sortedTier1 });
-    if (sortedTier4.length > 0) orderedTiers.push({ tierNum: 4, name: 'Exp', models: sortedTier4 });
+    orderedTiers.push({ tierNum: 2, name: 'Flash', models: ACTIVE_TIER_FLASH });
+    orderedTiers.push({ tierNum: 3, name: 'Lite', models: ACTIVE_TIER_LITE });
+    orderedTiers.push({ tierNum: 1, name: 'Pro', models: ACTIVE_TIER_PRO });
   }
 
   const parts = [{ text: prompt }];
@@ -3322,9 +3252,7 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
     quotaExhaustedKeyIndices.clear();
 
     for (let mIdx = 0; mIdx < tierModels.length; mIdx++) {
-      const modelObj = tierModels[mIdx];
-      const modelName = modelObj.name;
-      const primaryApiVer = modelObj.apiVersion || 'v1';
+      const modelName = tierModels[mIdx];
 
       if (quotaExhaustedKeyIndices.size >= keysToTry.length) {
         break;
@@ -3338,71 +3266,59 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
         const { key, label } = keysToTry[kIdx];
         attemptCount++;
 
-        // Support dual version resolution (try primaryApiVer, then alternate if 404)
-        const apiVersionsToTry = [primaryApiVer, primaryApiVer === 'v1' ? 'v1beta' : 'v1'];
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`;
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: parts }] })
+          });
 
-        for (const ver of apiVersionsToTry) {
-          try {
-            const url = `https://generativelanguage.googleapis.com/${ver}/models/${modelName}:generateContent?key=${key}`;
-            const response = await fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ contents: [{ parts: parts }] })
-            });
-
-            if (response.ok) {
-              const data = await response.json();
-              const resParts = data.candidates?.[0]?.content?.parts || [];
-              const text = resParts.map(p => p.text || '').join('').trim();
-              if (text) {
-                const isFallback = (attemptCount > 1 || kIdx > 0 || tIdx > 0);
-                if (isFallback) {
-                  const reasonsSummary = allAttempts.map(a => `${a.model} [${a.keyLabel}] (${a.reason})`).join(', ');
-                  console.warn(`[Gemini Auto-Fallback] Użyto ${modelName} (${ver}) [${label}] po wcześniejszych próbach: ${reasonsSummary}`);
-                  STATE.lastGeminiFallback = {
-                    usedModel: `${modelName} (${ver})`,
-                    usedKeyLabel: label,
-                    failedModels: [...allAttempts],
-                    timestamp: Date.now()
-                  };
-                } else {
-                  STATE.lastGeminiFallback = null;
-                }
-
-                updateGeminiModelBadges(modelName, isFallback, label);
-                return text;
+          if (response.ok) {
+            const data = await response.json();
+            const resParts = data.candidates?.[0]?.content?.parts || [];
+            const text = resParts.map(p => p.text || '').join('').trim();
+            if (text) {
+              const isFallback = (attemptCount > 1 || kIdx > 0 || tIdx > 0);
+              if (isFallback) {
+                const reasonsSummary = allAttempts.map(a => `${a.model} [${a.keyLabel}] (${a.reason})`).join(', ');
+                console.warn(`[Gemini Auto-Fallback] Użyto ${modelName} [${label}] po wcześniejszych próbach: ${reasonsSummary}`);
+                STATE.lastGeminiFallback = {
+                  usedModel: modelName,
+                  usedKeyLabel: label,
+                  failedModels: [...allAttempts],
+                  timestamp: Date.now()
+                };
               } else {
-                allAttempts.push({ keyLabel: label, model: `${modelName} (${ver})`, status: 200, reason: 'Pusta odpowiedź (brak treści)' });
+                STATE.lastGeminiFallback = null;
               }
+
+              updateGeminiModelBadges(modelName, isFallback, label);
+              return text;
             } else {
-              const errJson = await response.json().catch(() => ({}));
-              const status = response.status;
-              const rawMsg = errJson.error?.message || `HTTP ${status}`;
-
-              if (status === 404 && ver === apiVersionsToTry[0]) {
-                // Try alternate API version before giving up
-                continue;
-              }
-
-              let reason = `HTTP ${status}`;
-              if (status === 429 || rawMsg.toLowerCase().includes('quota') || rawMsg.toLowerCase().includes('resource_exhausted')) {
-                reason = 'Wyczerpany limit (Quota / 429)';
-                quotaExhaustedKeyIndices.add(kIdx);
-              } else if (status === 404) {
-                reason = 'Model niedostępny (404)';
-              } else if (status === 503 || status === 500) {
-                reason = 'Serwer przeciążony (503)';
-              }
-
-              allAttempts.push({ keyLabel: label, model: `${modelName} (${ver})`, status, reason, details: rawMsg });
-              console.warn(`[Gemini Auto-Fallback] ${label} | Model ${modelName} (${ver}) zwrócił ${reason}. Przechodzę do kolejnej próby...`);
-              break; // Don't try other version if not 404
+              allAttempts.push({ keyLabel: label, model: modelName, status: 200, reason: 'Pusta odpowiedź (brak treści)' });
             }
-          } catch (networkErr) {
-            allAttempts.push({ keyLabel: label, model: `${modelName} (${ver})`, status: 0, reason: 'Błąd sieci', details: networkErr.message });
-            console.warn(`[Gemini Auto-Fallback] Błąd sieci dla modelu ${modelName} (${ver}) [${label}]:`, networkErr);
-            break;
+          } else {
+            const errJson = await response.json().catch(() => ({}));
+            const status = response.status;
+            const rawMsg = errJson.error?.message || `HTTP ${status}`;
+
+            let reason = `HTTP ${status}`;
+            if (status === 429 || rawMsg.toLowerCase().includes('quota') || rawMsg.toLowerCase().includes('resource_exhausted')) {
+              reason = 'Wyczerpany limit (Quota / 429)';
+              quotaExhaustedKeyIndices.add(kIdx);
+            } else if (status === 404) {
+              reason = 'Model niedostępny (404)';
+            } else if (status === 503 || status === 500) {
+              reason = 'Serwer przeciążony (503)';
+            }
+
+            allAttempts.push({ keyLabel: label, model: modelName, status, reason, details: rawMsg });
+            console.warn(`[Gemini Auto-Fallback] ${label} | Model ${modelName} zwrócił ${reason}. Przechodzę do kolejnej próby...`);
           }
+        } catch (networkErr) {
+          allAttempts.push({ keyLabel: label, model: modelName, status: 0, reason: 'Błąd sieci', details: networkErr.message });
+          console.warn(`[Gemini Auto-Fallback] Błąd sieci dla modelu ${modelName} [${label}]:`, networkErr);
         }
       }
     }
@@ -6666,101 +6582,108 @@ async function testApiKeysConnection() {
   if (!statusEl) return;
 
   statusEl.style.display = 'block';
-  statusEl.innerHTML = '<span style="color: var(--accent);">⏳ Badam listę modeli (v1 i v1beta) i testuję połączenie z Google...</span>';
+  statusEl.innerHTML = '<span style="color: var(--accent);">⏳ Testuję połączenie z Google AI Studio (równolegle dla obu kluczy)...</span>';
 
-  const testKey = async (key, label) => {
-    if (!key) return `• <b>${label}</b>: <span style="color: var(--text-muted);">⚪ Brak wpisanego klucza</span>`;
-    
-    // Step 1: Discover models dynamically across v1 and v1beta
-    const { models, errors } = await discoverGeminiModelsForKey(key);
-    
-    if (models.length === 0 && errors.length > 0) {
-      const firstErr = errors[0];
-      const errMsg = firstErr.message || JSON.stringify(firstErr);
-      const isAuth = firstErr.code === 400 || firstErr.code === 403 || errMsg.toLowerCase().includes('api_key');
-      const isQuota = firstErr.code === 429 || errMsg.toLowerCase().includes('quota');
-      if (isAuth) {
-        return `• <b>${label}</b>: <span style="color: var(--danger); font-weight: 700;">❌ Błąd klucza (${escapeHtml(errMsg)})</span>`;
-      }
-      if (isQuota) {
-        return `• <b>${label}</b>: <span style="color: #ffb74d; font-weight: 700;">⏳ Limit zapytań wyczerpany (Quota 429: ${escapeHtml(errMsg)})</span>`;
-      }
-      return `• <b>${label}</b>: <span style="color: var(--danger);">⚠️ Błąd pobierania modeli: ${escapeHtml(errMsg)}</span>`;
-    }
+  const testSingleKey = async (key, label) => {
+    if (!key) return { label, ok: false, empty: true, text: `• <b>${label}</b>: <span style="color: var(--text-muted);">⚪ Brak wpisanego klucza</span>` };
 
-    // Step 2: Candidates to ping
-    const pool = models.length > 0 ? models : [
-      { name: 'gemini-3.8-flash', apiVersion: 'v1beta', tier: 2, score: 50 },
-      { name: 'gemini-3.6-flash', apiVersion: 'v1beta', tier: 2, score: 48 },
-      { name: 'gemini-3.5-flash-lite', apiVersion: 'v1beta', tier: 3, score: 45 },
-      { name: 'gemini-2.5-flash', apiVersion: 'v1beta', tier: 2, score: 30 },
-      { name: 'gemini-1.5-flash', apiVersion: 'v1', tier: 2, score: 20 }
+    const modelsToTry = [
+      { name: 'gemini-3.8-flash', desc: 'Flash (główny model do analiz i czatu)' },
+      { name: 'gemini-3.5-flash-lite', desc: 'Flash-Lite (wysoki limit 500 req/dzień)' }
     ];
 
-    const sorted = [...pool].sort((a, b) => {
-      if (a.tier === 2 && b.tier !== 2) return -1;
-      if (b.tier === 2 && a.tier !== 2) return 1;
-      return b.score - a.score;
-    });
+    let lastError = null;
+    let quotaHit = false;
 
-    const modelNamesList = models.map(m => `${m.name} (${m.apiVersion})`).slice(0, 6).join(', ');
+    for (const item of modelsToTry) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-    let pingSuccess = false;
-    let pingModelUsed = '';
-    let pingErrorMsg = '';
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${item.name}:generateContent?key=${key}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: 'ping' }] }] }),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
 
-    for (const cand of sorted.slice(0, 4)) {
-      const vers = [cand.apiVersion, cand.apiVersion === 'v1' ? 'v1beta' : 'v1'];
-      for (const ver of vers) {
-        try {
-          const pingUrl = `https://generativelanguage.googleapis.com/${ver}/models/${cand.name}:generateContent?key=${key}`;
-          const pRes = await fetch(pingUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: [{ text: 'ping' }] }] })
-          });
-          if (pRes.ok) {
-            pingSuccess = true;
-            pingModelUsed = `${cand.name} (${ver})`;
-            break;
-          } else {
-            const pErr = await pRes.json().catch(() => ({}));
-            pingErrorMsg = pErr.error?.message || `HTTP ${pRes.status}`;
-            if (pRes.status === 429) break;
-          }
-        } catch (e) {
-          pingErrorMsg = e.message;
+        if (res.ok) {
+          const quotaNote = quotaHit ? ' <span style="font-size: 11px; color: #ffb74d;">(Flash osiągnął limit, ale Flash-Lite ma 500 zapytań/dzień!)</span>' : '';
+          return {
+            label,
+            ok: true,
+            model: item.name,
+            text: `• <b>${label}</b>: <span style="color: var(--success); font-weight: 700;">✅ Działa! Połączenie nawiązane (${escapeHtml(item.name)})</span>${quotaNote}`
+          };
         }
+
+        const errJson = await res.json().catch(() => ({}));
+        const status = res.status;
+        const msg = errJson.error?.message || `HTTP ${status}`;
+
+        if (status === 429 || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource_exhausted')) {
+          quotaHit = true;
+          lastError = { status: 429, msg: 'Limit dobowy wyczerpany (Quota 429)' };
+          // Try Flash-Lite next because it has a separate 500 RPD pool!
+          continue;
+        }
+
+        if (status === 400 || status === 403 || msg.toLowerCase().includes('api_key')) {
+          return {
+            label,
+            ok: false,
+            text: `• <b>${label}</b>: <span style="color: var(--danger); font-weight: 700;">❌ Nieprawidłowy klucz (${escapeHtml(msg)})</span>`
+          };
+        }
+
+        lastError = { status, msg };
+      } catch (err) {
+        clearTimeout(timeoutId);
+        const isTimeout = err.name === 'AbortError';
+        const msg = isTimeout ? 'Przekroczono czas oczekiwania (timeout 6s)' : (err.message || 'Błąd sieci');
+        lastError = { status: 0, msg };
       }
-      if (pingSuccess) break;
-      if (pingErrorMsg.toLowerCase().includes('quota') || pingErrorMsg.includes('429')) break;
     }
 
-    if (pingSuccess) {
-      const listInfo = modelNamesList ? `<br><span style="font-size: 11px; color: var(--text-muted); padding-left: 14px;">Dostępne w Twoim projekcie: ${escapeHtml(modelNamesList)}</span>` : '';
-      return `• <b>${label}</b>: <span style="color: var(--success); font-weight: 700;">✅ Działa! Połączenie nawiązane (${escapeHtml(pingModelUsed)})</span>${listInfo}`;
+    if (quotaHit) {
+      return {
+        label,
+        ok: false,
+        isQuota: true,
+        text: `• <b>${label}</b>: <span style="color: #ffb74d; font-weight: 700;">⏳ Limit zapytań wyczerpany na dziś (Quota 429)</span>`
+      };
     }
 
-    if (pingErrorMsg.toLowerCase().includes('quota') || pingErrorMsg.includes('429')) {
-      return `• <b>${label}</b>: <span style="color: #ffb74d; font-weight: 700;">⏳ Limit dobowy wyczerpany (Quota 429: ${escapeHtml(pingErrorMsg)})</span>`;
-    }
-
-    return `• <b>${label}</b>: <span style="color: var(--danger); font-weight: 700;">⚠️ Błąd testu: ${escapeHtml(pingErrorMsg)}</span>`;
+    return {
+      label,
+      ok: false,
+      text: `• <b>${label}</b>: <span style="color: var(--danger); font-weight: 700;">⚠️ Błąd połączenia: ${escapeHtml(lastError?.msg || 'Nieznany')}</span>`
+    };
   };
 
-  const res1 = await testKey(primaryKey, 'Klucz główny');
-  const res2 = await testKey(backupKey, 'Klucz zapasowy');
+  try {
+    const [res1, res2] = await Promise.all([
+      testSingleKey(primaryKey, 'Klucz główny (Projekt 1)'),
+      testSingleKey(backupKey, 'Klucz zapasowy (Projekt 2)')
+    ]);
 
-  let hint = '';
-  if (primaryKey && backupKey && primaryKey === backupKey) {
-    hint = '<div style="margin-top: 8px; color: #ffb74d;">⚠️ <b>Uwaga:</b> Oba wpisane klucze są identyczne! Klucz zapasowy musi pochodzić z osobnego projektu.</div>';
-  } else if (res1.includes('429') && res2.includes('429')) {
-    hint = '<div style="margin-top: 8px; color: #ffb74d;">💡 <b>Diagnoza:</b> Oba klucze zwróciły Quota 429. Oznacza to, że klucz zapasowy został wygenerowany w <u>tym samym projekcie Google Cloud</u> co klucz główny i dzielą tę samą wyczerpaną pulę. W Google AI Studio kliknij "Create API key in <b>NEW project</b>".</div>';
-  } else if (res2.includes('Działa')) {
-    hint = '<div style="margin-top: 8px; color: var(--success);">🎉 <b>Super!</b> Klucz zapasowy działa poprawnie!</div>';
+    let hint = '';
+    if (primaryKey && backupKey && primaryKey === backupKey) {
+      hint = '<div style="margin-top: 8px; color: #ffb74d;">⚠️ <b>Uwaga:</b> Oba wpisane klucze są identyczne! Klucz zapasowy musi pochodzić z osobnego projektu w Google AI Studio, aby posiadał osobną pulę tokenów.</div>';
+    } else if (res1.isQuota && res2.ok) {
+      hint = '<div style="margin-top: 8px; color: var(--success); font-weight: 600;">🎉 <b>Inteligentny Failover gotowy:</b> Główny klucz wyczerpał dziś limit, ale Klucz zapasowy działa i natychmiast przejmie wszystkie zapytania w IronCoach!</div>';
+    } else if (res1.ok && res2.ok) {
+      hint = '<div style="margin-top: 8px; color: var(--success); font-weight: 600;">🎉 <b>Wszystko działa idealnie!</b> Oba projekty są aktywne i gotowe do pracy z podwójną pulą zapytań.</div>';
+    } else if (res1.isQuota && res2.isQuota) {
+      hint = '<div style="margin-top: 8px; color: #ffb74d;">💡 <b>Diagnoza:</b> Oba klucze zwróciły Quota 429. Jeśli klucze są z różnych projektów, w obu osiągnięto dzienny limit. Limity resetują się o północy czasu Pacyfiku (9:00 rano czasu PL).</div>';
+    }
+
+    statusEl.innerHTML = `<div style="text-align: left; font-size: 12px; line-height: 1.6;">${res1.text}<br>${res2.text}${hint}</div>`;
+  } catch (globalErr) {
+    statusEl.innerHTML = `<span style="color: var(--danger);">⚠️ Wystąpił błąd podczas testu: ${escapeHtml(globalErr.message)}</span>`;
   }
-
-  statusEl.innerHTML = `<div style="text-align: left; font-size: 12px; line-height: 1.6;">${res1}<br>${res2}${hint}</div>`;
 }
 
 function buildFullBackupObject() {
