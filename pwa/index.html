@@ -784,6 +784,7 @@
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 6px;">
           <div style="display: flex; align-items: center; gap: 6px;">
             <span style="font-weight: 800; font-size: 15px;">💬 Czaty z Trenerem AI</span>
+            <span id="coach-model-badge" style="font-size: 10px; color: var(--accent); background: rgba(0,229,255,0.12); padding: 2px 7px; border-radius: 999px; border: 1px solid rgba(0,229,255,0.25); display: none;" title="Model AI aktualnie obsługujący asystenta"></span>
           </div>
           <div style="display: flex; gap: 5px;">
             <button class="btn btn-sm btn-accent" style="font-size: 11px; padding: 5px 10px;" onclick="createNewCoachThread()">➕ Nowy wątek</button>
@@ -1185,16 +1186,33 @@
       </div>
 
       <div class="card">
-        <div class="card-title">🔑 Klucz Gemini API</div>
+        <div class="card-title">🔑 Klucz Gemini API i Modele</div>
         <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 10px;">
-          Potrzebny do analizy sesji i importu z Keep. Możesz go wygenerować bezpłatnie w Google AI Studio.
+          Potrzebny do asystenta AI, analizy sesji i importu z Keep. Możesz go wygenerować bezpłatnie w Google AI Studio.
         </p>
-        <input type="password" id="gemini-api-key" class="input-box" style="text-align: left; margin-bottom: 10px;" placeholder="AIzaSy...">
-        <div style="display: flex; gap: 8px;">
+        <div style="position: relative; margin-bottom: 10px;">
+          <input type="password" id="gemini-api-key" class="input-box" style="text-align: left; padding-right: 42px;" placeholder="AIzaSy..." autocomplete="off" autocapitalize="none" spellcheck="false">
+          <button type="button" onclick="toggleApiKeyVisibility()" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 16px; cursor: pointer;" title="Pokaż/Ukryj klucz">👁️</button>
+        </div>
+        <div style="display: flex; gap: 8px; margin-bottom: 14px;">
           <button class="btn btn-primary" onclick="saveApiKey()">Zapisz Klucz</button>
           <a href="https://aistudio.google.com/app/apikey" target="_blank" class="btn btn-secondary" style="text-decoration: none; width: auto; font-size: 13px;">Pobierz darmowy klucz ↗</a>
         </div>
-        <p id="api-key-status" style="color: var(--success); font-size: 13px; margin-top: 8px; display: none;">✅ Zapisano pomyślnie!</p>
+        <p id="api-key-status" style="color: var(--success); font-size: 13px; margin-top: -6px; margin-bottom: 10px; display: none;">✅ Zapisano pomyślnie!</p>
+
+        <div style="border-top: 1px solid var(--border); padding-top: 10px; margin-top: 6px;">
+          <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Preferowany poziom / model główny</label>
+          <select id="gemini-preferred-tier" class="input-box" style="text-align: left; margin-bottom: 8px; font-size: 13px;" onchange="savePreferredGeminiTier(this.value)">
+            <option value="smart">💎 Najwyższy poziom (Pro ➔ Flash ➔ Flash-Lite)</option>
+            <option value="fast">⚡ Szybki poziom (Flash ➔ Flash-Lite ➔ Pro)</option>
+            <option value="lite">🍃 Maksymalne limity (Flash-Lite ➔ Flash ➔ Pro)</option>
+          </select>
+          <div style="background: rgba(0, 229, 255, 0.05); border: 1px solid rgba(0, 229, 255, 0.2); border-radius: 8px; padding: 8px; font-size: 11px; color: var(--text-muted); line-height: 1.45;">
+            🔄 <b>Kaskadowy Auto-Fallback przy wyczerpaniu limitu:</b><br>
+            Gdy na modelu wyższego rzędu (np. <i>Gemini 2.5 Pro</i> / <i>2.0 Pro</i>) wyczerpie się darmowy limit zapytań (błąd <code>429 Quota Exceeded</code>), aplikacja natychmiast i automatycznie schodzi o poziom niżej na <i>Gemini Flash</i>, a w razie potrzeby na <i>Flash-Lite</i>. Błąd pojawi się dopiero wtedy, gdy żaden model w Google AI Studio nie odpowie.
+          </div>
+          <div id="gemini-last-used-info" style="margin-top: 8px; font-size: 11px; color: var(--accent); display: none;"></div>
+        </div>
       </div>
 
       <div class="card">
@@ -1400,6 +1418,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=35"></script>
+  <script src="app.js?v=36"></script>
 </body>
 </html>
