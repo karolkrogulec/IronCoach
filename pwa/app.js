@@ -2072,6 +2072,34 @@ async function finishCurrentWorkout() {
 // ============================================================================
 // GEMINI AI INTEGRATION (Supports Text & Multi-Image/PDF Multimodal Requests)
 // ============================================================================
+function extractJsonFromGemini(rawText) {
+  if (!rawText || typeof rawText !== 'string') {
+    throw new Error('Pusta odpowiedź od modelu AI.');
+  }
+  const stripped = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+  try {
+    return JSON.parse(stripped);
+  } catch (_) {
+    // Try extracting the outermost JSON object or array
+    const firstBrace = stripped.indexOf('{');
+    const lastBrace = stripped.lastIndexOf('}');
+    const firstBracket = stripped.indexOf('[');
+    const lastBracket = stripped.lastIndexOf(']');
+
+    let candidate = '';
+    if (firstBrace !== -1 && lastBrace > firstBrace && (firstBracket === -1 || firstBrace < firstBracket)) {
+      candidate = stripped.slice(firstBrace, lastBrace + 1);
+    } else if (firstBracket !== -1 && lastBracket > firstBracket) {
+      candidate = stripped.slice(firstBracket, lastBracket + 1);
+    }
+    if (candidate) {
+      const cleanedTrailingCommas = candidate.replace(/,\s*([}\]])/g, '$1');
+      return JSON.parse(cleanedTrailingCommas);
+    }
+    throw new Error('Model AI zwrócił odpowiedź w nieoczekiwanym formacie.');
+  }
+}
+
 async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
   const key = STATE.apiKey.trim();
   if (!key) {
@@ -2087,7 +2115,18 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
     if (listData.models && Array.isArray(listData.models)) {
       availableModels = listData.models
         .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
-        .map(m => m.name.replace('models/', ''));
+        .map(m => m.name.replace('models/', ''))
+        .filter(name => {
+          const n = name.toLowerCase();
+          // Keep only genuine Gemini multimodal/text generation models; exclude TTS, Image-Gen, Vision-legacy, and dead 1.0/1.5 endpoints
+          if (!n.startsWith('gemini-')) return false;
+          if (n === 'gemini-pro' || n === 'gemini-pro-vision') return false;
+          if (n.includes('1.0') || n.includes('1.5')) return false;
+          if (n.includes('tts') || n.includes('image') || n.includes('vision')) return false;
+          if (n.includes('embedding') || n.includes('aqa') || n.includes('robotics') || n.includes('computer-use')) return false;
+          if (n.includes('thinking-exp')) return false;
+          return true;
+        });
     }
   } catch (e) {
     console.error('List models failed', e);
@@ -2095,37 +2134,42 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
 
   const scoreSmartModel = (name) => {
     const n = name.toLowerCase();
+    if (n === 'gemini-2.5-pro') return 110;
     if (n.includes('2.5-pro')) return 100;
+    if (n.includes('3-pro') || n.includes('3.0-pro')) return 105;
     if (n.includes('2.0-pro')) return 95;
-    if (n.includes('1.5-pro-latest')) return 90;
-    if (n.includes('1.5-pro')) return 85;
-    if (n.includes('pro') && !n.includes('flash')) return 80;
-    if (n.includes('2.5-flash')) return 70;
-    if (n.includes('2.0-flash')) return 65;
-    if (n.includes('1.5-flash')) return 60;
-    if (n.includes('flash')) return 50;
+    if (n.includes('pro') && !n.includes('flash')) return 85;
+    if (n === 'gemini-2.5-flash') return 80;
+    if (n.includes('2.5-flash') && !n.includes('lite')) return 75;
+    if (n === 'gemini-2.0-flash') return 70;
+    if (n.includes('2.0-flash') && !n.includes('lite')) return 65;
+    if (n.includes('flash')) return 55;
+    return 10;
+  };
+
+  const scoreFastModel = (name) => {
+    const n = name.toLowerCase();
+    if (n === 'gemini-2.5-flash') return 110;
+    if (n.includes('2.5-flash') && !n.includes('lite')) return 100;
+    if (n === 'gemini-2.0-flash') return 95;
+    if (n.includes('2.0-flash') && !n.includes('lite')) return 90;
+    if (n.includes('flash')) return 80;
+    if (n === 'gemini-2.5-pro') return 70;
+    if (n.includes('pro')) return 60;
     return 10;
   };
 
   let modelsToTry = [];
   if (availableModels.length > 0) {
-    const proModels = availableModels
-      .filter(m => m.includes('pro') && !m.includes('flash'))
-      .sort((a, b) => scoreSmartModel(b) - scoreSmartModel(a));
-    const flashModels = availableModels
-      .filter(m => m.includes('flash'))
-      .sort((a, b) => scoreSmartModel(b) - scoreSmartModel(a));
-    const others = availableModels.filter(m => !m.includes('flash') && !m.includes('pro'));
-
     if (preferredTier === 'smart') {
-      modelsToTry = [...proModels, ...flashModels, ...others];
+      modelsToTry = [...availableModels].sort((a, b) => scoreSmartModel(b) - scoreSmartModel(a));
     } else {
-      modelsToTry = [...flashModels, ...proModels, ...others];
+      modelsToTry = [...availableModels].sort((a, b) => scoreFastModel(b) - scoreFastModel(a));
     }
   } else {
     modelsToTry = preferredTier === 'smart'
-      ? ['gemini-2.5-pro', 'gemini-1.5-pro-latest', 'gemini-1.5-pro', 'gemini-2.5-flash', 'gemini-1.5-flash-latest']
-      : ['gemini-2.5-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-1.5-pro-latest'];
+      ? ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash']
+      : ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-pro'];
   }
 
   const parts = [{ text: prompt }];
@@ -2149,6 +2193,7 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
     });
   }
 
+  let primaryError = null;
   let lastError = null;
 
   for (const model of modelsToTry) {
@@ -2164,7 +2209,8 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
 
       if (response.ok) {
         const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const resParts = data.candidates?.[0]?.content?.parts || [];
+        const text = resParts.map(p => p.text || '').join('').trim();
         if (text) {
           STATE.lastUsedGeminiModel = model;
           const modelBadge = document.getElementById('nutrition-model-badge');
@@ -2175,14 +2221,19 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
         }
       } else {
         const err = await response.json().catch(() => ({}));
-        lastError = new Error(err.error?.message || `HTTP ${response.status}`);
+        const msg = err.error?.message || `HTTP ${response.status}`;
+        const errObj = new Error(msg);
+        if (!primaryError && response.status !== 404) {
+          primaryError = errObj;
+        }
+        lastError = errObj;
       }
     } catch (e) {
       lastError = e;
     }
   }
 
-  throw lastError || new Error('Brak dostępnego modelu Gemini dla tego klucza.');
+  throw primaryError || lastError || new Error('Brak dostępnego modelu Gemini dla tego klucza.');
 }
 
 // Parse Note from Google Keep (supports supersets & rest times)
@@ -2238,8 +2289,7 @@ ${rawText}
 
   try {
     const rawResponse = await callGemini(prompt, 'fast');
-    const cleaned = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-    let parsed = JSON.parse(cleaned);
+    let parsed = extractJsonFromGemini(rawResponse);
 
     if (!Array.isArray(parsed)) {
       parsed = [parsed];
@@ -3255,8 +3305,7 @@ Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown o strukturze:
       : prompt;
 
     const rawResponse = await callGemini(fullPrompt, 'smart', inlineParts);
-    const cleaned = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsedRoot = JSON.parse(cleaned);
+    const parsedRoot = extractJsonFromGemini(rawResponse);
 
     const rawEntries = Array.isArray(parsedRoot)
       ? parsedRoot
@@ -3573,14 +3622,15 @@ function deleteBodyMeasurement(id) {
 // ============================================================================
 function initNutritionView() {
   if (!STATE.nutritionGoals || typeof STATE.nutritionGoals !== 'object') {
-    STATE.nutritionGoals = { kcal: 2500, proteinG: 180, carbsG: 260, fatG: 75 };
+    STATE.nutritionGoals = { kcal: 2500, proteinG: 180, carbsG: 276, fatG: 75 };
   }
   if (!Array.isArray(STATE.nutritionDiary)) {
     STATE.nutritionDiary = [];
   }
   if (!STATE.selectedNutritionDate) {
-    STATE.selectedNutritionDate = new Date().toISOString().slice(0, 10);
+    STATE.selectedNutritionDate = getTodayIsoDate();
   }
+  STATE.lastAnalyzedMealPhotos = [];
   renderNutritionView();
 }
 
@@ -3592,32 +3642,33 @@ function getTodayIsoDate() {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function getOffsetIsoDate(baseIsoStr, deltaDays) {
+  const d = new Date(`${baseIsoStr || getTodayIsoDate()}T12:00:00`);
+  if (isNaN(d.getTime())) return getTodayIsoDate();
+  d.setDate(d.getDate() + deltaDays);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function formatNutritionDateHeading(isoDateStr) {
   const today = getTodayIsoDate();
   const d = new Date(`${isoDateStr}T12:00:00`);
   if (isNaN(d.getTime())) return isoDateStr;
 
-  const yesterdayDate = new Date();
-  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-  const yesterdayIso = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`;
+  const yesterdayIso = getOffsetIsoDate(today, -1);
+  const tomorrowIso = getOffsetIsoDate(today, 1);
 
   const dateFmt = d.toLocaleDateString('pl-PL', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
   if (isoDateStr === today) return `Dzisiaj (${dateFmt})`;
   if (isoDateStr === yesterdayIso) return `Wczoraj (${dateFmt})`;
+  if (isoDateStr === tomorrowIso) return `Jutro (${dateFmt})`;
   return dateFmt;
 }
 
 function changeNutritionDay(deltaDays) {
-  const cur = new Date(`${STATE.selectedNutritionDate || getTodayIsoDate()}T12:00:00`);
-  if (isNaN(cur.getTime())) {
-    STATE.selectedNutritionDate = getTodayIsoDate();
-  } else {
-    cur.setDate(cur.getDate() + deltaDays);
-    const yyyy = cur.getFullYear();
-    const mm = String(cur.getMonth() + 1).padStart(2, '0');
-    const dd = String(cur.getDate()).padStart(2, '0');
-    STATE.selectedNutritionDate = `${yyyy}-${mm}-${dd}`;
-  }
+  STATE.selectedNutritionDate = getOffsetIsoDate(STATE.selectedNutritionDate || getTodayIsoDate(), deltaDays);
   renderNutritionView();
 }
 
@@ -3633,31 +3684,147 @@ function toggleNutritionGoalsDrawer() {
   if (!drawer) return;
   const isHidden = drawer.style.display === 'none' || !drawer.style.display;
   drawer.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) {
+    updateGoalMacroMathPreview();
+  }
+}
+
+// Live Macro <-> Calorie synchronization when manually editing KCAL or Macros
+function onGoalKcalInput() {
+  const kEl = document.getElementById('goal-kcal-input');
+  const pEl = document.getElementById('goal-protein-input');
+  const cEl = document.getElementById('goal-carbs-input');
+  const fEl = document.getElementById('goal-fat-input');
+  if (!kEl || !pEl || !cEl || !fEl) return;
+
+  const targetKcal = Math.max(0, parseInt(kEl.value) || 0);
+  if (targetKcal < 400) {
+    updateGoalMacroMathPreview();
+    return;
+  }
+
+  const curP = Math.max(0, parseFloat(pEl.value) || 0);
+  const curC = Math.max(0, parseFloat(cEl.value) || 0);
+  const curF = Math.max(0, parseFloat(fEl.value) || 0);
+  const curMacroKcal = curP * 4 + curC * 4 + curF * 9;
+
+  // Preserve user's existing macro proportions if valid, otherwise use balanced athletic ratio (30% P, 43% C, 27% F)
+  let pShare = 0.30;
+  let fShare = 0.27;
+  if (curMacroKcal > 200) {
+    pShare = Math.min(0.55, Math.max(0.15, (curP * 4) / curMacroKcal));
+    fShare = Math.min(0.50, Math.max(0.15, (curF * 9) / curMacroKcal));
+    if (pShare + fShare > 0.85) {
+      fShare = 0.85 - pShare;
+    }
+  }
+
+  const newProteinG = Math.round((targetKcal * pShare) / 4);
+  const newFatG = Math.round((targetKcal * fShare) / 9);
+  const remainingKcalForCarbs = Math.max(0, targetKcal - (newProteinG * 4 + newFatG * 9));
+  const newCarbsG = Math.round(remainingKcalForCarbs / 4);
+
+  pEl.value = newProteinG;
+  fEl.value = newFatG;
+  cEl.value = newCarbsG;
+
+  updateGoalMacroMathPreview();
+}
+
+function onGoalMacroInput(changedField) {
+  const kEl = document.getElementById('goal-kcal-input');
+  const pEl = document.getElementById('goal-protein-input');
+  const cEl = document.getElementById('goal-carbs-input');
+  const fEl = document.getElementById('goal-fat-input');
+  if (!kEl || !pEl || !cEl || !fEl) return;
+
+  let kcal = Math.max(0, parseInt(kEl.value) || 0);
+  let p = Math.max(0, parseInt(pEl.value) || 0);
+  let c = Math.max(0, parseInt(cEl.value) || 0);
+  let f = Math.max(0, parseInt(fEl.value) || 0);
+
+  if (changedField === 'protein' || changedField === 'fat') {
+    // Keep target KCAL locked and adjust Carbs so B*4 + W*4 + T*9 == KCAL
+    const pfKcal = p * 4 + f * 9;
+    if (kcal >= pfKcal) {
+      c = Math.round((kcal - pfKcal) / 4);
+      cEl.value = c;
+    } else {
+      c = 0;
+      cEl.value = 0;
+      kcal = pfKcal;
+      kEl.value = kcal;
+    }
+  } else if (changedField === 'carbs') {
+    // User explicitly edited Carbs -> recalculate total KCAL from B*4 + W*4 + T*9
+    kcal = Math.round(p * 4 + c * 4 + f * 9);
+    kEl.value = kcal;
+  }
+
+  updateGoalMacroMathPreview();
+}
+
+function updateGoalMacroMathPreview() {
+  const previewEl = document.getElementById('goal-macro-math-preview');
+  if (!previewEl) return;
+
+  const kcal = parseInt(document.getElementById('goal-kcal-input')?.value) || 0;
+  const p = parseInt(document.getElementById('goal-protein-input')?.value) || 0;
+  const c = parseInt(document.getElementById('goal-carbs-input')?.value) || 0;
+  const f = parseInt(document.getElementById('goal-fat-input')?.value) || 0;
+
+  const pKcal = p * 4;
+  const cKcal = c * 4;
+  const fKcal = f * 9;
+  const sumKcal = pKcal + cKcal + fKcal;
+  const pPct = sumKcal > 0 ? Math.round((pKcal / sumKcal) * 100) : 0;
+  const cPct = sumKcal > 0 ? Math.round((cKcal / sumKcal) * 100) : 0;
+  const fPct = sumKcal > 0 ? Math.max(0, 100 - pPct - cPct) : 0;
+
+  previewEl.innerHTML = `
+    ⚖️ Bilans makro: <b style="color: var(--success);">${p}g B</b> (${pKcal} kcal, ${pPct}%) +
+    <b style="color: var(--accent);">${c}g W</b> (${cKcal} kcal, ${cPct}%) +
+    <b style="color: var(--primary);">${f}g T</b> (${fKcal} kcal, ${fPct}%) =
+    <b style="color: var(--text);">${sumKcal} kcal</b>
+    ${Math.abs(sumKcal - kcal) > 8 ? `<span style="color: var(--accent);"> (Cel: ${kcal} kcal)</span>` : `<span style="color: var(--success);"> ✓ Spięte w 100%</span>`}
+  `;
 }
 
 function saveNutritionGoals() {
-  const kcal = Math.max(500, parseInt(document.getElementById('goal-kcal')?.value) || 2500);
-  const proteinG = Math.max(10, parseInt(document.getElementById('goal-protein')?.value) || 180);
-  const carbsG = Math.max(0, parseInt(document.getElementById('goal-carbs')?.value) || 260);
-  const fatG = Math.max(10, parseInt(document.getElementById('goal-fat')?.value) || 75);
+  const p = Math.max(10, parseInt(document.getElementById('goal-protein-input')?.value) || 180);
+  const c = Math.max(0, parseInt(document.getElementById('goal-carbs-input')?.value) || 260);
+  const f = Math.max(10, parseInt(document.getElementById('goal-fat-input')?.value) || 75);
+  const rawKcal = parseInt(document.getElementById('goal-kcal-input')?.value) || 0;
+  const macroKcal = p * 4 + c * 4 + f * 9;
+  const kcal = Math.abs(rawKcal - macroKcal) <= 15 && rawKcal > 0 ? rawKcal : macroKcal;
 
-  STATE.nutritionGoals = { kcal, proteinG, carbsG, fatG };
+  const kEl = document.getElementById('goal-kcal-input');
+  if (kEl) kEl.value = kcal;
+
+  STATE.nutritionGoals = { kcal, proteinG: p, carbsG: c, fatG: f };
   localStorage.setItem('iron_nutrition_goals', JSON.stringify(STATE.nutritionGoals));
+  updateGoalMacroMathPreview();
   renderNutritionView();
 
   const statusEl = document.getElementById('nutrition-goals-status');
   if (statusEl) {
-    statusEl.textContent = `✅ Zapisano cel: ${kcal} kcal (B: ${proteinG}g, W: ${carbsG}g, T: ${fatG}g)`;
+    statusEl.style.color = 'var(--success)';
+    statusEl.textContent = `✅ Zapisano cel: ${kcal} kcal (B: ${p}g, W: ${c}g, T: ${f}g)`;
     statusEl.style.display = 'block';
-    setTimeout(() => { statusEl.style.display = 'none'; }, 3500);
+    setTimeout(() => { statusEl.style.display = 'none'; }, 4000);
   }
 }
 
 async function calculateNutritionGoalsWithAI() {
   const statusEl = document.getElementById('nutrition-goals-status');
+  const calcBtn = document.getElementById('ai-calc-goals-btn');
+  if (calcBtn) {
+    calcBtn.disabled = true;
+    calcBtn.textContent = '⏳ Liczę...';
+  }
   if (statusEl) {
     statusEl.style.color = 'var(--accent)';
-    statusEl.textContent = '⏳ AI analizuje Twój profil, BMR z wagi Fitdays oraz treningi i wylicza optymalne makro...';
+    statusEl.textContent = '⏳ AI analizuje Twój profil, BMR z wagi Fitdays oraz treningi i wylicza optymalne zapotrzebowanie...';
     statusEl.style.display = 'block';
   }
 
@@ -3665,6 +3832,7 @@ async function calculateNutritionGoalsWithAI() {
 
   const prompt = `
 Jesteś dietetykiem sportowym w aplikacji IronCoach. Na podstawie poniższego profilu użytkownika, jego raportu składu ciała z wagi Fitdays (w tym BMR, % tkanki tłuszczowej, masy mięśniowej), obwodów ciała oraz planu treningowego, wylicz optymalny DZIENNY cel kaloryczny i makroskładniki.
+WAŻNE: Zadbaj, aby kalorie dokładnie spinały się z makroskładnikami wg przelicznika: kcal = proteinG * 4 + carbsG * 4 + fatG * 9.
 
 === PROFIL I SKŁAD CIAŁA UŻYTKOWNIKA ===
 ${profileSection}
@@ -3676,25 +3844,26 @@ Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown:
 {
   "kcal": 2650,
   "proteinG": 190,
-  "carbsG": 295,
+  "carbsG": 297,
   "fatG": 78,
-  "explanation": "Krótkie 1-zdaniowe wyjaśnienie po polsku (np. dlaczego tyle kcal i białka względem BMR i celu)"
+  "explanation": "Krótkie 1-2 zdaniowe wyjaśnienie po polsku (np. jak wyliczono TDEE względem BMR i celu sylwetkowego)"
 }`;
 
   try {
     const raw = await callGemini(prompt, 'smart');
-    const cleaned = raw.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
+    const parsed = extractJsonFromGemini(raw);
 
-    const kcal = parseInt(parsed.kcal) || 2500;
-    const proteinG = parseInt(parsed.proteinG) || 180;
-    const carbsG = parseInt(parsed.carbsG) || 260;
-    const fatG = parseInt(parsed.fatG) || 75;
+    const proteinG = Math.max(40, parseInt(parsed.proteinG) || 180);
+    const fatG = Math.max(30, parseInt(parsed.fatG) || 75);
+    const rawKcal = Math.max(1000, parseInt(parsed.kcal) || 2500);
+    // Ensure carbsG makes proteinG*4 + carbsG*4 + fatG*9 spin together with kcal
+    const carbsG = Math.max(0, Math.round((rawKcal - (proteinG * 4 + fatG * 9)) / 4));
+    const kcal = proteinG * 4 + carbsG * 4 + fatG * 9;
 
-    const kEl = document.getElementById('goal-kcal');
-    const pEl = document.getElementById('goal-protein');
-    const cEl = document.getElementById('goal-carbs');
-    const fEl = document.getElementById('goal-fat');
+    const kEl = document.getElementById('goal-kcal-input');
+    const pEl = document.getElementById('goal-protein-input');
+    const cEl = document.getElementById('goal-carbs-input');
+    const fEl = document.getElementById('goal-fat-input');
     if (kEl) kEl.value = kcal;
     if (pEl) pEl.value = proteinG;
     if (cEl) cEl.value = carbsG;
@@ -3702,16 +3871,27 @@ Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown:
 
     STATE.nutritionGoals = { kcal, proteinG, carbsG, fatG };
     localStorage.setItem('iron_nutrition_goals', JSON.stringify(STATE.nutritionGoals));
+    updateGoalMacroMathPreview();
     renderNutritionView();
 
     if (statusEl) {
       statusEl.style.color = 'var(--success)';
-      statusEl.textContent = `🤖 Wyliczono i zapisano: ${kcal} kcal (B: ${proteinG}g, W: ${carbsG}g, T: ${fatG}g). ${parsed.explanation || ''}`;
+      statusEl.innerHTML = `🤖 <b>Wyliczono i zapisano: ${kcal} kcal</b> (B: ${proteinG}g, W: ${carbsG}g, T: ${fatG}g).<br><span style="color: var(--text-muted); font-size: 11px;">${escapeHtml(parsed.explanation || '')}</span>`;
       statusEl.style.display = 'block';
     }
   } catch (err) {
-    if (statusEl) statusEl.style.display = 'none';
-    alert('Błąd wyliczania celu przez AI: ' + err.message);
+    if (statusEl) {
+      statusEl.style.color = 'var(--danger)';
+      statusEl.textContent = '⚠️ Błąd wyliczania celu przez AI: ' + err.message;
+      statusEl.style.display = 'block';
+    } else {
+      alert('Błąd wyliczania celu przez AI: ' + err.message);
+    }
+  } finally {
+    if (calcBtn) {
+      calcBtn.disabled = false;
+      calcBtn.textContent = '🤖 Wylicz przez AI';
+    }
   }
 }
 
@@ -3761,6 +3941,7 @@ function renderPendingMealPhotosPreview() {
     <div style="position: relative; width: 72px; height: 72px; border-radius: 10px; overflow: hidden; border: 1px solid var(--accent); flex-shrink: 0;">
       <img src="${p.previewUrl}" alt="Posiłek" style="width: 100%; height: 100%; object-fit: cover;">
       <button
+        type="button"
         onclick="removePendingMealPhoto(${idx})"
         style="position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%; background: rgba(0,0,0,0.75); color: #fff; border: none; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center;"
       >✕</button>
@@ -3769,7 +3950,8 @@ function renderPendingMealPhotosPreview() {
 }
 
 async function analyzeMealWithHighModel() {
-  const hint = (document.getElementById('meal-text-hint')?.value || '').trim();
+  const descInput = document.getElementById('meal-desc-input');
+  const hint = (descInput?.value || '').trim();
   const photos = STATE.pendingMealPhotos || [];
 
   if (photos.length === 0 && !hint) {
@@ -3777,7 +3959,9 @@ async function analyzeMealWithHighModel() {
   }
 
   const loadingEl = document.getElementById('meal-ai-loading');
+  const analyzeBtn = document.getElementById('analyze-meal-btn');
   if (loadingEl) loadingEl.style.display = 'block';
+  if (analyzeBtn) analyzeBtn.disabled = true;
 
   const prompt = `
 Jesteś zaawansowanym dietetykiem klinicznym i sportowym. Przeanalizuj załączone zdjęcie/zdjęcia posiłku (lub etykietę wartości odżywczych) oraz opis od użytkownika: "${hint || 'brak dodatkowego opisu'}".
@@ -3799,10 +3983,14 @@ Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown:
 
   try {
     const inlineParts = photos.map(p => ({ mimeType: p.mimeType, data: p.data }));
-    // Use 'smart' tier so callGemini prioritizes Gemini 2.5 Pro / 1.5 Pro
+    // Keep a copy of the analyzed photos so follow-up corrections in refineMealEstimateWithAI can still reference them
+    STATE.lastAnalyzedMealPhotos = [...photos];
+
     const rawResponse = await callGemini(prompt, 'smart', inlineParts);
-    const cleaned = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
+    const parsed = extractJsonFromGemini(rawResponse);
+
+    // Clear the prompt text field immediately after analysis as requested!
+    if (descInput) descInput.value = '';
 
     STATE.editingMealId = null;
     openMealEditorWithValues({
@@ -3813,12 +4001,103 @@ Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown:
       fatG: Math.round(parseFloat(parsed.fatG) || 0),
       ingredientsSummary: parsed.ingredientsSummary || '',
       coachComment: parsed.coachComment || '',
+      userComment: '',
       modelUsed: STATE.lastUsedGeminiModel || 'Gemini Pro'
     });
   } catch (err) {
     alert('Błąd analizy posiłku przez AI: ' + err.message);
   } finally {
     if (loadingEl) loadingEl.style.display = 'none';
+    if (analyzeBtn) analyzeBtn.disabled = false;
+  }
+}
+
+// Allow user to challenge/correct/ask AI about the meal estimate right inside the preview editor
+async function refineMealEstimateWithAI() {
+  const followupInput = document.getElementById('meal-ai-followup-input');
+  const followupBtn = document.getElementById('meal-ai-followup-btn');
+  const userFeedback = (followupInput?.value || '').trim();
+  if (!userFeedback) {
+    return alert('Wpisz uwagę lub poprawkę dla AI (np. "To był indyk 150g a nie kurczak" lub "Dolicz łyżkę masła")!');
+  }
+
+  const curName = document.getElementById('edit-meal-name')?.value || 'Posiłek';
+  const curKcal = document.getElementById('edit-meal-kcal')?.value || 0;
+  const curP = document.getElementById('edit-meal-protein')?.value || 0;
+  const curC = document.getElementById('edit-meal-carbs')?.value || 0;
+  const curF = document.getElementById('edit-meal-fat')?.value || 0;
+  const notesEl = document.getElementById('edit-meal-ingredients');
+  const curIngredients = notesEl?.dataset?.ingredients || '';
+  const curCoachComment = notesEl?.dataset?.comment || '';
+
+  if (followupBtn) {
+    followupBtn.disabled = true;
+    followupBtn.textContent = '⏳ Przeliczam...';
+  }
+
+  const prompt = `
+Jesteś zaawansowanym dietetykiem sportowym w aplikacji IronCoach.
+Wcześniej oszacowałeś (lub użytkownik edytował) następujący posiłek:
+- Nazwa: ${curName}
+- Rozpoznane składniki: ${curIngredients || 'brak listy'}
+- Kalorie: ${curKcal} kcal (Białko: ${curP}g, Węglowodany: ${curC}g, Tłuszcz: ${curF}g)
+- Poprzedni komentarz: ${curCoachComment}
+
+Użytkownik zgłasza uwagę / korektę / pytanie do tego posiłku:
+"${userFeedback}"
+
+Zaktualizuj oszacowanie posiłku zgodnie z informacją od użytkownika (uwzględnij też załączone zdjęcie, jeśli jest dostępne) i odpowiedz krótko w polu "coachComment".
+Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown:
+{
+  "name": "Zaktualizowana nazwa posiłku",
+  "ingredientsSummary": "Zaktualizowana lista składników i gramatur",
+  "kcal": 580,
+  "proteinG": 48,
+  "carbsG": 60,
+  "fatG": 14,
+  "coachComment": "Krótka odpowiedź na uwagę użytkownika i komentarz dietetyczny"
+}`;
+
+  try {
+    const photos = (STATE.lastAnalyzedMealPhotos && STATE.lastAnalyzedMealPhotos.length > 0)
+      ? STATE.lastAnalyzedMealPhotos
+      : (STATE.pendingMealPhotos || []);
+    const inlineParts = photos.map(p => ({ mimeType: p.mimeType, data: p.data }));
+
+    const rawResponse = await callGemini(prompt, 'smart', inlineParts);
+    const parsed = extractJsonFromGemini(rawResponse);
+
+    if (followupInput) followupInput.value = '';
+    const existingUserComment = document.getElementById('edit-meal-user-comment')?.value || '';
+
+    openMealEditorWithValues({
+      name: parsed.name || curName,
+      kcal: Math.round(parseFloat(parsed.kcal) || 0),
+      proteinG: Math.round(parseFloat(parsed.proteinG) || 0),
+      carbsG: Math.round(parseFloat(parsed.carbsG) || 0),
+      fatG: Math.round(parseFloat(parsed.fatG) || 0),
+      ingredientsSummary: parsed.ingredientsSummary || curIngredients,
+      coachComment: parsed.coachComment || curCoachComment,
+      userComment: existingUserComment,
+      modelUsed: STATE.lastUsedGeminiModel || 'Gemini Pro'
+    });
+  } catch (err) {
+    alert('Błąd podczas przeliczania posiłku przez AI: ' + err.message);
+  } finally {
+    if (followupBtn) {
+      followupBtn.disabled = false;
+      followupBtn.textContent = '🔄 Przelicz z AI';
+    }
+  }
+}
+
+function onEditMealMacroInput() {
+  const p = Math.max(0, parseFloat(document.getElementById('edit-meal-protein')?.value) || 0);
+  const c = Math.max(0, parseFloat(document.getElementById('edit-meal-carbs')?.value) || 0);
+  const f = Math.max(0, parseFloat(document.getElementById('edit-meal-fat')?.value) || 0);
+  const kcalEl = document.getElementById('edit-meal-kcal');
+  if (kcalEl) {
+    kcalEl.value = Math.round(p * 4 + c * 4 + f * 9);
   }
 }
 
@@ -3832,12 +4111,17 @@ function openMealEditorWithValues(data) {
   document.getElementById('edit-meal-carbs').value = data.carbsG ?? '';
   document.getElementById('edit-meal-fat').value = data.fatG ?? '';
 
-  const notesEl = document.getElementById('edit-meal-ai-notes');
+  const userCommentEl = document.getElementById('edit-meal-user-comment');
+  if (userCommentEl) {
+    userCommentEl.value = data.userComment || '';
+  }
+
+  const notesEl = document.getElementById('edit-meal-ingredients');
   if (notesEl) {
     const parts = [];
     if (data.modelUsed) parts.push(`🤖 Model: <b>${escapeHtml(data.modelUsed)}</b>`);
     if (data.ingredientsSummary) parts.push(`⚖️ Składniki: ${escapeHtml(data.ingredientsSummary)}`);
-    if (data.coachComment) parts.push(`💡 Trener: <i>${escapeHtml(data.coachComment)}</i>`);
+    if (data.coachComment) parts.push(`💡 Trener AI: <i>${escapeHtml(data.coachComment)}</i>`);
     if (parts.length > 0) {
       notesEl.innerHTML = parts.join('<br>');
       notesEl.style.display = 'block';
@@ -3856,7 +4140,10 @@ function openMealEditorWithValues(data) {
 
 function openManualMealEditor() {
   STATE.editingMealId = null;
-  const hint = (document.getElementById('meal-text-hint')?.value || '').trim();
+  STATE.lastAnalyzedMealPhotos = [];
+  const descInput = document.getElementById('meal-desc-input');
+  const hint = (descInput?.value || '').trim();
+  if (descInput) descInput.value = '';
   openMealEditorWithValues({
     name: hint || '',
     kcal: '',
@@ -3864,7 +4151,8 @@ function openManualMealEditor() {
     carbsG: '',
     fatG: '',
     ingredientsSummary: '',
-    coachComment: ''
+    coachComment: '',
+    userComment: ''
   });
 }
 
@@ -3872,23 +4160,25 @@ function closeMealEditorBox() {
   const box = document.getElementById('meal-editor-box');
   if (box) box.style.display = 'none';
   STATE.editingMealId = null;
+  STATE.lastAnalyzedMealPhotos = [];
 }
 
 function saveEditedMealToDiary() {
   const name = (document.getElementById('edit-meal-name')?.value || '').trim() || 'Posiłek';
   const kcal = Math.max(0, Math.round(parseFloat(document.getElementById('edit-meal-kcal')?.value) || 0));
-  const proteinG = Math.max(0, Math.round(parseFloat(document.getElementById('edit-meal-protein')?.value) || 0));
-  const carbsG = Math.max(0, Math.round(parseFloat(document.getElementById('edit-meal-carbs')?.value) || 0));
-  const fatG = Math.max(0, Math.round(parseFloat(document.getElementById('edit-meal-fat')?.value) || 0));
+  const proteinG = Math.max(0, Math.round((parseFloat(document.getElementById('edit-meal-protein')?.value) || 0) * 10) / 10);
+  const carbsG = Math.max(0, Math.round((parseFloat(document.getElementById('edit-meal-carbs')?.value) || 0) * 10) / 10);
+  const fatG = Math.max(0, Math.round((parseFloat(document.getElementById('edit-meal-fat')?.value) || 0) * 10) / 10);
+  const userComment = (document.getElementById('edit-meal-user-comment')?.value || '').trim();
 
   if (kcal === 0 && proteinG === 0 && carbsG === 0 && fatG === 0) {
     return alert('Podaj kalorie lub makroskładniki posiłku!');
   }
 
-  const notesEl = document.getElementById('edit-meal-ai-notes');
+  const notesEl = document.getElementById('edit-meal-ingredients');
   const ingredientsSummary = notesEl?.dataset?.ingredients || '';
   const coachComment = notesEl?.dataset?.comment || '';
-  const thumbUrl = STATE.pendingMealPhotos?.[0]?.thumbUrl || null;
+  const thumbUrl = STATE.pendingMealPhotos?.[0]?.thumbUrl || STATE.lastAnalyzedMealPhotos?.[0]?.thumbUrl || null;
   const dateKey = STATE.selectedNutritionDate || getTodayIsoDate();
 
   if (STATE.editingMealId) {
@@ -3899,6 +4189,9 @@ function saveEditedMealToDiary() {
       existing.proteinG = proteinG;
       existing.carbsG = carbsG;
       existing.fatG = fatG;
+      existing.ingredientsSummary = ingredientsSummary;
+      existing.coachComment = coachComment;
+      existing.userComment = userComment;
       if (thumbUrl) existing.thumbUrl = thumbUrl;
     }
   } else {
@@ -3916,14 +4209,18 @@ function saveEditedMealToDiary() {
       fatG,
       ingredientsSummary,
       coachComment,
+      userComment,
       thumbUrl
     });
   }
 
   STATE.editingMealId = null;
   STATE.pendingMealPhotos = [];
-  const hintInput = document.getElementById('meal-text-hint');
-  if (hintInput) hintInput.value = '';
+  STATE.lastAnalyzedMealPhotos = [];
+  const descInput = document.getElementById('meal-desc-input');
+  if (descInput) descInput.value = '';
+  const followupInput = document.getElementById('meal-ai-followup-input');
+  if (followupInput) followupInput.value = '';
 
   renderPendingMealPhotosPreview();
   closeMealEditorBox();
@@ -3937,6 +4234,7 @@ function editDiaryMeal(mealId) {
   const meal = STATE.nutritionDiary.find(m => m.id === mealId);
   if (!meal) return;
   STATE.editingMealId = meal.id;
+  STATE.lastAnalyzedMealPhotos = [];
   openMealEditorWithValues({
     name: meal.name,
     kcal: meal.kcal,
@@ -3944,7 +4242,8 @@ function editDiaryMeal(mealId) {
     carbsG: meal.carbsG,
     fatG: meal.fatG,
     ingredientsSummary: meal.ingredientsSummary || '',
-    coachComment: meal.coachComment || ''
+    coachComment: meal.coachComment || '',
+    userComment: meal.userComment || ''
   });
   const box = document.getElementById('meal-editor-box');
   if (box) box.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -3956,6 +4255,140 @@ function deleteDiaryMeal(mealId) {
   localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
   renderNutritionView();
   renderHomeKpis();
+}
+
+// ============================================================================
+// MEAL & WHOLE-DAY COPY / MOVE TOOLS
+// ============================================================================
+function toggleMealTransferBar(mealId) {
+  const bar = document.getElementById(`meal-transfer-bar-${mealId}`);
+  if (!bar) return;
+  const isHidden = bar.style.display === 'none' || !bar.style.display;
+  bar.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) {
+    const dateInput = document.getElementById(`meal-transfer-date-${mealId}`);
+    if (dateInput && !dateInput.value) {
+      dateInput.value = getTodayIsoDate();
+    }
+  }
+}
+
+function setMealTransferQuickDate(mealId, offsetFromToday) {
+  const dateInput = document.getElementById(`meal-transfer-date-${mealId}`);
+  if (!dateInput) return;
+  dateInput.value = getOffsetIsoDate(getTodayIsoDate(), offsetFromToday);
+}
+
+function copyOrMoveMeal(mealId, mode = 'copy') {
+  const meal = STATE.nutritionDiary.find(m => m.id === mealId);
+  if (!meal) return;
+
+  const dateInput = document.getElementById(`meal-transfer-date-${mealId}`);
+  const targetDate = (dateInput?.value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+    return alert('Wybierz docelową datę!');
+  }
+
+  if (mode === 'move') {
+    if (meal.dateKey === targetDate) {
+      return alert('Ten posiłek jest już przypisany do tego dnia!');
+    }
+    meal.dateKey = targetDate;
+    localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
+    renderNutritionView();
+    alert(`➡️ Przeniesiono posiłek "${meal.name}" na dzień ${formatNutritionDateHeading(targetDate)}!`);
+  } else {
+    const cloned = {
+      ...meal,
+      id: 'meal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+      dateKey: targetDate,
+      timestamp: Date.now()
+    };
+    STATE.nutritionDiary.unshift(cloned);
+    localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
+    renderNutritionView();
+    alert(`📋 Skopiowano posiłek "${meal.name}" na dzień ${formatNutritionDateHeading(targetDate)}!`);
+  }
+}
+
+function toggleDayTransferDrawer() {
+  const drawer = document.getElementById('nutrition-day-transfer-drawer');
+  if (!drawer) return;
+  const isHidden = drawer.style.display === 'none' || !drawer.style.display;
+  drawer.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) {
+    const dateInput = document.getElementById('day-transfer-target-date');
+    if (dateInput && !dateInput.value) {
+      dateInput.value = getTodayIsoDate();
+    }
+  }
+}
+
+function setDayTransferQuickDate(offsetFromToday) {
+  const dateInput = document.getElementById('day-transfer-target-date');
+  if (!dateInput) return;
+  dateInput.value = getOffsetIsoDate(getTodayIsoDate(), offsetFromToday);
+}
+
+function copyAllMealsFromYesterdayToCurrent() {
+  const curDate = STATE.selectedNutritionDate || getTodayIsoDate();
+  const prevDate = getOffsetIsoDate(curDate, -1);
+  const prevMeals = (STATE.nutritionDiary || []).filter(m => m.dateKey === prevDate);
+
+  if (prevMeals.length === 0) {
+    return alert(`Brak zapisanych posiłków w poprzednim dniu (${formatNutritionDateHeading(prevDate)}).`);
+  }
+
+  prevMeals.forEach((m, idx) => {
+    STATE.nutritionDiary.unshift({
+      ...m,
+      id: 'meal-' + Date.now() + '-' + idx + '-' + Math.random().toString(36).slice(2, 6),
+      dateKey: curDate,
+      timestamp: Date.now() + idx
+    });
+  });
+
+  localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
+  renderNutritionView();
+  alert(`📥 Skopiowano ${prevMeals.length} posiłek/posiłków z dnia ${formatNutritionDateHeading(prevDate)} do ${formatNutritionDateHeading(curDate)}!`);
+}
+
+function copyOrMoveWholeDay(mode = 'copy') {
+  const sourceDate = STATE.selectedNutritionDate || getTodayIsoDate();
+  const targetDate = (document.getElementById('day-transfer-target-date')?.value || '').trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+    return alert('Wybierz datę docelową!');
+  }
+  if (sourceDate === targetDate) {
+    return alert('Wybierz inną datę docelową niż aktualnie otwarty dzień!');
+  }
+
+  const dayMeals = (STATE.nutritionDiary || []).filter(m => m.dateKey === sourceDate);
+  if (dayMeals.length === 0) {
+    return alert('W aktualnie wybranym dniu nie ma żadnych posiłków do skopiowania/przeniesienia.');
+  }
+
+  if (mode === 'move') {
+    dayMeals.forEach(m => { m.dateKey = targetDate; });
+    localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
+    STATE.selectedNutritionDate = targetDate;
+    renderNutritionView();
+    alert(`➡️ Przeniesiono wszystkie posiłki (${dayMeals.length}) na dzień ${formatNutritionDateHeading(targetDate)}!`);
+  } else {
+    dayMeals.forEach((m, idx) => {
+      STATE.nutritionDiary.unshift({
+        ...m,
+        id: 'meal-' + Date.now() + '-' + idx + '-' + Math.random().toString(36).slice(2, 6),
+        dateKey: targetDate,
+        timestamp: Date.now() + idx
+      });
+    });
+    localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
+    STATE.selectedNutritionDate = targetDate;
+    renderNutritionView();
+    alert(`📋 Skopiowano wszystkie posiłki (${dayMeals.length}) na dzień ${formatNutritionDateHeading(targetDate)}!`);
+  }
 }
 
 function getNutritionDayTotals(dateKey) {
@@ -3974,17 +4407,19 @@ function renderNutritionView() {
   const dateKey = STATE.selectedNutritionDate || getTodayIsoDate();
   const goals = STATE.nutritionGoals || { kcal: 2500, proteinG: 180, carbsG: 260, fatG: 75 };
 
-  // Populate goal inputs if empty
-  const kEl = document.getElementById('goal-kcal');
-  const pEl = document.getElementById('goal-protein');
-  const cEl = document.getElementById('goal-carbs');
-  const fEl = document.getElementById('goal-fat');
+  // Populate goal inputs if not currently focused
+  const kEl = document.getElementById('goal-kcal-input');
+  const pEl = document.getElementById('goal-protein-input');
+  const cEl = document.getElementById('goal-carbs-input');
+  const fEl = document.getElementById('goal-fat-input');
   if (kEl && document.activeElement !== kEl) kEl.value = goals.kcal;
   if (pEl && document.activeElement !== pEl) pEl.value = goals.proteinG;
   if (cEl && document.activeElement !== cEl) cEl.value = goals.carbsG;
   if (fEl && document.activeElement !== fEl) fEl.value = goals.fatG;
 
-  const dateLabelEl = document.getElementById('nutrition-current-date-label');
+  updateGoalMacroMathPreview();
+
+  const dateLabelEl = document.getElementById('nutrition-date-label');
   if (dateLabelEl) {
     dateLabelEl.textContent = formatNutritionDateHeading(dateKey);
   }
@@ -4053,37 +4488,56 @@ function renderNutritionView() {
   // 2. Render Meals List for selected day
   const mealsListEl = document.getElementById('nutrition-meals-list');
   const countBadge = document.getElementById('nutrition-meals-count');
-  if (countBadge) countBadge.textContent = `${totals.count}`;
+  if (countBadge) countBadge.textContent = `${totals.count} posiłków`;
 
   if (mealsListEl) {
     if (totals.meals.length === 0) {
       mealsListEl.innerHTML = `
         <p style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 14px 0;">
-          Brak zapisanych posiłków w tym dniu. Zrób zdjęcie talerza powyżej lub dodaj posiłek ręcznie!
+          Brak zapisanych posiłków w tym dniu. Zrób zdjęcie talerza powyżej, dodaj ręcznie lub skopiuj posiłki z innego dnia!
         </p>
       `;
     } else {
       mealsListEl.innerHTML = totals.meals.map(m => `
-        <div style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; display: flex; gap: 10px; align-items: flex-start;">
-          ${m.thumbUrl ? `<img src="${m.thumbUrl}" alt="Posiłek" style="width: 54px; height: 54px; border-radius: 8px; object-fit: cover; flex-shrink: 0; border: 1px solid var(--border);">` : ''}
-          <div style="flex: 1; min-width: 0;">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 6px;">
-              <div style="font-weight: 800; font-size: 14px; color: var(--text);">
-                ${escapeHtml(m.name)}
-                ${m.timeLabel ? `<span style="font-size: 11px; color: var(--text-muted); font-weight: 500; margin-left: 4px;">${escapeHtml(m.timeLabel)}</span>` : ''}
+        <div style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;">
+          <div style="display: flex; gap: 10px; align-items: flex-start;">
+            ${m.thumbUrl ? `<img src="${m.thumbUrl}" alt="Posiłek" style="width: 54px; height: 54px; border-radius: 8px; object-fit: cover; flex-shrink: 0; border: 1px solid var(--border);">` : ''}
+            <div style="flex: 1; min-width: 0;">
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 6px;">
+                <div style="font-weight: 800; font-size: 14px; color: var(--text);">
+                  ${escapeHtml(m.name)}
+                  ${m.timeLabel ? `<span style="font-size: 11px; color: var(--text-muted); font-weight: 500; margin-left: 4px;">${escapeHtml(m.timeLabel)}</span>` : ''}
+                </div>
+                <span style="font-weight: 900; font-size: 14px; color: var(--primary); white-space: nowrap;">${Math.round(m.kcal)} kcal</span>
               </div>
-              <span style="font-weight: 900; font-size: 14px; color: var(--primary); white-space: nowrap;">${Math.round(m.kcal)} kcal</span>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 3px;">
+                🥩 B: <b style="color: var(--success);">${Math.round(m.proteinG)}g</b> •
+                🍚 W: <b style="color: var(--accent);">${Math.round(m.carbsG)}g</b> •
+                🥑 T: <b style="color: var(--primary);">${Math.round(m.fatG)}g</b>
+              </div>
+              ${m.ingredientsSummary ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">⚖️ ${escapeHtml(m.ingredientsSummary)}</div>` : ''}
+              ${m.coachComment ? `<div style="font-size: 11px; color: var(--accent); margin-top: 3px;">💡 AI: ${escapeHtml(m.coachComment)}</div>` : ''}
+              ${m.userComment ? `<div style="font-size: 11px; color: var(--primary); margin-top: 3px;">📝 Notatka: ${escapeHtml(m.userComment)}</div>` : ''}
+              <div style="display: flex; justify-content: flex-end; gap: 6px; margin-top: 7px; flex-wrap: wrap;">
+                <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px; color: var(--accent);" onclick="toggleMealTransferBar('${m.id}')">📅 Przenieś / Kopiuj</button>
+                <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="editDiaryMeal('${m.id}')">✏️ Edytuj / Dopytaj AI</button>
+                <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px; color: var(--danger);" onclick="deleteDiaryMeal('${m.id}')">Usuń</button>
+              </div>
             </div>
-            <div style="font-size: 12px; color: var(--text-muted); margin-top: 3px;">
-              🥩 B: <b style="color: var(--success);">${Math.round(m.proteinG)}g</b> •
-              🍚 W: <b style="color: var(--accent);">${Math.round(m.carbsG)}g</b> •
-              🥑 T: <b style="color: var(--primary);">${Math.round(m.fatG)}g</b>
+          </div>
+
+          <!-- Inline Per-Meal Copy / Move Bar -->
+          <div id="meal-transfer-bar-${m.id}" style="display: none; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border);">
+            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 5px;">Wybierz dzień docelowy dla posiłku <b>${escapeHtml(m.name)}</b>:</div>
+            <div style="display: flex; gap: 5px; align-items: center; margin-bottom: 6px; flex-wrap: wrap;">
+              <input type="date" id="meal-transfer-date-${m.id}" class="input-box" style="flex: 1; font-size: 12px; padding: 5px 8px; min-width: 130px;" value="${getTodayIsoDate()}">
+              <button type="button" class="btn btn-sm btn-secondary" style="padding: 4px 7px; font-size: 10px;" onclick="setMealTransferQuickDate('${m.id}', -1)">Wczoraj</button>
+              <button type="button" class="btn btn-sm btn-secondary" style="padding: 4px 7px; font-size: 10px;" onclick="setMealTransferQuickDate('${m.id}', 0)">Dzisiaj</button>
+              <button type="button" class="btn btn-sm btn-secondary" style="padding: 4px 7px; font-size: 10px;" onclick="setMealTransferQuickDate('${m.id}', 1)">Jutro</button>
             </div>
-            ${m.ingredientsSummary ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">⚖️ ${escapeHtml(m.ingredientsSummary)}</div>` : ''}
-            ${m.coachComment ? `<div style="font-size: 11px; color: var(--accent); margin-top: 3px;">💡 ${escapeHtml(m.coachComment)}</div>` : ''}
-            <div style="display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px;">
-              <button class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="editDiaryMeal('${m.id}')">✏️ Edytuj</button>
-              <button class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px; color: var(--danger);" onclick="deleteDiaryMeal('${m.id}')">Usuń</button>
+            <div style="display: flex; gap: 6px;">
+              <button type="button" class="btn btn-sm btn-accent" style="flex: 1; padding: 6px; font-size: 11px;" onclick="copyOrMoveMeal('${m.id}', 'copy')">📋 Kopiuj tam</button>
+              <button type="button" class="btn btn-sm btn-primary" style="flex: 1; padding: 6px; font-size: 11px;" onclick="copyOrMoveMeal('${m.id}', 'move')">➡️ Przenieś tam</button>
             </div>
           </div>
         </div>
@@ -4097,7 +4551,7 @@ function renderNutritionView() {
     const uniqueDates = Array.from(new Set([
       getTodayIsoDate(),
       ...STATE.nutritionDiary.map(m => m.dateKey).filter(Boolean)
-    ])).sort((a, b) => b.localeCompare(a)).slice(0, 7);
+    ])).sort((a, b) => b.localeCompare(a)).slice(0, 10);
 
     histEl.innerHTML = uniqueDates.map(dKey => {
       const dt = getNutritionDayTotals(dKey);

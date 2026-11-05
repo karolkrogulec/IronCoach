@@ -772,7 +772,7 @@
           </div>
 
           <div id="scale-import-loading" style="display: none; text-align: center; padding: 14px; color: var(--accent); background: var(--surface-elevated); border-radius: 10px; margin-bottom: 12px;">
-            ⏳ Gemini Pro analizuje przesłane pliki, składa dane z tych samych dni i sprawdza duplikaty...
+            <span id="scale-import-loading-text">⏳ Gemini Pro analizuje przesłane pliki, składa dane z tych samych dni i sprawdza duplikaty...</span>
           </div>
 
           <div id="scale-import-summary" style="display: none; padding: 10px 12px; border-radius: 10px; background: rgba(0, 230, 118, 0.1); border: 1px solid rgba(0, 230, 118, 0.35); color: var(--text); font-size: 12px; margin-bottom: 12px; line-height: 1.5;"></div>
@@ -799,41 +799,72 @@
     <div class="container">
       <!-- 1. Date Navigator & Daily Calorie/Macro Summary Card -->
       <div class="card" style="padding: 14px; border-color: rgba(0, 230, 118, 0.35);">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 6px;">
-          <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 10px; font-size: 12px;" onclick="changeNutritionDay(-1)">◀</button>
-          <div style="text-align: center; flex: 1;">
-            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Dziennik Żywieniowy</div>
-            <div id="nutrition-date-label" style="font-size: 15px; font-weight: 800; color: var(--text);">Dzisiaj</div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 6px; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 6px; flex: 1; min-width: 190px;">
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 10px; font-size: 12px;" onclick="changeNutritionDay(-1)">◀</button>
+            <div style="text-align: center; flex: 1;">
+              <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Dziennik Żywieniowy</div>
+              <div id="nutrition-date-label" style="font-size: 14px; font-weight: 800; color: var(--text);">Dzisiaj</div>
+            </div>
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 10px; font-size: 12px;" onclick="changeNutritionDay(1)">▶</button>
           </div>
-          <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 10px; font-size: 12px;" onclick="changeNutritionDay(1)">▶</button>
-          <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 10px; font-size: 11px; color: var(--primary); border-color: rgba(255,179,0,0.35);" onclick="toggleNutritionGoalsDrawer()">🎯 Cel</button>
+          <div style="display: flex; gap: 6px;">
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 9px; font-size: 11px; color: var(--accent); border-color: rgba(0,229,255,0.35);" onclick="toggleDayTransferDrawer()">📋 Kopiuj dzień</button>
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 9px; font-size: 11px; color: var(--primary); border-color: rgba(255,179,0,0.35);" onclick="toggleNutritionGoalsDrawer()">🎯 Cel</button>
+          </div>
+        </div>
+
+        <!-- Collapsible Whole-Day Copy / Move Drawer -->
+        <div id="nutrition-day-transfer-drawer" style="display: none; background: var(--surface-elevated); border: 1px solid rgba(0, 229, 255, 0.4); border-radius: 12px; padding: 12px; margin-bottom: 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span style="font-size: 13px; font-weight: 800; color: var(--accent);">📋 Kopiowanie i Przenoszenie Dnia</span>
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 2px 8px; font-size: 11px;" onclick="toggleDayTransferDrawer()">✕</button>
+          </div>
+          <button type="button" class="btn btn-sm btn-secondary" style="width: 100%; margin-bottom: 10px; padding: 8px; font-size: 12px; color: var(--success); border-color: rgba(0,230,118,0.35);" onclick="copyAllMealsFromYesterdayToCurrent()">
+            📥 Skopiuj wszystkie posiłki z poprzedniego dnia do tego dnia
+          </button>
+          <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 6px;">Lub skopiuj / przenieś wszystkie posiłki z aktualnie otwartego dnia do innej daty:</div>
+          <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap;">
+            <input type="date" id="day-transfer-target-date" class="input-box" style="flex: 1; font-size: 13px; padding: 6px; min-width: 140px;">
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 8px; font-size: 11px;" onclick="setDayTransferQuickDate(0)">Dzisiaj</button>
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 8px; font-size: 11px;" onclick="setDayTransferQuickDate(1)">Jutro</button>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <button type="button" class="btn btn-sm btn-accent" style="padding: 8px; font-size: 12px;" onclick="copyOrMoveWholeDay('copy')">📋 Kopiuj dzień</button>
+            <button type="button" class="btn btn-sm btn-primary" style="padding: 8px; font-size: 12px;" onclick="copyOrMoveWholeDay('move')">➡️ Przenieś dzień</button>
+          </div>
         </div>
 
         <!-- Collapsible Calorie & Macro Goal Editor -->
         <div id="nutrition-goals-drawer" style="display: none; background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 14px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 6px; flex-wrap: wrap;">
             <span style="font-size: 13px; font-weight: 800; color: var(--primary);">🎯 Twój Dzienny Cel Kalorii i Makro</span>
-            <button type="button" class="btn btn-sm btn-accent" style="font-size: 11px; padding: 4px 10px;" onclick="calculateNutritionGoalsWithAI()">🤖 Wylicz przez AI</button>
+            <button type="button" id="ai-calc-goals-btn" class="btn btn-sm btn-accent" style="font-size: 11px; padding: 5px 10px;" onclick="calculateNutritionGoalsWithAI()">🤖 Wylicz przez AI</button>
           </div>
-          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px;">
+          <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
+            Zmiana <b>KCAL</b> automatycznie przelicza makroskładniki, a zmiana makro dopasowuje resztę tak, aby bilans kaloryczny zawsze się spinał (1g B = 4 kcal, 1g W = 4 kcal, 1g T = 9 kcal).
+          </p>
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px;">
             <div>
               <label style="font-size: 10px; color: var(--text-muted); display: block; margin-bottom: 2px;">KCAL</label>
-              <input type="number" step="50" id="goal-kcal-input" class="input-box" style="font-size: 13px; padding: 6px;" placeholder="2500">
+              <input type="number" step="50" id="goal-kcal-input" class="input-box" style="font-size: 13px; padding: 6px;" placeholder="2500" oninput="onGoalKcalInput()">
             </div>
             <div>
-              <label style="font-size: 10px; color: var(--accent); display: block; margin-bottom: 2px;">BIAŁKO (g)</label>
-              <input type="number" step="5" id="goal-protein-input" class="input-box" style="font-size: 13px; padding: 6px;" placeholder="180">
+              <label style="font-size: 10px; color: var(--success); display: block; margin-bottom: 2px;">BIAŁKO (g)</label>
+              <input type="number" step="5" id="goal-protein-input" class="input-box" style="font-size: 13px; padding: 6px;" placeholder="180" oninput="onGoalMacroInput('protein')">
             </div>
             <div>
-              <label style="font-size: 10px; color: var(--primary); display: block; margin-bottom: 2px;">WĘGLE (g)</label>
-              <input type="number" step="5" id="goal-carbs-input" class="input-box" style="font-size: 13px; padding: 6px;" placeholder="260">
+              <label style="font-size: 10px; color: var(--accent); display: block; margin-bottom: 2px;">WĘGLE (g)</label>
+              <input type="number" step="5" id="goal-carbs-input" class="input-box" style="font-size: 13px; padding: 6px;" placeholder="260" oninput="onGoalMacroInput('carbs')">
             </div>
             <div>
-              <label style="font-size: 10px; color: var(--success); display: block; margin-bottom: 2px;">TŁUSZCZ (g)</label>
-              <input type="number" step="5" id="goal-fat-input" class="input-box" style="font-size: 13px; padding: 6px;" placeholder="75">
+              <label style="font-size: 10px; color: var(--primary); display: block; margin-bottom: 2px;">TŁUSZCZ (g)</label>
+              <input type="number" step="5" id="goal-fat-input" class="input-box" style="font-size: 13px; padding: 6px;" placeholder="75" oninput="onGoalMacroInput('fat')">
             </div>
           </div>
+          <div id="goal-macro-math-preview" style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px; padding: 6px 8px; background: #12151b; border-radius: 8px; border: 1px solid var(--border);"></div>
           <button type="button" class="btn btn-sm btn-primary" style="width: 100%; padding: 8px;" onclick="saveNutritionGoals()">💾 Zapisz Cel Kalorii i Makro</button>
+          <div id="nutrition-goals-status" style="display: none; font-size: 12px; color: var(--success); margin-top: 8px; line-height: 1.4;"></div>
         </div>
 
         <!-- Daily Progress Bars -->
@@ -866,7 +897,7 @@
 
         <!-- Optional Description / Context Input -->
         <div style="display: flex; gap: 6px; margin-bottom: 8px;">
-          <input type="text" id="meal-desc-input" class="input-box" style="text-align: left; font-size: 13px; flex: 1;" placeholder="Opcjonalny opis (np. 200g kurczaka, sos jogurtowy — lub sam opis bez zdjęcia)">
+          <input type="text" id="meal-desc-input" class="input-box" style="text-align: left; font-size: 13px; flex: 1;" placeholder="Opcjonalny opis dla AI (np. 200g kurczaka, sos jogurtowy — lub sam opis bez zdjęcia)">
         </div>
 
         <div style="display: flex; gap: 8px;">
@@ -884,9 +915,9 @@
 
         <!-- Editable AI Meal Preview / Manual Entry Box -->
         <div id="meal-editor-box" style="display: none; background: var(--surface-elevated); border: 1px solid var(--accent); border-radius: 12px; padding: 12px; margin-top: 12px;">
-          <div style="font-size: 12px; font-weight: 800; color: var(--accent); margin-bottom: 6px;" id="meal-editor-header">✨ Oszacowanie AI (możesz skorygować przed zapisem):</div>
+          <div style="font-size: 12px; font-weight: 800; color: var(--accent); margin-bottom: 6px;" id="meal-editor-header">✨ Oszacowanie AI (możesz skorygować lub dopytać AI przed zapisem):</div>
           <input type="text" id="edit-meal-name" class="input-box" style="text-align: left; font-size: 14px; margin-bottom: 8px;" placeholder="Nazwa posiłku (np. Kurczak z ryżem i brokułami)">
-          <div id="edit-meal-ingredients" style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px; line-height: 1.4;"></div>
+          <div id="edit-meal-ingredients" style="display: none; font-size: 11px; color: var(--text-muted); margin-bottom: 8px; line-height: 1.4; padding: 8px; background: #12151b; border-radius: 8px; border: 1px solid var(--border);"></div>
 
           <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px;">
             <div>
@@ -894,21 +925,40 @@
               <input type="number" id="edit-meal-kcal" class="input-box" style="font-size: 13px; padding: 6px;">
             </div>
             <div>
-              <label style="font-size: 9px; color: var(--accent); display: block; text-align: center;">BIAŁKO (g)</label>
-              <input type="number" step="0.5" id="edit-meal-protein" class="input-box" style="font-size: 13px; padding: 6px;">
+              <label style="font-size: 9px; color: var(--success); display: block; text-align: center;">BIAŁKO (g)</label>
+              <input type="number" step="0.5" id="edit-meal-protein" class="input-box" style="font-size: 13px; padding: 6px;" oninput="onEditMealMacroInput()">
             </div>
             <div>
-              <label style="font-size: 9px; color: var(--primary); display: block; text-align: center;">WĘGLE (g)</label>
-              <input type="number" step="0.5" id="edit-meal-carbs" class="input-box" style="font-size: 13px; padding: 6px;">
+              <label style="font-size: 9px; color: var(--accent); display: block; text-align: center;">WĘGLE (g)</label>
+              <input type="number" step="0.5" id="edit-meal-carbs" class="input-box" style="font-size: 13px; padding: 6px;" oninput="onEditMealMacroInput()">
             </div>
             <div>
-              <label style="font-size: 9px; color: var(--success); display: block; text-align: center;">TŁUSZCZ (g)</label>
-              <input type="number" step="0.5" id="edit-meal-fat" class="input-box" style="font-size: 13px; padding: 6px;">
+              <label style="font-size: 9px; color: var(--primary); display: block; text-align: center;">TŁUSZCZ (g)</label>
+              <input type="number" step="0.5" id="edit-meal-fat" class="input-box" style="font-size: 13px; padding: 6px;" oninput="onEditMealMacroInput()">
             </div>
           </div>
 
+          <!-- Ask / Correct AI Follow-up Box -->
+          <div style="background: rgba(0, 229, 255, 0.06); border: 1px dashed rgba(0, 229, 255, 0.35); border-radius: 10px; padding: 9px; margin-bottom: 10px;">
+            <div style="font-size: 11px; font-weight: 700; color: var(--accent); margin-bottom: 5px;">
+              💬 Coś się nie zgadza? Podpowiedz AI lub poproś o korektę:
+            </div>
+            <div style="display: flex; gap: 6px;">
+              <input type="text" id="meal-ai-followup-input" class="input-box" style="text-align: left; font-size: 12px; padding: 7px 9px; flex: 1;" placeholder="Np. 'To był indyk 150g a nie kurczak', 'Dolicz łyżkę oliwy', 'Ryżu było tylko 80g'" onkeydown="if(event.key==='Enter') refineMealEstimateWithAI()">
+              <button type="button" id="meal-ai-followup-btn" class="btn btn-sm btn-accent" style="padding: 7px 10px; font-size: 11px; white-space: nowrap;" onclick="refineMealEstimateWithAI()">
+                🔄 Przelicz z AI
+              </button>
+            </div>
+          </div>
+
+          <!-- User's Own Note / Comment Field -->
+          <div style="margin-bottom: 10px;">
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">📝 Twój własny komentarz / notatka do posiłku (opcjonalnie):</label>
+            <input type="text" id="edit-meal-user-comment" class="input-box" style="text-align: left; font-size: 12px; padding: 7px 9px;" placeholder="Np. Posiłek przedtreningowy, bardzo sycący">
+          </div>
+
           <div style="display: flex; gap: 8px;">
-            <button type="button" class="btn btn-sm btn-primary" style="flex: 2; padding: 9px;" onclick="saveEditedMealToDiary()">✅ Dodaj do Dziennika</button>
+            <button type="button" class="btn btn-sm btn-primary" style="flex: 2; padding: 9px;" onclick="saveEditedMealToDiary()">✅ Zapisz w Dzienniku</button>
             <button type="button" class="btn btn-sm btn-secondary" style="flex: 1; padding: 9px;" onclick="closeMealEditorBox()">Anuluj</button>
           </div>
         </div>
@@ -1129,6 +1179,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=24"></script>
+  <script src="app.js?v=25"></script>
 </body>
 </html>
