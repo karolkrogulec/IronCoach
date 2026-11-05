@@ -3204,21 +3204,27 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
 
   // Real, active production models in Google AI Studio
   const STATIC_TIER_1_PRO = [
+    'gemini-2.5-pro',
+    'gemini-2.5-pro-preview',
     'gemini-2.0-pro-exp-02-05',
     'gemini-1.5-pro',
     'gemini-1.5-pro-latest'
   ];
 
   const STATIC_TIER_2_FLASH = [
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-001',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-preview',
     'gemini-1.5-flash',
-    'gemini-1.5-flash-latest'
+    'gemini-1.5-flash-latest',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-001'
   ];
 
   const STATIC_TIER_3_LITE = [
-    'gemini-2.0-flash-lite-preview-02-05',
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash-lite-preview',
     'gemini-2.0-flash-lite',
+    'gemini-2.0-flash-lite-preview-02-05',
     'gemini-1.5-flash-8b',
     'gemini-1.5-flash-8b-latest'
   ];
@@ -6631,28 +6637,39 @@ async function testApiKeysConnection() {
 
   const testKey = async (key, label) => {
     if (!key) return `• <b>${label}</b>: <span style="color: var(--text-muted);">⚪ Brak wpisanego klucza</span>`;
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: 'ping' }] }] })
-      });
-      if (res.ok) {
-        return `• <b>${label}</b>: <span style="color: var(--success); font-weight: 700;">✅ Działa! Połączenie nawiązane, wolna pula dostępna.</span>`;
+    
+    const candidateModels = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro', 'gemini-1.5-pro'];
+    let lastErr = null;
+
+    for (const testModel of candidateModels) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${testModel}:generateContent?key=${key}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: 'ping' }] }] })
+        });
+        if (res.ok) {
+          return `• <b>${label}</b>: <span style="color: var(--success); font-weight: 700;">✅ Działa! Połączenie nawiązane (${testModel}), wolna pula dostępna.</span>`;
+        }
+        const err = await res.json().catch(() => ({}));
+        const msg = err.error?.message || `HTTP ${res.status}`;
+        if (res.status === 429 || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource_exhausted')) {
+          return `• <b>${label}</b>: <span style="color: #ffb74d; font-weight: 700;">⏳ Limit dobowy wyczerpany (${testModel}: Quota 429)</span>`;
+        }
+        if (res.status === 400 || res.status === 403) {
+          return `• <b>${label}</b>: <span style="color: var(--danger); font-weight: 700;">❌ Błąd klucza (${escapeHtml(msg)})</span>`;
+        }
+        if (res.status === 404) {
+          lastErr = msg;
+          continue; // try next candidate model
+        }
+        return `• <b>${label}</b>: <span style="color: var(--danger);">⚠️ Błąd ${res.status}: ${escapeHtml(msg)}</span>`;
+      } catch (e) {
+        return `• <b>${label}</b>: <span style="color: var(--danger);">⚠️ Błąd połączenia sieciowego: ${escapeHtml(e.message)}</span>`;
       }
-      const err = await res.json().catch(() => ({}));
-      const msg = err.error?.message || `HTTP ${res.status}`;
-      if (res.status === 429 || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource_exhausted')) {
-        return `• <b>${label}</b>: <span style="color: #ffb74d; font-weight: 700;">⏳ Limit dobowy wyczerpany (Quota 429)</span>`;
-      }
-      if (res.status === 400 || res.status === 403) {
-        return `• <b>${label}</b>: <span style="color: var(--danger); font-weight: 700;">❌ Błąd klucza (${escapeHtml(msg)})</span>`;
-      }
-      return `• <b>${label}</b>: <span style="color: var(--danger);">⚠️ Błąd ${res.status}: ${escapeHtml(msg)}</span>`;
-    } catch (e) {
-      return `• <b>${label}</b>: <span style="color: var(--danger);">⚠️ Błąd połączenia sieciowego: ${escapeHtml(e.message)}</span>`;
     }
+    return `• <b>${label}</b>: <span style="color: var(--danger);">⚠️ Żaden model testowy nie był dostępny (${escapeHtml(lastErr || '404')})</span>`;
   };
 
   const res1 = await testKey(primaryKey, 'Klucz główny');
