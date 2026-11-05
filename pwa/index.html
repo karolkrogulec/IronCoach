@@ -1186,17 +1186,26 @@
       </div>
 
       <div class="card">
-        <div class="card-title">🔑 Klucz Gemini API i Modele</div>
+        <div class="card-title">🔑 Klucze Gemini API i Modele</div>
         <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 10px;">
-          Potrzebny do asystenta AI, analizy sesji i importu z Keep. Możesz go wygenerować bezpłatnie w Google AI Studio.
+          Potrzebne do asystenta AI, analizy sesji i importu z Keep. Możesz wygenerować bezpłatny klucz w Google AI Studio.
         </p>
-        <div style="position: relative; margin-bottom: 10px;">
-          <input type="password" id="gemini-api-key" class="input-box" style="text-align: left; padding-right: 42px;" placeholder="AIzaSy..." autocomplete="off" autocapitalize="none" spellcheck="false">
-          <button type="button" onclick="toggleApiKeyVisibility()" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 16px; cursor: pointer;" title="Pokaż/Ukryj klucz">👁️</button>
+
+        <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Klucz główny (Projekt 1)</label>
+        <div style="position: relative; margin-bottom: 8px;">
+          <input type="password" id="gemini-api-key" class="input-box" style="text-align: left; padding-right: 42px;" placeholder="AIzaSy... (Klucz główny)" autocomplete="off" autocapitalize="none" spellcheck="false">
+          <button type="button" onclick="toggleApiKeyVisibility('gemini-api-key')" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 16px; cursor: pointer;" title="Pokaż/Ukryj klucz">👁️</button>
         </div>
+
+        <label style="font-size: 11px; color: var(--accent); display: block; margin-bottom: 3px;">Klucz zapasowy (Projekt 2 — osobna darmowa pula tokenów)</label>
+        <div style="position: relative; margin-bottom: 10px;">
+          <input type="password" id="gemini-backup-api-key" class="input-box" style="text-align: left; padding-right: 42px;" placeholder="AIzaSy... (Klucz zapasowy z drugiego projektu)" autocomplete="off" autocapitalize="none" spellcheck="false">
+          <button type="button" onclick="toggleApiKeyVisibility('gemini-backup-api-key')" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 16px; cursor: pointer;" title="Pokaż/Ukryj klucz">👁️</button>
+        </div>
+
         <div style="display: flex; gap: 8px; margin-bottom: 14px;">
-          <button class="btn btn-primary" onclick="saveApiKey()">Zapisz Klucz</button>
-          <a href="https://aistudio.google.com/app/apikey" target="_blank" class="btn btn-secondary" style="text-decoration: none; width: auto; font-size: 13px;">Pobierz darmowy klucz ↗</a>
+          <button class="btn btn-primary" onclick="saveApiKey()">Zapisz Klucze</button>
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" class="btn btn-secondary" style="text-decoration: none; width: auto; font-size: 13px;">Utwórz nowy projekt w AI Studio ↗</a>
         </div>
         <p id="api-key-status" style="color: var(--success); font-size: 13px; margin-top: -6px; margin-bottom: 10px; display: none;">✅ Zapisano pomyślnie!</p>
 
@@ -1204,12 +1213,13 @@
           <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Preferowany poziom / model główny</label>
           <select id="gemini-preferred-tier" class="input-box" style="text-align: left; margin-bottom: 8px; font-size: 13px;" onchange="savePreferredGeminiTier(this.value)">
             <option value="smart">💎 Najwyższy poziom (Pro ➔ Flash ➔ Flash-Lite)</option>
-            <option value="fast">⚡ Szybki poziom (Flash ➔ Flash-Lite ➔ Pro)</option>
+            <option value="fast">⚡ Szybki poziom (Flash ➔ Flash-Lite ➔ Pro — aż 1500 zapytań/dzień!)</option>
             <option value="lite">🍃 Maksymalne limity (Flash-Lite ➔ Flash ➔ Pro)</option>
           </select>
           <div style="background: rgba(0, 229, 255, 0.05); border: 1px solid rgba(0, 229, 255, 0.2); border-radius: 8px; padding: 8px; font-size: 11px; color: var(--text-muted); line-height: 1.45;">
-            🔄 <b>Kaskadowy Auto-Fallback przy wyczerpaniu limitu:</b><br>
-            Gdy na modelu wyższego rzędu (np. <i>Gemini 2.5 Pro</i> / <i>2.0 Pro</i>) wyczerpie się darmowy limit zapytań (błąd <code>429 Quota Exceeded</code>), aplikacja natychmiast i automatycznie schodzi o poziom niżej na <i>Gemini Flash</i>, a w razie potrzeby na <i>Flash-Lite</i>. Błąd pojawi się dopiero wtedy, gdy żaden model w Google AI Studio nie odpowie.
+            🔄 <b>Podwójny Auto-Fallback (Multi-Model & Multi-Project):</b><br>
+            1. <b>Modele:</b> Gdy na modelu Pro wyczerpie się limit, aplikacja natychmiast schodzi na Flash i Flash-Lite.<br>
+            2. <b>Projekty:</b> Jeśli w Google AI Studio wyczerpie się limit dobowy na całym Projekcie 1, aplikacja natychmiast przełącza się na Klucz zapasowy z Projektu 2!
           </div>
           <div id="gemini-last-used-info" style="margin-top: 8px; font-size: 11px; color: var(--accent); display: none;"></div>
         </div>
@@ -1418,6 +1428,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=37"></script>
+  <script src="app.js?v=38"></script>
 </body>
 </html>
