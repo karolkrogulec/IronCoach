@@ -3132,9 +3132,13 @@ function getGeminiModelVersionScore(modelName) {
 function updateGeminiModelBadges(model, isFallback = false, keyLabel = '') {
   STATE.lastUsedGeminiModel = model;
 
+  const isP2 = keyLabel && (keyLabel.includes('2') || keyLabel.toLowerCase().includes('zapasowy'));
+  const keyTag = isP2 ? ' [P2]' : (keyLabel ? ' [P1]' : '');
+
   const coachBadge = document.getElementById('coach-model-badge');
   if (coachBadge) {
-    coachBadge.textContent = isFallback ? `🤖 ${model} (fallback)` : `🤖 ${model}`;
+    coachBadge.textContent = isFallback ? `🤖 ${model}${keyTag} (fallback)` : `🤖 ${model}${keyTag}`;
+    coachBadge.title = `Model: ${model} | ${keyLabel || 'Klucz główny'}${isFallback ? ' (użyty przez fallback)' : ''}`;
     coachBadge.style.display = 'inline-block';
     if (isFallback) {
       coachBadge.style.color = '#ffb74d';
@@ -3147,13 +3151,13 @@ function updateGeminiModelBadges(model, isFallback = false, keyLabel = '') {
 
   const nutritionBadge = document.getElementById('nutrition-model-badge');
   if (nutritionBadge) {
-    nutritionBadge.textContent = isFallback ? `🤖 ${model} (fallback)` : `🤖 ${model}`;
+    nutritionBadge.textContent = isFallback ? `🤖 ${model}${keyTag} (fallback)` : `🤖 ${model}${keyTag}`;
   }
 
   const settingsInfo = document.getElementById('gemini-last-used-info');
   if (settingsInfo) {
     const keyInfo = keyLabel ? ` [${keyLabel}]` : '';
-    settingsInfo.innerHTML = `Ostatnio użyty model: <b>${escapeHtml(model)}</b>${escapeHtml(keyInfo)} ${isFallback ? '<span style="color: #ffb74d;">(aktywowany fallback po wyczerpaniu limitu)</span>' : '<span style="color: var(--success);">(główny)</span>'}`;
+    settingsInfo.innerHTML = `Ostatnio użyty model: <b>${escapeHtml(model)}</b>${escapeHtml(keyInfo)} ${isFallback ? '<span style="color: #ffb74d;">(aktywowany fallback)</span>' : '<span style="color: var(--success);">(główny)</span>'}`;
     settingsInfo.style.display = 'block';
   }
 }
@@ -3172,12 +3176,9 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
     throw new Error('Brak klucza Gemini API');
   }
 
-  const allAttempts = [];
-
-  for (let kIdx = 0; kIdx < keysToTry.length; kIdx++) {
-    const { key, label } = keysToTry[kIdx];
-
-    let discoveredModels = [];
+  // Discover models across available keys
+  let discoveredModels = [];
+  for (const { key } of keysToTry) {
     try {
       const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
       const listData = await listRes.json();
@@ -3194,148 +3195,188 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
             if (n.includes('embedding') || n.includes('aqa') || n.includes('robotics') || n.includes('computer-use')) return false;
             return true;
           });
+        if (discoveredModels.length > 0) break;
       }
     } catch (e) {
-      console.warn(`Listing models for ${label} failed:`, e);
+      console.warn('Listing models failed:', e);
     }
+  }
 
-    // Real, active production models in Google AI Studio
-    const STATIC_TIER_1_PRO = [
-      'gemini-2.0-pro-exp-02-05',
-      'gemini-1.5-pro',
-      'gemini-1.5-pro-latest'
-    ];
+  // Real, active production models in Google AI Studio
+  const STATIC_TIER_1_PRO = [
+    'gemini-2.0-pro-exp-02-05',
+    'gemini-1.5-pro',
+    'gemini-1.5-pro-latest'
+  ];
 
-    const STATIC_TIER_2_FLASH = [
-      'gemini-2.0-flash',
-      'gemini-2.0-flash-001',
-      'gemini-1.5-flash',
-      'gemini-1.5-flash-latest'
-    ];
+  const STATIC_TIER_2_FLASH = [
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-001',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-latest'
+  ];
 
-    const STATIC_TIER_3_LITE = [
-      'gemini-2.0-flash-lite-preview-02-05',
-      'gemini-2.0-flash-lite',
-      'gemini-1.5-flash-8b',
-      'gemini-1.5-flash-8b-latest'
-    ];
+  const STATIC_TIER_3_LITE = [
+    'gemini-2.0-flash-lite-preview-02-05',
+    'gemini-2.0-flash-lite',
+    'gemini-1.5-flash-8b',
+    'gemini-1.5-flash-8b-latest'
+  ];
 
-    // Group discovered models by tier
-    const tier1Models = discoveredModels.filter(m => getGeminiModelTier(m) === 1);
-    const tier2Models = discoveredModels.filter(m => getGeminiModelTier(m) === 2);
-    const tier3Models = discoveredModels.filter(m => getGeminiModelTier(m) === 3);
-    const tier4Models = discoveredModels.filter(m => getGeminiModelTier(m) === 4);
+  // Group discovered models by tier
+  const tier1Models = discoveredModels.filter(m => getGeminiModelTier(m) === 1);
+  const tier2Models = discoveredModels.filter(m => getGeminiModelTier(m) === 2);
+  const tier3Models = discoveredModels.filter(m => getGeminiModelTier(m) === 3);
+  const tier4Models = discoveredModels.filter(m => getGeminiModelTier(m) === 4);
 
-    // Sort within each tier by freshness/version
-    const sortByScore = (list) => [...list].sort((a, b) => getGeminiModelVersionScore(b) - getGeminiModelVersionScore(a));
+  // Sort within each tier by freshness/version
+  const sortByScore = (list) => [...list].sort((a, b) => getGeminiModelVersionScore(b) - getGeminiModelVersionScore(a));
 
-    const sortedTier1 = Array.from(new Set([...sortByScore(tier1Models), ...STATIC_TIER_1_PRO]));
-    const sortedTier2 = Array.from(new Set([...sortByScore(tier2Models), ...STATIC_TIER_2_FLASH]));
-    const sortedTier3 = Array.from(new Set([...sortByScore(tier3Models), ...STATIC_TIER_3_LITE]));
-    const sortedTier4 = Array.from(new Set(sortByScore(tier4Models)));
+  const sortedTier1 = Array.from(new Set([...sortByScore(tier1Models), ...STATIC_TIER_1_PRO]));
+  const sortedTier2 = Array.from(new Set([...sortByScore(tier2Models), ...STATIC_TIER_2_FLASH]));
+  const sortedTier3 = Array.from(new Set([...sortByScore(tier3Models), ...STATIC_TIER_3_LITE]));
+  const sortedTier4 = Array.from(new Set(sortByScore(tier4Models)));
 
-    // Build the cascading fallback chain based on requested tier preference
-    let modelsToTry = [];
-    if (preferredTier === 'smart') {
-      modelsToTry = [...sortedTier1, ...sortedTier2, ...sortedTier3, ...sortedTier4];
-    } else if (preferredTier === 'lite') {
-      modelsToTry = [...sortedTier3, ...sortedTier2, ...sortedTier1, ...sortedTier4];
-    } else {
-      modelsToTry = [...sortedTier2, ...sortedTier3, ...sortedTier1, ...sortedTier4];
-    }
+  // Quality-First Tier Ordering:
+  // We prioritize higher tier models across ALL keys before degrading to lower tiers!
+  const orderedTiers = [];
+  if (preferredTier === 'smart') {
+    orderedTiers.push({ tierNum: 1, name: 'Pro', models: sortedTier1 });
+    orderedTiers.push({ tierNum: 2, name: 'Flash', models: sortedTier2 });
+    orderedTiers.push({ tierNum: 3, name: 'Lite', models: sortedTier3 });
+    if (sortedTier4.length > 0) orderedTiers.push({ tierNum: 4, name: 'Exp', models: sortedTier4 });
+  } else if (preferredTier === 'lite') {
+    orderedTiers.push({ tierNum: 3, name: 'Lite', models: sortedTier3 });
+    orderedTiers.push({ tierNum: 2, name: 'Flash', models: sortedTier2 });
+    orderedTiers.push({ tierNum: 1, name: 'Pro', models: sortedTier1 });
+    if (sortedTier4.length > 0) orderedTiers.push({ tierNum: 4, name: 'Exp', models: sortedTier4 });
+  } else {
+    // Default 'fast'
+    orderedTiers.push({ tierNum: 2, name: 'Flash', models: sortedTier2 });
+    orderedTiers.push({ tierNum: 3, name: 'Lite', models: sortedTier3 });
+    orderedTiers.push({ tierNum: 1, name: 'Pro', models: sortedTier1 });
+    if (sortedTier4.length > 0) orderedTiers.push({ tierNum: 4, name: 'Exp', models: sortedTier4 });
+  }
 
-    // Deduplicate preserving order
-    modelsToTry = Array.from(new Set(modelsToTry));
-
-    const parts = [{ text: prompt }];
-    if (Array.isArray(inlineData)) {
-      inlineData.forEach(item => {
-        if (item && item.data && item.mimeType) {
-          parts.push({
-            inlineData: {
-              mimeType: item.mimeType,
-              data: item.data
-            }
-          });
-        }
-      });
-    } else if (inlineData && inlineData.data && inlineData.mimeType) {
-      parts.push({
-        inlineData: {
-          mimeType: inlineData.mimeType,
-          data: inlineData.data
-        }
-      });
-    }
-
-    for (let i = 0; i < modelsToTry.length; i++) {
-      const model = modelsToTry[i];
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: parts }]
-          })
+  const parts = [{ text: prompt }];
+  if (Array.isArray(inlineData)) {
+    inlineData.forEach(item => {
+      if (item && item.data && item.mimeType) {
+        parts.push({
+          inlineData: {
+            mimeType: item.mimeType,
+            data: item.data
+          }
         });
+      }
+    });
+  } else if (inlineData && inlineData.data && inlineData.mimeType) {
+    parts.push({
+      inlineData: {
+        mimeType: inlineData.mimeType,
+        data: inlineData.data
+      }
+    });
+  }
 
-        if (response.ok) {
-          const data = await response.json();
-          const resParts = data.candidates?.[0]?.content?.parts || [];
-          const text = resParts.map(p => p.text || '').join('').trim();
-          if (text) {
-            const isFallback = (kIdx > 0 || i > 0);
-            if (isFallback) {
-              const reasonsSummary = allAttempts.map(a => `${a.model} (${a.reason})`).join(', ');
-              console.warn(`[Gemini Auto-Fallback] Użyto ${model} [${label}] po wcześniejszych próbach: ${reasonsSummary}`);
-              STATE.lastGeminiFallback = {
-                usedModel: model,
-                usedKeyLabel: label,
-                failedModels: [...allAttempts],
-                timestamp: Date.now()
-              };
+  const allAttempts = [];
+  let attemptCount = 0;
+  const quotaExhaustedKeyIndices = new Set();
+
+  for (let tIdx = 0; tIdx < orderedTiers.length; tIdx++) {
+    const tierObj = orderedTiers[tIdx];
+    const tierModels = tierObj.models;
+    if (!tierModels || tierModels.length === 0) continue;
+
+    // Reset quota exhaustion tracker for this tier:
+    // (a project might be quota-exhausted for Pro, but still have 1500 quota for Flash!)
+    quotaExhaustedKeyIndices.clear();
+
+    for (let mIdx = 0; mIdx < tierModels.length; mIdx++) {
+      const model = tierModels[mIdx];
+
+      // If all keys are known to be quota-exhausted for this tier, skip remaining models in this tier
+      if (quotaExhaustedKeyIndices.size >= keysToTry.length) {
+        break;
+      }
+
+      for (let kIdx = 0; kIdx < keysToTry.length; kIdx++) {
+        if (quotaExhaustedKeyIndices.has(kIdx)) {
+          // This project has already hit 429 quota on this tier; skip to next project key
+          continue;
+        }
+
+        const { key, label } = keysToTry[kIdx];
+        attemptCount++;
+
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: parts }]
+            })
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            const resParts = data.candidates?.[0]?.content?.parts || [];
+            const text = resParts.map(p => p.text || '').join('').trim();
+            if (text) {
+              const isFallback = (attemptCount > 1 || kIdx > 0 || tIdx > 0);
+              if (isFallback) {
+                const reasonsSummary = allAttempts.map(a => `${a.model} [${a.keyLabel}] (${a.reason})`).join(', ');
+                console.warn(`[Gemini Auto-Fallback] Użyto ${model} [${label}] po wcześniejszych próbach: ${reasonsSummary}`);
+                STATE.lastGeminiFallback = {
+                  usedModel: model,
+                  usedKeyLabel: label,
+                  failedModels: [...allAttempts],
+                  timestamp: Date.now()
+                };
+              } else {
+                STATE.lastGeminiFallback = null;
+              }
+
+              updateGeminiModelBadges(model, isFallback, label);
+              return text;
             } else {
-              STATE.lastGeminiFallback = null;
+              allAttempts.push({ keyLabel: label, model, status: 200, reason: 'Pusta odpowiedź (brak treści)' });
+            }
+          } else {
+            const errJson = await response.json().catch(() => ({}));
+            const status = response.status;
+            const rawMsg = errJson.error?.message || `HTTP ${status}`;
+            
+            let reason = `HTTP ${status}`;
+            if (status === 429 || rawMsg.toLowerCase().includes('quota') || rawMsg.toLowerCase().includes('resource_exhausted')) {
+              reason = 'Wyczerpany limit (Quota / 429)';
+              quotaExhaustedKeyIndices.add(kIdx);
+            } else if (status === 404) {
+              reason = 'Model niedostępny (404)';
+            } else if (status === 503 || status === 500) {
+              reason = 'Serwer przeciążony (503)';
             }
 
-            updateGeminiModelBadges(model, isFallback, label);
-            return text;
-          } else {
-            allAttempts.push({ keyLabel: label, model, status: 200, reason: 'Pusta odpowiedź (brak treści)' });
+            allAttempts.push({ keyLabel: label, model, status, reason, details: rawMsg });
+            console.warn(`[Gemini Auto-Fallback] ${label} | Model ${model} zwrócił ${reason}. Przechodzę do kolejnej próby...`);
           }
-        } else {
-          const errJson = await response.json().catch(() => ({}));
-          const status = response.status;
-          const rawMsg = errJson.error?.message || `HTTP ${status}`;
-          
-          let reason = `HTTP ${status}`;
-          if (status === 429 || rawMsg.toLowerCase().includes('quota') || rawMsg.toLowerCase().includes('resource_exhausted')) {
-            reason = 'Wyczerpany limit (Quota / 429)';
-          } else if (status === 404) {
-            reason = 'Model niedostępny (404)';
-          } else if (status === 503 || status === 500) {
-            reason = 'Serwer przeciążony (503)';
-          }
-
-          allAttempts.push({ keyLabel: label, model, status, reason, details: rawMsg });
-          console.warn(`[Gemini Auto-Fallback] ${label} | Model ${model} zwrócił ${reason}. Przechodzę do kolejnego...`);
+        } catch (networkErr) {
+          allAttempts.push({ keyLabel: label, model, status: 0, reason: 'Błąd sieci', details: networkErr.message });
+          console.warn(`[Gemini Auto-Fallback] Błąd sieci dla modelu ${model} [${label}]:`, networkErr);
         }
-      } catch (networkErr) {
-        allAttempts.push({ keyLabel: label, model, status: 0, reason: 'Błąd sieci', details: networkErr.message });
-        console.warn(`[Gemini Auto-Fallback] Błąd sieci dla modelu ${model}:`, networkErr);
       }
     }
   }
 
-  // Only reached if ALL keys and ALL models failed!
+  // Only reached if ALL keys and ALL tiers/models failed!
   const quotaFailures = allAttempts.filter(a => a.status === 429 || (a.details && a.details.toLowerCase().includes('quota')));
   if (quotaFailures.length > 0) {
-    throw new Error(`Wyczerpano limity zapytań (Quota / 429) dla projektu w Google AI Studio. Utwórz nowy projekt w Google AI Studio (ma osobną darmową pulę) i wklej jako klucz zapasowy w Ustawieniach, lub odczekaj na reset dobowy.`);
+    throw new Error(`Wyczerpano limity zapytań (Quota / 429) dla wszystkich skonfigurowanych projektów. Utwórz nowy darmowy projekt w Google AI Studio lub odczekaj na reset dobowy.`);
   }
 
   const primaryFailure = allAttempts.find(a => a.status !== 404) || allAttempts[0];
-  const failureMsg = primaryFailure ? `${primaryFailure.reason}: ${primaryFailure.details || ''}` : 'Brak dostępnego modelu Gemini dla tego klucza.';
+  const failureMsg = primaryFailure ? `${primaryFailure.reason}: ${primaryFailure.details || ''}` : 'Brak dostępnego modelu Gemini dla skonfigurowanych kluczy.';
   throw new Error(failureMsg);
 }
 

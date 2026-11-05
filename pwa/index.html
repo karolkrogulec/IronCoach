@@ -1217,9 +1217,8 @@
             <option value="lite">🍃 Maksymalne limity (Flash-Lite ➔ Flash ➔ Pro)</option>
           </select>
           <div style="background: rgba(0, 229, 255, 0.05); border: 1px solid rgba(0, 229, 255, 0.2); border-radius: 8px; padding: 8px; font-size: 11px; color: var(--text-muted); line-height: 1.45;">
-            🔄 <b>Podwójny Auto-Fallback (Multi-Model & Multi-Project):</b><br>
-            1. <b>Modele:</b> Gdy na modelu Pro wyczerpie się limit, aplikacja natychmiast schodzi na Flash i Flash-Lite.<br>
-            2. <b>Projekty:</b> Jeśli w Google AI Studio wyczerpie się limit dobowy na całym Projekcie 1, aplikacja natychmiast przełącza się na Klucz zapasowy z Projektu 2!
+            🔄 <b>Inteligentny Fallback Jakościowy (Quality-First Multi-Project):</b><br>
+            Aplikacja najpierw próbuje najwyższy model (np. Pro) na <b>Kluczu głównym</b>. Jeśli limit na Pro jest wyczerpany, natychmiast próbuje Pro na <b>Kluczu zapasowym (Projekt 2)</b>! Dopiero gdy oba projekty wyczerpią limit na Pro, przechodzi na poziom Flash.
           </div>
           <div id="gemini-last-used-info" style="margin-top: 8px; font-size: 11px; color: var(--accent); display: none;"></div>
         </div>
@@ -1428,6 +1427,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=38"></script>
+  <script src="app.js?v=39"></script>
 </body>
 </html>
