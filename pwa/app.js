@@ -3122,8 +3122,13 @@ function getGeminiModelTier(modelName) {
 function getGeminiModelVersionScore(modelName) {
   const n = (modelName || '').toLowerCase();
   let score = 0;
-  if (n.includes('2.5')) score += 30;
-  else if (n.includes('2.0') || n.includes('2-')) score += 20;
+  if (n.includes('3.8')) score += 50;
+  else if (n.includes('3.6')) score += 48;
+  else if (n.includes('3.5')) score += 45;
+  else if (n.includes('3.1')) score += 42;
+  else if (n.includes('3-') || n.includes('3.0') || n.includes('3_') || n.includes('gemini-3-') || n.includes('gemini-3 ')) score += 40;
+  else if (n.includes('2.5')) score += 30;
+  else if (n.includes('2.0') || n.includes('2-') || n.includes('gemini-2-') || n.includes('gemini-2 ')) score += 20;
   else if (n.includes('1.5')) score += 10;
   if (!n.includes('preview') && !n.includes('exp')) score += 5;
   return score;
@@ -3230,18 +3235,22 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
 
   const STATIC_FALLBACKS = [
     // Tier 1 Pro
-    { name: 'gemini-1.5-pro', apiVersion: 'v1', tier: 1, score: 20 },
-    { name: 'gemini-1.5-pro-latest', apiVersion: 'v1', tier: 1, score: 21 },
+    { name: 'gemini-3.1-pro', apiVersion: 'v1beta', tier: 1, score: 42 },
     { name: 'gemini-2.5-pro', apiVersion: 'v1beta', tier: 1, score: 30 },
-    { name: 'gemini-2.0-pro-exp-02-05', apiVersion: 'v1beta', tier: 1, score: 25 },
-    // Tier 2 Flash
-    { name: 'gemini-1.5-flash', apiVersion: 'v1', tier: 2, score: 20 },
-    { name: 'gemini-1.5-flash-latest', apiVersion: 'v1', tier: 2, score: 21 },
+    { name: 'gemini-1.5-pro', apiVersion: 'v1', tier: 1, score: 20 },
+    // Tier 2 Flash (matches active AI Studio models)
+    { name: 'gemini-3.8-flash', apiVersion: 'v1beta', tier: 2, score: 50 },
+    { name: 'gemini-3.6-flash', apiVersion: 'v1beta', tier: 2, score: 48 },
+    { name: 'gemini-3-flash', apiVersion: 'v1beta', tier: 2, score: 40 },
     { name: 'gemini-2.5-flash', apiVersion: 'v1beta', tier: 2, score: 30 },
-    { name: 'gemini-2.0-flash', apiVersion: 'v1', tier: 2, score: 22 },
-    // Tier 3 Lite
-    { name: 'gemini-1.5-flash-8b', apiVersion: 'v1', tier: 3, score: 10 },
-    { name: 'gemini-2.5-flash-lite', apiVersion: 'v1beta', tier: 3, score: 15 }
+    { name: 'gemini-2-flash', apiVersion: 'v1beta', tier: 2, score: 22 },
+    { name: 'gemini-1.5-flash', apiVersion: 'v1', tier: 2, score: 20 },
+    // Tier 3 Lite (500 requests/day in AI Studio!)
+    { name: 'gemini-3.5-flash-lite', apiVersion: 'v1beta', tier: 3, score: 45 },
+    { name: 'gemini-3.1-flash-lite', apiVersion: 'v1beta', tier: 3, score: 42 },
+    { name: 'gemini-2.5-flash-lite', apiVersion: 'v1beta', tier: 3, score: 30 },
+    { name: 'gemini-2-flash-lite', apiVersion: 'v1beta', tier: 3, score: 22 },
+    { name: 'gemini-1.5-flash-8b', apiVersion: 'v1', tier: 3, score: 10 }
   ];
 
   const pool = discoveredList.length > 0 ? discoveredList : STATIC_FALLBACKS;
@@ -6681,9 +6690,11 @@ async function testApiKeysConnection() {
 
     // Step 2: Candidates to ping
     const pool = models.length > 0 ? models : [
-      { name: 'gemini-1.5-flash', apiVersion: 'v1', tier: 2, score: 20 },
-      { name: 'gemini-1.5-pro', apiVersion: 'v1', tier: 1, score: 20 },
-      { name: 'gemini-2.0-flash', apiVersion: 'v1beta', tier: 2, score: 20 }
+      { name: 'gemini-3.8-flash', apiVersion: 'v1beta', tier: 2, score: 50 },
+      { name: 'gemini-3.6-flash', apiVersion: 'v1beta', tier: 2, score: 48 },
+      { name: 'gemini-3.5-flash-lite', apiVersion: 'v1beta', tier: 3, score: 45 },
+      { name: 'gemini-2.5-flash', apiVersion: 'v1beta', tier: 2, score: 30 },
+      { name: 'gemini-1.5-flash', apiVersion: 'v1', tier: 2, score: 20 }
     ];
 
     const sorted = [...pool].sort((a, b) => {
