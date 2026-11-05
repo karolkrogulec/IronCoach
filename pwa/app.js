@@ -6361,13 +6361,16 @@ async function uploadBackupToGoogleDrive(backupObj, silent = false) {
 
   // 1. If Google Apps Script Webhook URL is configured, POST directly (no OAuth expiration issues)
   if (STATE.gdriveWebhookUrl) {
+    if (!STATE.gdriveWebhookSecret) {
+      return { ok: false, error: 'Brak wpisanego tajnego klucza webhooka (wklej ten sam klucz co SECRET_KEY w Apps Script).' };
+    }
     try {
       // Apps Script: { secret, payload } -> odpowiedź JSON { status: "success" | "error" }
       const response = await fetch(STATE.gdriveWebhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
-          secret: STATE.gdriveWebhookSecret || '',
+          secret: STATE.gdriveWebhookSecret,
           payload: backupObj
         })
       });
@@ -6377,10 +6380,16 @@ async function uploadBackupToGoogleDrive(backupObj, silent = false) {
           return { ok: true, method: 'webhook' };
         }
         console.warn('Webhook rejected:', result && result.message);
-        return { ok: false, error: (result && result.message) || 'Nieprawidłowa odpowiedź skryptu' };
+        return { ok: false, error: (result && result.message) || 'Nieprawidłowa odpowiedź skryptu (sprawdź czy klucz SECRET_KEY jest zgodny)' };
+      } else {
+        return { ok: false, error: `Błąd serwera Google: HTTP ${response.status}` };
       }
     } catch (e) {
       console.warn('Webhook upload failed:', e);
+      return {
+        ok: false,
+        error: `Błąd połączenia z Google Apps Script: ${e.message || e}\n\n👉 Najczęstsza przyczyna: W ustawieniach wdrożenia Apps Script opcja "Kto ma dostęp (Who has access)" NIE jest ustawiona na "Każdy (Anyone)". Jeśli jest ustawione "Tylko ja", Google blokuje telefon!`
+      };
     }
   }
 
@@ -6425,6 +6434,18 @@ async function uploadBackupToGoogleDrive(backupObj, silent = false) {
 }
 
 async function triggerGoogleDriveBackupNow() {
+  // Sync whatever is currently typed in the input fields if user didn't hit 'Zapisz konfigurację' yet
+  const whInput = document.getElementById('gdrive-webhook-url');
+  const secInput = document.getElementById('gdrive-webhook-secret');
+  if (whInput && whInput.value.trim()) {
+    STATE.gdriveWebhookUrl = whInput.value.trim();
+    localStorage.setItem('iron_gdrive_webhook_url', STATE.gdriveWebhookUrl);
+  }
+  if (secInput && secInput.value.trim()) {
+    STATE.gdriveWebhookSecret = secInput.value.trim();
+    localStorage.setItem('iron_gdrive_webhook_secret', STATE.gdriveWebhookSecret);
+  }
+
   const backupObj = buildFullBackupObject();
   const todayIso = getIsoDateFromTimestamp(Date.now());
   localStorage.setItem('iron_morning_auto_snapshot', JSON.stringify(backupObj));
@@ -6436,9 +6457,16 @@ async function triggerGoogleDriveBackupNow() {
       localStorage.setItem('iron_last_morning_backup_mode', 'Google Drive Cloud');
       loadGoogleDriveConfig();
       dismissMorningBackupBanner();
-      alert('✅ Pełny backup (sesje, obciążenia, powtórzenia, pomiary ciała i analizy Gemini) został zapisany na Google Drive!');
+      alert('✅ Sukces! Pełny backup został zapisany na Google Drive w folderze "IronCoach Backups"!');
       return;
+    } else {
+      alert(`⚠️ Nie udało się przesłać pliku do Google Drive:\n\n${res.error || 'Nieznany błąd serwera'}`);
+      if (!confirm('Czy chcesz zamiast tego pobrać/zapisać plik kopii zapasowej lokalnie na urządzeniu?')) {
+        return;
+      }
     }
+  } else {
+    alert('ℹ️ Nie skonfigurowano jeszcze Webhooka Google Drive. Wklej URL skryptu oraz tajny klucz w sekcji poniżej.');
   }
 
   // Fallback to mobile native Share Sheet (allows 1-tap "Save to Google Drive" on Android/iOS) or file download
