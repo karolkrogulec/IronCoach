@@ -3291,74 +3291,90 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
         const { key, label } = keysToTry[kIdx];
         attemptCount++;
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout per call
+        let response = null;
+        let networkErr = null;
 
-        try {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`;
-          const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: parts }] }),
-            signal: controller.signal
-          });
-          clearTimeout(timeoutId);
+        // Auto-retry once on momentary mobile connection drop / Failed to fetch
+        for (let retry = 0; retry < 2; retry++) {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s generation timeout
 
-          if (response.ok) {
-            const data = await response.json();
-            const resParts = data.candidates?.[0]?.content?.parts || [];
-            const text = resParts.map(p => p.text || '').join('').trim();
-            if (text) {
-              // Mark this key as healthy and working
-              delete STATE.keyCooldowns[key];
-              STATE.lastWorkingKey = key;
-
-              const isFallback = (attemptCount > 1 || kIdx > 0 || tIdx > 0);
-              if (isFallback) {
-                const reasonsSummary = allAttempts.map(a => `${a.model} [${a.keyLabel}] (${a.reason})`).join(', ');
-                console.warn(`[Gemini Auto-Fallback] Użyto ${modelName} [${label}] po wcześniejszych próbach: ${reasonsSummary}`);
-                STATE.lastGeminiFallback = {
-                  usedModel: modelName,
-                  usedKeyLabel: label,
-                  failedModels: [...allAttempts],
-                  timestamp: Date.now()
-                };
-              } else {
-                STATE.lastGeminiFallback = null;
-              }
-
-              updateGeminiModelBadges(modelName, isFallback, label);
-              return text;
-            } else {
-              allAttempts.push({ keyLabel: label, model: modelName, status: 200, reason: 'Pusta odpowiedź (brak treści)' });
+          try {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`;
+            response = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contents: [{ parts: parts }] }),
+              signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            networkErr = null;
+            break;
+          } catch (err) {
+            clearTimeout(timeoutId);
+            networkErr = err;
+            if (retry === 0 && !controller.signal.aborted) {
+              await new Promise(r => setTimeout(r, 1200));
             }
-          } else {
-            const errJson = await response.json().catch(() => ({}));
-            const status = response.status;
-            const rawMsg = errJson.error?.message || `HTTP ${status}`;
-
-            let reason = `HTTP ${status}`;
-            if (status === 429 || rawMsg.toLowerCase().includes('quota') || rawMsg.toLowerCase().includes('resource_exhausted')) {
-              reason = 'Wyczerpany limit (Quota / 429)';
-              quotaExhaustedKeyIndices.add(kIdx);
-              // Cooldown key for 30 minutes so other calls skip it immediately
-              STATE.keyCooldowns[key] = Date.now() + (30 * 60 * 1000);
-            } else if (status === 404) {
-              reason = 'Model niedostępny (404)';
-              STATE.unavailableModels.add(modelName);
-            } else if (status === 503 || status === 500) {
-              reason = 'Serwer przeciążony (503)';
-            }
-
-            allAttempts.push({ keyLabel: label, model: modelName, status, reason, details: rawMsg });
-            console.warn(`[Gemini Auto-Fallback] ${label} | Model ${modelName} zwrócił ${reason}. Przechodzę do kolejnej próby...`);
           }
-        } catch (networkErr) {
-          clearTimeout(timeoutId);
+        }
+
+        if (networkErr) {
           const isTimeout = networkErr.name === 'AbortError';
-          const reason = isTimeout ? 'Timeout połączenia (20s)' : 'Błąd sieci';
+          const reason = isTimeout ? 'Timeout połączenia (45s)' : 'Błąd sieci';
           allAttempts.push({ keyLabel: label, model: modelName, status: 0, reason, details: networkErr.message });
           console.warn(`[Gemini Auto-Fallback] ${reason} dla modelu ${modelName} [${label}]:`, networkErr);
+          continue;
+        }
+
+        if (response.ok) {
+          const data = await response.json();
+          const resParts = data.candidates?.[0]?.content?.parts || [];
+          const text = resParts.map(p => p.text || '').join('').trim();
+          if (text) {
+            // Mark this key as healthy and working
+            delete STATE.keyCooldowns[key];
+            STATE.lastWorkingKey = key;
+
+            const isFallback = (attemptCount > 1 || kIdx > 0 || tIdx > 0);
+            if (isFallback) {
+              const reasonsSummary = allAttempts.map(a => `${a.model} [${a.keyLabel}] (${a.reason})`).join(', ');
+              console.warn(`[Gemini Auto-Fallback] Użyto ${modelName} [${label}] po wcześniejszych próbach: ${reasonsSummary}`);
+              STATE.lastGeminiFallback = {
+                usedModel: modelName,
+                usedKeyLabel: label,
+                failedModels: [...allAttempts],
+                timestamp: Date.now()
+              };
+            } else {
+              STATE.lastGeminiFallback = null;
+            }
+
+            updateGeminiModelBadges(modelName, isFallback, label);
+            return text;
+          } else {
+            allAttempts.push({ keyLabel: label, model: modelName, status: 200, reason: 'Pusta odpowiedź (brak treści)' });
+          }
+        } else {
+          const errJson = await response.json().catch(() => ({}));
+          const status = response.status;
+          const rawMsg = errJson.error?.message || `HTTP ${status}`;
+
+          let reason = `HTTP ${status}`;
+          if (status === 429 || rawMsg.toLowerCase().includes('quota') || rawMsg.toLowerCase().includes('resource_exhausted')) {
+            reason = 'Wyczerpany limit (Quota / 429)';
+            quotaExhaustedKeyIndices.add(kIdx);
+            // Cooldown key for 30 minutes so other calls skip it immediately
+            STATE.keyCooldowns[key] = Date.now() + (30 * 60 * 1000);
+          } else if (status === 404) {
+            reason = 'Model niedostępny (404)';
+            STATE.unavailableModels.add(modelName);
+          } else if (status === 503 || status === 500) {
+            reason = 'Serwer przeciążony (503)';
+          }
+
+          allAttempts.push({ keyLabel: label, model: modelName, status, reason, details: rawMsg });
+          console.warn(`[Gemini Auto-Fallback] ${label} | Model ${modelName} zwrócił ${reason}. Przechodzę do kolejnej próby...`);
         }
       }
     }
@@ -6405,9 +6421,11 @@ async function askCoachQuestion() {
     `• ${new Date(h.endTime).toLocaleDateString('pl-PL')} - ${h.planName}: ${h.totalVolumeKg}kg, ${h.completedSets} serii, czas ${formatDuration(h.durationSeconds || 0)}, śr. przerwa ${h.avgRestSeconds || 0}s`
   ).join('\n') || 'Brak historii.';
 
-  const conversationHistory = targetThread.messages.slice(-12).map(m => 
-    `${m.role === 'user' ? 'Użytkownik' : 'Trener'}: ${m.text}`
-  ).join('\n\n');
+  const conversationHistory = (targetThread.messages || [])
+    .filter(m => !m.text.startsWith('⚠️ Błąd:'))
+    .slice(-12)
+    .map(m => `${m.role === 'user' ? 'Użytkownik' : 'Trener'}: ${m.text}`)
+    .join('\n\n');
 
   const fullPrompt = `
 Jesteś doświadczonym, empatycznym trenerem personalnym i fizjologiem w aplikacji IronCoach.
@@ -6467,6 +6485,14 @@ function renderCoachChat() {
   const bubblesHtml = msgs.map(m => {
     const isUser = m.role === 'user';
     const textToDisplay = stripFallbackDisclaimer(m.text || '');
+    const isError = !isUser && textToDisplay.startsWith('⚠️ Błąd:');
+    const retryBtnHtml = isError ? `
+      <div style="margin-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 8px;">
+        <button type="button" onclick="retryLastCoachMessage()" class="btn btn-secondary" style="font-size: 12px; padding: 6px 14px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; background: rgba(0, 229, 255, 0.12); border: 1px solid rgba(0, 229, 255, 0.35); color: var(--accent); cursor: pointer; border-radius: 6px;">
+          <span>🔄</span> <b>Ponów próbę odpowiedzi</b>
+        </button>
+      </div>
+    ` : '';
     return `
       <div style="display: flex; justify-content: ${isUser ? 'flex-end' : 'flex-start'}; margin-bottom: 10px;">
         <div style="
@@ -6481,7 +6507,7 @@ function renderCoachChat() {
           box-shadow: 0 2px 8px rgba(0,0,0,0.2);
           border: ${isUser ? 'none' : '1px solid var(--border)'};
         ">
-          ${isUser ? escapeHtml(textToDisplay) : formatMarkdown(textToDisplay)}
+          ${isUser ? escapeHtml(textToDisplay) : formatMarkdown(textToDisplay)}${retryBtnHtml}
         </div>
       </div>
     `;
@@ -6509,6 +6535,26 @@ function renderCoachChat() {
 
   container.innerHTML = bubblesHtml + thinkingHtml;
   container.scrollTop = container.scrollHeight;
+}
+
+async function retryLastCoachMessage() {
+  const activeThread = getActiveCoachThread();
+  if (!activeThread) return;
+  const msgs = activeThread.messages || [];
+  if (msgs.length > 0 && msgs[msgs.length - 1].role === 'assistant' && msgs[msgs.length - 1].text.startsWith('⚠️ Błąd:')) {
+    msgs.pop();
+  }
+  const lastUserMsg = [...msgs].reverse().find(m => m.role === 'user');
+  if (!lastUserMsg) return;
+  const userIdx = msgs.lastIndexOf(lastUserMsg);
+  if (userIdx !== -1) {
+    msgs.splice(userIdx, 1);
+  }
+  saveCoachThreads();
+  renderCoachChat();
+  const inputEl = document.getElementById('coach-question-input');
+  if (inputEl) inputEl.value = lastUserMsg.text;
+  await askCoachQuestion();
 }
 
 function saveCoachThreads() {
