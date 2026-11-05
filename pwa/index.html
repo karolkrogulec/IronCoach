@@ -429,13 +429,14 @@
     </div>
   </header>
 
-  <!-- Rest Timer Banner (Large Seconds Display + Overtime Mode) -->
+  <!-- Rest Timer Banner (Large Seconds Display + Overtime Mode + Instant Set Effort Rating) -->
   <div id="rest-timer-bar">
     <div class="timer-label-row">
       <span id="timer-mode-label">⏱️ PRZERWA MIĘDZY SERIAMI</span>
       <span id="timer-overtime-badge" style="display: none; color: var(--danger); font-weight: 800;">⚠️ PRZEKROCZONO CZAS!</span>
     </div>
     <div class="timer-big-seconds" id="timer-display">90s</div>
+    <div id="timer-effort-strip" style="width: 100%; margin: 2px 0 8px 0;"></div>
     <div style="display: flex; gap: 10px; width: 100%; justify-content: center;">
       <button class="btn btn-sm btn-secondary" style="flex: 1; font-size: 16px; font-weight: 800; padding: 12px;" onclick="addTimerSeconds(-15)">-15s</button>
       <button class="btn btn-sm btn-secondary" style="flex: 1; font-size: 16px; font-weight: 800; padding: 12px;" onclick="addTimerSeconds(15)">+15s</button>
@@ -1179,6 +1180,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=25"></script>
+  <script src="app.js?v=26"></script>
 </body>
 </html>

@@ -1288,6 +1288,68 @@ function deleteTestWorkoutFromCoach(sessionId) {
   }
 }
 
+// ============================================================================
+// SET EFFORT / RPE RATING SCALE (1 = Lekko ... 5 = Hardcore)
+// ============================================================================
+const SET_EFFORT_SCALE = {
+  1: {
+    val: 1,
+    short: 'Lekko',
+    icon: '🟢',
+    color: '#00E676',
+    bg: 'rgba(0, 230, 118, 0.16)',
+    hint: 'Duży zapas (4+ powt.) — sygnał, żeby dołożyć ciężar!'
+  },
+  2: {
+    val: 2,
+    short: 'Spokojnie',
+    icon: '🩵',
+    color: '#00E5FF',
+    bg: 'rgba(0, 229, 255, 0.16)',
+    hint: 'Dobry zapas (~3 powt.) — można lekko podbić ciężar'
+  },
+  3: {
+    val: 3,
+    short: 'Optymalnie',
+    icon: '🟡',
+    color: '#FFB300',
+    bg: 'rgba(255, 179, 0, 0.18)',
+    hint: 'W sam raz (1–2 powt. w zapasie) — idealny bodziec'
+  },
+  4: {
+    val: 4,
+    short: 'Ciężko',
+    icon: '🟠',
+    color: '#FF9100',
+    bg: 'rgba(255, 145, 0, 0.20)',
+    hint: 'Walka (max 1 powt. w zapasie) — zostań na tym ciężarze'
+  },
+  5: {
+    val: 5,
+    short: 'Hardcore',
+    icon: '🔴',
+    color: '#FF5252',
+    bg: 'rgba(255, 82, 82, 0.22)',
+    hint: 'Na maksa / brak zapasu — nie dokładaj jeszcze ciężaru'
+  }
+};
+
+function getSetEffortMeta(rating) {
+  const n = parseInt(rating);
+  return SET_EFFORT_SCALE[n] || null;
+}
+
+function getExerciseProgressionBadge(avgEffort) {
+  if (!avgEffort || isNaN(avgEffort)) return '';
+  if (avgEffort <= 2.3) {
+    return `<span style="color: var(--success); font-weight: 800; font-size: 11px;">📈 Dołóż ciężar (${avgEffort.toFixed(1)}/5)</span>`;
+  }
+  if (avgEffort <= 3.6) {
+    return `<span style="color: var(--primary); font-weight: 800; font-size: 11px;">🎯 Optymalnie (${avgEffort.toFixed(1)}/5)</span>`;
+  }
+  return `<span style="color: var(--danger); font-weight: 800; font-size: 11px;">🔥 Na limicie (${avgEffort.toFixed(1)}/5)</span>`;
+}
+
 function renderAnalysisSessionOverview(session) {
   const box = document.getElementById('analysis-session-overview');
   if (!box) return;
@@ -1302,7 +1364,7 @@ function renderAnalysisSessionOverview(session) {
   (session.sets || []).forEach(s => {
     const key = s.exercise || 'Ćwiczenie';
     if (!exMap.has(key)) {
-      exMap.set(key, { count: 0, maxW: 0, vol: 0, repsTotal: 0, loadType: s.loadType });
+      exMap.set(key, { count: 0, maxW: 0, vol: 0, repsTotal: 0, loadType: s.loadType, efforts: [] });
     }
     const item = exMap.get(key);
     item.count++;
@@ -1310,16 +1372,25 @@ function renderAnalysisSessionOverview(session) {
     if (effW > item.maxW) item.maxW = effW;
     item.vol += effW * (s.reps || 0);
     item.repsTotal += (s.reps || 0);
+    if (s.effort && SET_EFFORT_SCALE[s.effort]) {
+      item.efforts.push(parseInt(s.effort));
+    }
   });
 
-  const exRowsHtml = Array.from(exMap.entries()).map(([name, info]) => `
-    <div style="display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,0.05);">
-      <span style="font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 58%;">${escapeHtml(name)}</span>
-      <span style="color: var(--text-muted); font-size: 11px;">
-        <b>${info.count}</b> ser. (${info.repsTotal} powt.) • ${info.maxW > 0 ? `max <b>${info.maxW}kg</b> • <span style="color: var(--primary);">${Math.round(info.vol)}kg</span>` : `<span style="color: var(--success);">Masa ciała</span>`}
-      </span>
-    </div>
-  `).join('');
+  const exRowsHtml = Array.from(exMap.entries()).map(([name, info]) => {
+    const avgEffort = info.efforts.length > 0
+      ? info.efforts.reduce((a, b) => a + b, 0) / info.efforts.length
+      : null;
+    const progBadge = avgEffort ? ` • ${getExerciseProgressionBadge(avgEffort)}` : '';
+    return `
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); gap: 6px; flex-wrap: wrap;">
+        <span style="font-weight: 700; color: var(--text);">${escapeHtml(name)}</span>
+        <span style="color: var(--text-muted); font-size: 11px;">
+          <b>${info.count}</b> ser. (${info.repsTotal} powt.) • ${info.maxW > 0 ? `max <b>${info.maxW}kg</b>` : `<span style="color: var(--success);">Masa ciała</span>`}${progBadge}
+        </span>
+      </div>
+    `;
+  }).join('');
 
   box.innerHTML = `
     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px;">
@@ -1343,7 +1414,7 @@ function renderAnalysisSessionOverview(session) {
     ${exRowsHtml ? `
       <details style="background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
         <summary style="padding: 7px 10px; font-size: 11px; font-weight: 700; color: var(--text-muted); cursor: pointer;">
-          📋 Podsumowanie ćwiczeń w tej sesji (${exMap.size})
+          📋 Podsumowanie ćwiczeń i ocen trudności (${exMap.size})
         </summary>
         <div>${exRowsHtml}</div>
       </details>
@@ -1512,7 +1583,8 @@ function startWorkout(planId) {
         reps: ex.reps || 10,
         completed: false,
         completedAt: null,
-        restBeforeSeconds: null
+        restBeforeSeconds: null,
+        effort: null
       });
     }
     const matchedGif = findExerciseGif(ex.name, ex);
@@ -1731,6 +1803,48 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
         const dualHint = isDualDumbbell && wVal > 0
           ? `<div style="font-size: 10px; color: var(--accent); text-align: center; margin-top: 2px;">= ${wVal * 2} kg łącznie</div>`
           : '';
+        const selectedEffort = getSetEffortMeta(set.effort);
+        const effortRowHtml = set.completed ? `
+          <div style="margin: -2px 0 10px 0; padding: 7px 8px; background: rgba(255,255,255,0.03); border: 1px solid ${selectedEffort ? selectedEffort.color : 'rgba(0,229,255,0.28)'}; border-radius: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; gap: 4px; flex-wrap: wrap;">
+              <span style="font-size: 11px; font-weight: 700; color: var(--text-muted);">🔥 Jak weszła Seria ${set.num}?</span>
+              ${selectedEffort
+                ? `<span style="font-size: 11px; font-weight: 800; color: ${selectedEffort.color};">${selectedEffort.icon} ${selectedEffort.val}/5 ${selectedEffort.short}</span>`
+                : `<span style="font-size: 10px; color: var(--accent);">Oceń 1–5 (wskazówka do progresji)</span>`
+              }
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px;">
+              ${[1, 2, 3, 4, 5].map(val => {
+                const m = SET_EFFORT_SCALE[val];
+                const isActive = parseInt(set.effort) === val;
+                return `
+                  <button
+                    type="button"
+                    onclick="rateWorkoutSet(${exIdx}, ${sIdx}, ${val})"
+                    style="
+                      padding: 6px 2px;
+                      border-radius: 7px;
+                      border: 1px solid ${isActive ? m.color : 'var(--border)'};
+                      background: ${isActive ? m.bg : '#12151b'};
+                      color: ${isActive ? m.color : 'var(--text-muted)'};
+                      font-weight: ${isActive ? '900' : '600'};
+                      font-size: 11px;
+                      cursor: pointer;
+                      display: flex;
+                      flex-direction: column;
+                      align-items: center;
+                      line-height: 1.15;
+                    "
+                  >
+                    <span style="font-size: 13px;">${val}</span>
+                    <span style="font-size: 9px; margin-top: 1px;">${m.short}</span>
+                  </button>
+                `;
+              }).join('')}
+            </div>
+            ${selectedEffort ? `<div style="font-size: 10px; color: var(--text-muted); margin-top: 5px; text-align: center;">💡 ${selectedEffort.hint}</div>` : ''}
+          </div>
+        ` : '';
         return `
           <div class="set-row" style="grid-template-columns: ${gridCols};">
             <div class="set-num ${set.completed ? 'done' : ''}">${set.num}</div>
@@ -1745,8 +1859,27 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
               ${set.completed ? '✓' : '○'}
             </button>
           </div>
+          ${effortRowHtml}
         `;
       }).join('')}
+      ${(() => {
+        const ratedSets = ex.sets.filter(s => s.completed && s.effort && SET_EFFORT_SCALE[s.effort]);
+        if (ratedSets.length === 0) return '';
+        const avg = ratedSets.reduce((acc, s) => acc + parseInt(s.effort), 0) / ratedSets.length;
+        let msg = '';
+        let col = 'var(--primary)';
+        if (avg <= 2.3) {
+          msg = `📈 Średnia trudność: ${avg.toFixed(1)}/5 — masz duży zapas! Na kolejnym treningu warto podnieść ciężar.`;
+          col = 'var(--success)';
+        } else if (avg <= 3.6) {
+          msg = `🎯 Średnia trudność: ${avg.toFixed(1)}/5 — optymalny dobór obciążenia (1–2 powt. w zapasie).`;
+          col = 'var(--primary)';
+        } else {
+          msg = `🔥 Średnia trudność: ${avg.toFixed(1)}/5 — praca na granicy możliwości. Zostań na tym ciężarze aż spadnie trudność.`;
+          col = 'var(--danger)';
+        }
+        return `<div style="margin-top: 6px; padding: 6px 10px; border-radius: 8px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); font-size: 11px; color: ${col}; font-weight: 700;">${msg}</div>`;
+      })()}
     </div>
   `;
 }
@@ -1784,6 +1917,81 @@ function updateSetData(exIdx, sIdx, field, val) {
   updateWorkoutStats();
 }
 
+function rateWorkoutSet(exIdx, sIdx, rating) {
+  if (!STATE.activeWorkout) return;
+  const ex = STATE.activeWorkout.exercises?.[exIdx];
+  const set = ex?.sets?.[sIdx];
+  if (!set) return;
+
+  const val = parseInt(rating);
+  set.effort = (set.effort === val) ? null : val;
+
+  saveActiveWorkout();
+  renderActiveExercises();
+  renderTimerEffortStrip();
+}
+
+function renderTimerEffortStrip() {
+  const stripEl = document.getElementById('timer-effort-strip');
+  if (!stripEl) return;
+
+  const coords = STATE.lastCompletedSetCoords;
+  if (!STATE.activeWorkout || !coords) {
+    stripEl.innerHTML = '';
+    return;
+  }
+
+  const ex = STATE.activeWorkout.exercises?.[coords.exIdx];
+  const set = ex?.sets?.[coords.sIdx];
+  if (!ex || !set || !set.completed) {
+    stripEl.innerHTML = '';
+    return;
+  }
+
+  const selectedMeta = getSetEffortMeta(set.effort);
+
+  stripEl.innerHTML = `
+    <div style="background: rgba(16, 18, 22, 0.85); border: 1px solid ${selectedMeta ? selectedMeta.color : 'rgba(255,255,255,0.14)'}; border-radius: 10px; padding: 7px 8px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; font-size: 11px;">
+        <span style="color: var(--text-muted); font-weight: 700;">🔥 Jak weszła S${set.num} (${escapeHtml(ex.name.slice(0, 22))})?</span>
+        ${selectedMeta
+          ? `<span style="color: ${selectedMeta.color}; font-weight: 900;">${selectedMeta.icon} ${selectedMeta.val}/5 ${selectedMeta.short}</span>`
+          : `<span style="color: var(--accent); font-size: 10px;">Oceń 1–5</span>`
+        }
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px;">
+        ${[1, 2, 3, 4, 5].map(val => {
+          const m = SET_EFFORT_SCALE[val];
+          const isActive = parseInt(set.effort) === val;
+          return `
+            <button
+              type="button"
+              onclick="rateWorkoutSet(${coords.exIdx}, ${coords.sIdx}, ${val})"
+              style="
+                padding: 5px 2px;
+                border-radius: 7px;
+                border: 1px solid ${isActive ? m.color : 'var(--border)'};
+                background: ${isActive ? m.bg : 'var(--surface-elevated)'};
+                color: ${isActive ? m.color : 'var(--text)'};
+                font-weight: ${isActive ? '900' : '700'};
+                font-size: 11px;
+                cursor: pointer;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                line-height: 1.15;
+              "
+            >
+              <span style="font-size: 13px;">${val}</span>
+              <span style="font-size: 9px; opacity: 0.9;">${m.short}</span>
+            </button>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
 function toggleSetComplete(exIdx, sIdx) {
   if (!STATE.activeWorkout) return;
   const ex = STATE.activeWorkout.exercises[exIdx];
@@ -1796,6 +2004,7 @@ function toggleSetComplete(exIdx, sIdx) {
 
     set.completedAt = Date.now();
     STATE.activeWorkout.lastSetCompletedAt = Date.now();
+    STATE.lastCompletedSetCoords = { exIdx, sIdx };
 
     if (navigator.vibrate) navigator.vibrate(50);
 
@@ -1821,6 +2030,10 @@ function toggleSetComplete(exIdx, sIdx) {
     } else {
       startRestTimer(mainRest, `⏱️ PRZERWA MIĘDZY SERIAMI`, ex.name, set.num, 'standard');
     }
+    renderTimerEffortStrip();
+  } else {
+    set.effort = null;
+    renderTimerEffortStrip();
   }
 
   saveActiveWorkout();
@@ -1838,7 +2051,8 @@ function addSetToExercise(exIdx) {
     reps: last ? last.reps : 10,
     completed: false,
     completedAt: null,
-    restBeforeSeconds: null
+    restBeforeSeconds: null,
+    effort: null
   });
   saveActiveWorkout();
   renderActiveExercises();
@@ -2015,6 +2229,7 @@ async function finishCurrentWorkout() {
           weight: s.weight,
           effectiveWeight: effectiveWeight,
           reps: s.reps,
+          effort: s.effort || null,
           completedAt: s.completedAt || null
         });
       }
@@ -4705,7 +4920,11 @@ function formatSessionDetailsForCoach(session, userWeightKg = 0) {
       const bwBase = userWeightKg > 0 ? `Masa ciała (${userWeightKg}kg)` : `Masa własnego ciała (BW)`;
       wDesc = s.weight > 0 ? `${bwBase} + dołożone ${s.weight}kg` : bwBase;
     }
-    return `${s.supersetGroup ? `[Superseria ${s.supersetGroup}] ` : '[Izolacja] '}${s.exercise}: Seria ${s.setNum} -> ${wDesc} x ${s.reps} powt.`;
+    const effMeta = getSetEffortMeta(s.effort);
+    const effortDesc = effMeta
+      ? ` | Subiektywna ocena trudności serii (1-5): ${effMeta.val}/5 (${effMeta.short} — ${effMeta.hint})`
+      : '';
+    return `${s.supersetGroup ? `[Superseria ${s.supersetGroup}] ` : '[Izolacja] '}${s.exercise}: Seria ${s.setNum} -> ${wDesc} x ${s.reps} powt.${effortDesc}`;
   }).join('\n');
 
   const restsSummary = (session.restLogs && session.restLogs.length > 0)
@@ -4764,9 +4983,9 @@ ${prevWorkouts}
 ${plansSection}
 
 Przygotuj pogłębioną, spersonalizowaną analizę w języku polskim:
-1. 📊 Ocena sesji pod kątem celu użytkownika (${STATE.userProfile?.goal || 'Hipertrofia'}) oraz jego składu ciała Fitdays i obwodów: oceń objętość, tonaż (w tym ćwiczenia z masą własnego ciała i 2x hantle), gęstość treningową (całkowity czas sesji) oraz dyscyplinę przerw między ćwiczeniami i wewnątrz superserii. Odnieś się też do ewentualnych dysproporcji segmentowych z raportu wagi.
-2. 🎯 Konkretna periodyzacja i progresywne przeładowanie na kolejny trening: wskaż dokładnie do jakich ćwiczeń dodać ciężar (lub dołożyć ciężar w ćwiczeniach z masą ciała), gdzie dodać powtórzenia, a gdzie zmodyfikować czas przerw.
-3. ⚡ Praktyczne wskazówki biomechaniczne, żywieniowe (dopasowane do BMR, % tkanki tłuszczowej, masy mięśniowej i celu) oraz regeneracyjne.
+1. 📊 Ocena sesji pod kątem celu użytkownika (${STATE.userProfile?.goal || 'Hipertrofia'}) oraz jego składu ciała Fitdays i obwodów: oceń objętość, tonaż (w tym ćwiczenia z masą własnego ciała i 2x hantle), gęstość treningową (całkowity czas sesji), subiektywne oceny trudności serii w skali 1–5 (gdzie 1=Lekko, 2=Spokojnie, 3=Optymalnie, 4=Ciężko, 5=Hardcore/na maksa) oraz dyscyplinę przerw między ćwiczeniami i wewnątrz superserii.
+2. 🎯 Konkretna periodyzacja i progresywne przeładowanie na kolejny trening (OPARTE NA OCENACH 1–5): wskaż dokładnie, w których ćwiczeniach użytkownik ocenił serie na 1–2 (lub łatwe 3) i powinien podnieść ciężar (podaj o ile kg!), w których ćwiczeniach było 3–4 (utrzymać ciężar / dołożyć powtórzenie), a gdzie było 5/5 Hardcore (zostać na obecnym ciężarze lub wydłużyć przerwę).
+3. ⚡ Praktyczne wskazówki biomechaniczne, żywieniowe (dopasowane do BMR, dziennika kalorii/makro, % tkanki tłuszczowej i celu) oraz regeneracyjne.
 Używaj czytelnego formatowania punktowego.`;
 
   try {
@@ -5347,6 +5566,7 @@ function importDataJson(event) {
               weight: parseFloat(s.weight) || 0,
               effectiveWeight: parseFloat(s.effectiveWeight) || (s.loadType === 'dual_dumbbell' ? (parseFloat(s.weight) || 0) * 2 : (parseFloat(s.weight) || 0)),
               reps: parseInt(s.reps) || 0,
+              effort: parseInt(s.effort) || null,
               completedAt: s.completedAt || null
             })) : [],
             coachFeedback: h.coachFeedback || null
