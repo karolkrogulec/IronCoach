@@ -1160,6 +1160,11 @@
         <input type="url" id="gdrive-webhook-url" class="input-box" style="text-align: left; font-size: 12px; margin-bottom: 8px;" placeholder="https://script.google.com/macros/s/.../exec">
 
         <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">
+          🔐 Tajny klucz webhooka (ten sam co SECRET_KEY w skrypcie Google):
+        </label>
+        <input type="password" id="gdrive-webhook-secret" class="input-box" style="text-align: left; font-size: 12px; margin-bottom: 8px;" placeholder="Tajny klucz" autocomplete="off">
+
+        <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">
           🔑 Lub Token OAuth2 Google Drive API (opcjonalnie):
         </label>
         <input type="password" id="gdrive-oauth-token" class="input-box" style="text-align: left; font-size: 12px; margin-bottom: 10px;" placeholder="ya29.a0...">
@@ -1316,6 +1321,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=27"></script>
+  <script src="app.js?v=28"></script>
 </body>
 </html>

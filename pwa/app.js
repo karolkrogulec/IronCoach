@@ -58,6 +58,7 @@ const STATE = {
   selectedCalendarDate: new Date().toISOString().slice(0, 10),
   calendarAiSummaries: JSON.parse(localStorage.getItem('iron_calendar_ai_summaries') || '{}'),
   gdriveWebhookUrl: localStorage.getItem('iron_gdrive_webhook_url') || '',
+  gdriveWebhookSecret: localStorage.getItem('iron_gdrive_webhook_secret') || '',
   gdriveOauthToken: localStorage.getItem('iron_gdrive_oauth_token') || ''
 };
 
@@ -6277,6 +6278,8 @@ function loadGoogleDriveConfig() {
   const statusEl = document.getElementById('gdrive-last-backup-status');
 
   if (whInput) whInput.value = STATE.gdriveWebhookUrl || '';
+  const secInput = document.getElementById('gdrive-webhook-secret');
+  if (secInput) secInput.value = STATE.gdriveWebhookSecret || '';
   if (tokInput) tokInput.value = STATE.gdriveOauthToken || '';
 
   const lastDate = localStorage.getItem('iron_last_morning_backup_date') || 'Brak';
@@ -6289,7 +6292,10 @@ function loadGoogleDriveConfig() {
 function saveGoogleDriveConfig() {
   const wh = (document.getElementById('gdrive-webhook-url')?.value || '').trim();
   const tok = (document.getElementById('gdrive-oauth-token')?.value || '').trim();
+  const sec = (document.getElementById('gdrive-webhook-secret')?.value || '').trim();
   STATE.gdriveWebhookUrl = wh;
+  STATE.gdriveWebhookSecret = sec;
+  localStorage.setItem('iron_gdrive_webhook_secret', sec);
   STATE.gdriveOauthToken = tok;
   localStorage.setItem('iron_gdrive_webhook_url', wh);
   localStorage.setItem('iron_gdrive_oauth_token', tok);
@@ -6356,17 +6362,22 @@ async function uploadBackupToGoogleDrive(backupObj, silent = false) {
   // 1. If Google Apps Script Webhook URL is configured, POST directly (no OAuth expiration issues)
   if (STATE.gdriveWebhookUrl) {
     try {
+      // Apps Script: { secret, payload } -> odpowiedź JSON { status: "success" | "error" }
       const response = await fetch(STATE.gdriveWebhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
-          fileName: fileName,
-          mimeType: 'application/json',
-          backup: backupObj
+          secret: STATE.gdriveWebhookSecret || '',
+          payload: backupObj
         })
       });
       if (response.ok) {
-        return { ok: true, method: 'webhook' };
+        const result = await response.json().catch(() => null);
+        if (result && result.status === 'success') {
+          return { ok: true, method: 'webhook' };
+        }
+        console.warn('Webhook rejected:', result && result.message);
+        return { ok: false, error: (result && result.message) || 'Nieprawidłowa odpowiedź skryptu' };
       }
     } catch (e) {
       console.warn('Webhook upload failed:', e);
