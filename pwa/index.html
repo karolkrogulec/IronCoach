@@ -1228,6 +1228,22 @@
             Aplikacja najpierw próbuje flagowy model <b>Gemini 3.8 Flash</b>. Jeśli dobowy limit na 3.8 zostanie wyczerpany, natychmiast przechodzi na <b>Gemini 3.6 Flash</b>, a w razie potrzeby na <b>Gemini 3.5 Flash-Lite (aż 500 zapytań/dzień!)</b>, rotując między oboma skonfigurowanymi projektami.
           </div>
           <div id="gemini-last-used-info" style="margin-top: 8px; font-size: 11px; color: var(--accent); display: none;"></div>
+
+          <div style="border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px;">
+            <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">
+              🗓️ Horyzont czasowy analizy Trenera AI (dieta, historia, pamięć)
+            </label>
+            <select id="coach-context-days" class="input-box" style="text-align: left; margin-bottom: 6px; font-size: 13px;" onchange="saveCoachContextDays(this.value)">
+              <option value="14">Ostatnie 14 dni (krótki, bieżący kontekst)</option>
+              <option value="30" selected>Ostatnie 30 dni (zalecany, optymalny bilans)</option>
+              <option value="60">Ostatnie 60 dni (średnioterminowy)</option>
+              <option value="90">Ostatnie 90 dni (kwartał)</option>
+              <option value="all">Cała dostępna historia (wszystko)</option>
+            </select>
+            <p style="font-size: 11px; color: var(--text-muted); margin-top: 2px; line-height: 1.4;">
+              Określa, jak daleko wstecz Trener AI analizuje Twoje sesje treningowe, bilans kalorii oraz wątki czatów. Domyślne 30 dni zapobiega przeciążeniu asystenta przy rocznej historii.
+            </p>
+          </div>
         </div>
       </div>
 
@@ -1434,6 +1450,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=51"></script>
+  <script src="app.js?v=52"></script>
 </body>
 </html>

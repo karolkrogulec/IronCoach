@@ -51,6 +51,8 @@ const STATE = {
   coachChat: JSON.parse(localStorage.getItem('iron_coach_chat')) || [],
   coachThreads: JSON.parse(localStorage.getItem('iron_coach_threads')) || [],
   activeCoachThreadId: localStorage.getItem('iron_active_coach_thread_id') || null,
+  coachContextDays: localStorage.getItem('iron_coach_context_days') || '30',
+  coachCrossThreadMemory: JSON.parse(localStorage.getItem('iron_coach_cross_thread_memory')) || [],
   currentCoachReportSessionId: null,
   userProfile: JSON.parse(localStorage.getItem('iron_user_profile')) || {
     weightKg: '',
@@ -6013,6 +6015,120 @@ function renderNutritionView() {
 }
 
 // ============================================================================
+// COACH CONTEXT WINDOW & CROSS-THREAD MEMORY
+// ============================================================================
+function getCoachContextWindowDays() {
+  const val = STATE.coachContextDays;
+  if (val === 'all') return 99999;
+  const num = parseInt(val, 10);
+  return isNaN(num) || num <= 0 ? 30 : num;
+}
+
+function saveCoachContextDays(val) {
+  STATE.coachContextDays = val || '30';
+  localStorage.setItem('iron_coach_context_days', STATE.coachContextDays);
+}
+
+function saveCoachCrossThreadMemory() {
+  localStorage.setItem('iron_coach_cross_thread_memory', JSON.stringify(STATE.coachCrossThreadMemory || []));
+}
+
+function pruneCoachCrossThreadMemory() {
+  if (!Array.isArray(STATE.coachCrossThreadMemory)) {
+    STATE.coachCrossThreadMemory = [];
+    return;
+  }
+  const windowDays = getCoachContextWindowDays();
+  const maxRetentionDays = Math.max(windowDays === 99999 ? 365 : windowDays, 30);
+  const cutoff = Date.now() - (maxRetentionDays * 24 * 3600 * 1000);
+
+  // Filter out memories older than the retention window
+  STATE.coachCrossThreadMemory = STATE.coachCrossThreadMemory.filter(m => (m.timestamp || 0) >= cutoff);
+
+  // Keep up to 40 most recent memories to prevent local storage bloat
+  if (STATE.coachCrossThreadMemory.length > 40) {
+    STATE.coachCrossThreadMemory.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    STATE.coachCrossThreadMemory = STATE.coachCrossThreadMemory.slice(0, 40);
+  }
+  saveCoachCrossThreadMemory();
+}
+
+function recordCoachCrossThreadMemory(threadId, threadTitle, userQuestion, coachAnswer) {
+  if (!userQuestion || !coachAnswer) return;
+  if (coachAnswer.startsWith('⚠️ Błąd:')) return;
+
+  if (!Array.isArray(STATE.coachCrossThreadMemory)) {
+    STATE.coachCrossThreadMemory = [];
+  }
+
+  const cleanQ = userQuestion.trim();
+  const cleanA = stripFallbackDisclaimer(coachAnswer).trim();
+  const alreadyExists = STATE.coachCrossThreadMemory.some(
+    m => m.userQuestion === cleanQ && Math.abs((m.timestamp || 0) - Date.now()) < 60000
+  );
+  if (alreadyExists) return;
+
+  // Compact the coach answer if it's very long (first 320 chars) for prompt efficiency
+  const compactCoachSummary = cleanA.length > 320
+    ? cleanA.slice(0, 320).replace(/\s+\S*$/, '') + '…'
+    : cleanA;
+
+  const entry = {
+    id: 'mem-' + Date.now() + '-' + Math.floor(Math.random() * 10000),
+    timestamp: Date.now(),
+    dateStr: new Date().toISOString().slice(0, 10),
+    threadId: threadId || 'unknown',
+    threadTitle: threadTitle || 'Czat',
+    userQuestion: cleanQ,
+    coachSummary: compactCoachSummary
+  };
+
+  STATE.coachCrossThreadMemory.push(entry);
+  pruneCoachCrossThreadMemory();
+}
+
+function archiveThreadToCrossMemory(thread) {
+  if (!thread || !Array.isArray(thread.messages)) return;
+  const msgs = thread.messages;
+  for (let i = 0; i < msgs.length - 1; i++) {
+    if (msgs[i].role === 'user' && msgs[i + 1].role === 'assistant' && !msgs[i + 1].text.startsWith('⚠️ Błąd:')) {
+      recordCoachCrossThreadMemory(
+        thread.id,
+        thread.title || 'Usunięty wątek',
+        msgs[i].text,
+        msgs[i + 1].text
+      );
+    }
+  }
+}
+
+function buildCrossThreadMemoryContext(activeThreadId) {
+  pruneCoachCrossThreadMemory();
+  if (!Array.isArray(STATE.coachCrossThreadMemory) || STATE.coachCrossThreadMemory.length === 0) {
+    return null;
+  }
+
+  const windowDays = getCoachContextWindowDays();
+  const cutoff = windowDays === 99999 ? 0 : Date.now() - (windowDays * 24 * 3600 * 1000);
+
+  // Take memories from OTHER threads or deleted threads (not the currently active thread)
+  const otherMemories = STATE.coachCrossThreadMemory
+    .filter(m => m.threadId !== activeThreadId && (m.timestamp || 0) >= cutoff)
+    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+    .slice(0, 12);
+
+  if (otherMemories.length === 0) return null;
+
+  const periodLabel = windowDays === 99999 ? 'pełna historia' : `ostatnie ${windowDays} dni`;
+  const memoryLines = otherMemories.reverse().map(m => {
+    const dStr = m.dateStr || (m.timestamp ? new Date(m.timestamp).toLocaleDateString('pl-PL') : '');
+    return `• [${dStr}] (Wątek: "${m.threadTitle || 'Czat'}")\n  Pytanie: ${m.userQuestion}\n  Wskazówka Trenera: ${m.coachSummary}`;
+  }).join('\n\n');
+
+  return `=== PAMIĘĆ Z INNYCH WĄTKÓW CZATU (${periodLabel.toUpperCase()}) ===\nTrener pamięta ustalenia i wnioski z innych (w tym usuniętych) rozmów z użytkownikiem:\n${memoryLines}`;
+}
+
+// ============================================================================
 // COACH AI ANALYSIS & CONVERSATIONAL CHAT (Includes Profile, Fitdays Scan, Circumferences, Duration, Rests & LoadTypes)
 // ============================================================================
 function buildCoachProfileAndPlansContext() {
@@ -6062,8 +6178,14 @@ function buildCoachProfileAndPlansContext() {
     ? `Ostatnie obwody ciała (${latestCirc.dateLabel || ''}): ${circParts.join(', ')}`
     : 'Brak wpisanych obwodów centymetrem.';
 
-  // Build historical trend of body measurements (up to last 6 entries)
-  const bodyTrendContext = STATE.bodyMeasurements.slice(0, 6).map(m => {
+  const windowDays = getCoachContextWindowDays();
+  const cutoffTime = windowDays === 99999 ? 0 : Date.now() - (windowDays * 24 * 3600 * 1000);
+  const cutoffDateStr = windowDays === 99999 ? '' : new Date(cutoffTime).toISOString().slice(0, 10);
+
+  // Build historical trend of body measurements (filtered by context window)
+  const filteredMeasurements = STATE.bodyMeasurements.filter(m => (m.timestamp || 0) >= cutoffTime);
+  const measurementsToUse = filteredMeasurements.length > 0 ? filteredMeasurements.slice(0, 8) : STATE.bodyMeasurements.slice(0, 4);
+  const bodyTrendContext = measurementsToUse.map(m => {
     const items = [];
     if (m.weightKg) items.push(`waga ${m.weightKg}kg`);
     if (m.bodyFatPct) items.push(`BF ${m.bodyFatPct}%`);
@@ -6075,25 +6197,29 @@ function buildCoachProfileAndPlansContext() {
     if (m.bicepsCm) items.push(`biceps ${m.bicepsCm}cm`);
     if (m.thighCm) items.push(`udo ${m.thighCm}cm`);
     return `- ${m.dateLabel || new Date(m.timestamp).toLocaleDateString('pl-PL')}: ${items.join(', ')}`;
-  }).join('\n');
+  }).join('\n') || 'Brak wpisów z tego okresu.';
 
-  // Build Nutrition Goals & Daily Food Diary summary for LLM
+  // Build Nutrition Goals & Daily Food Diary summary for LLM (filtered by user-configured context window)
   const ng = STATE.nutritionGoals || { kcal: 2500, proteinG: 180, carbsG: 260, fatG: 75 };
   const todayKey = getTodayIsoDate();
   const todayTotals = getNutritionDayTotals(todayKey);
+  const maxDietDays = Math.min(windowDays, 30);
+
   const recentDietDays = Array.from(new Set([todayKey, ...(STATE.nutritionDiary || []).map(m => m.dateKey).filter(Boolean)]))
+    .filter(dKey => !cutoffDateStr || dKey >= cutoffDateStr)
     .sort((a, b) => b.localeCompare(a))
-    .slice(0, 7)
+    .slice(0, maxDietDays)
     .map(dKey => {
       const t = getNutritionDayTotals(dKey);
       const mealsNames = t.meals.map(m => `${m.name} (${m.kcal}kcal, B:${m.proteinG}g)`).join('; ');
       return `- ${dKey}: łącznie ${Math.round(t.kcal)}/${ng.kcal} kcal (B: ${Math.round(t.proteinG)}/${ng.proteinG}g, W: ${Math.round(t.carbsG)}/${ng.carbsG}g, T: ${Math.round(t.fatG)}/${ng.fatG}g)${mealsNames ? ` | Posiłki: ${mealsNames}` : ''}`;
     }).join('\n');
 
+  const dietPeriodLabel = windowDays === 99999 ? 'pełna historia' : `ostatnie ${windowDays} dni`;
   const nutritionContext = [
     `• Dzienny cel kaloryczny i makro: ${ng.kcal} kcal | Białko: ${ng.proteinG}g | Węglowodany: ${ng.carbsG}g | Tłuszcze: ${ng.fatG}g`,
     `• Dzisiejsze spożycie (${todayKey}): ${Math.round(todayTotals.kcal)} kcal (B: ${Math.round(todayTotals.proteinG)}g, W: ${Math.round(todayTotals.carbsG)}g, T: ${Math.round(todayTotals.fatG)}g w ${todayTotals.count} posiłkach)`,
-    recentDietDays ? `• Historia dziennika żywieniowego (ostatnie dni):\n${recentDietDays}` : null
+    recentDietDays ? `• Dziennik żywieniowy (${dietPeriodLabel}):\n${recentDietDays}` : null
   ].filter(Boolean).join('\n');
 
   const profileSection = [
@@ -6350,6 +6476,9 @@ function deleteActiveCoachThread() {
   if (!thread) return;
   if (!confirm(`Czy na pewno chcesz usunąć wątek "${thread.title}"?`)) return;
 
+  // Preserve all valuable Q&A exchanges into cross-thread memory before deleting thread
+  archiveThreadToCrossMemory(thread);
+
   STATE.coachThreads = STATE.coachThreads.filter(t => t.id !== thread.id);
   if (STATE.coachThreads.length === 0) {
     const fresh = {
@@ -6439,10 +6568,22 @@ async function askCoachQuestion() {
     ? formatSessionDetailsForCoach(lastWorkout, userWeightKg)
     : `Brak zarejestrowanych sesji w historii.`;
 
+  const windowDays = getCoachContextWindowDays();
+  const cutoffTime = windowDays === 99999 ? 0 : Date.now() - (windowDays * 24 * 3600 * 1000);
+
   const historyForSummary = validWorkouts.length > 0 ? validWorkouts : STATE.history;
-  const recentHistorySummary = historyForSummary.slice(0, 5).map(h =>
-    `• ${new Date(h.endTime).toLocaleDateString('pl-PL')} - ${h.planName}: ${h.totalVolumeKg}kg, ${h.completedSets} serii, czas ${formatDuration(h.durationSeconds || 0)}, śr. przerwa ${h.avgRestSeconds || 0}s`
+  const historyInWindow = historyForSummary.filter(h => {
+    const sTime = h.endTime || h.startTime || 0;
+    return sTime >= cutoffTime;
+  });
+  const sessionsToDisplay = historyInWindow.length > 0 ? historyInWindow : historyForSummary.slice(0, 3);
+  const historyPeriodLabel = windowDays === 99999 ? 'pełna historia' : `ostatnie ${windowDays} dni`;
+
+  const recentHistorySummary = sessionsToDisplay.slice(0, 8).map(h =>
+    `• ${new Date(h.endTime || h.startTime).toLocaleDateString('pl-PL')} - ${h.planName}: ${h.totalVolumeKg}kg, ${h.completedSets} serii, czas ${formatDuration(h.durationSeconds || 0)}, śr. przerwa ${h.avgRestSeconds || 0}s`
   ).join('\n') || 'Brak historii.';
+
+  const crossThreadMemorySection = buildCrossThreadMemoryContext(targetThread.id);
 
   const conversationHistory = (targetThread.messages || [])
     .filter(m => !m.text.startsWith('⚠️ Błąd:'))
@@ -6453,7 +6594,7 @@ async function askCoachQuestion() {
   const fullPrompt = `
 Jesteś doświadczonym, empatycznym trenerem personalnym i fizjologiem w aplikacji IronCoach.
 Rozmawiasz z użytkownikiem w wątku czatu pt. "${targetThread.title}". Zawsze bierz pod uwagę jego wagę, wzrost, cel treningowy, pełny raport składu ciała z wagi Fitdays (21 wskaźników, BMR, % tkanki tłuszczowej, masa mięśniowa, segmentowa analiza kończyn i tułowia), obwody ciała (talia, pas, klatka, ramiona, biceps, udo), historię zmian pomiarów w czasie, strukturę planów (superserie, ćwiczenia z masą ciała, ćwiczenia 2x hantle) oraz pełne dane z jego ostatnich treningów (czas trwania, tonaż, rzeczywiste przerwy między seriami).
-
+${crossThreadMemorySection ? `\n${crossThreadMemorySection}\n` : ''}
 === PROFIL, SKŁAD CIAŁA (FITDAYS), OBWODY I CEL UŻYTKOWNIKA ===
 ${profileSection}
 
@@ -6463,7 +6604,7 @@ ${plansSection}
 === OSTATNI ZAREJESTROWANY TRENING (SZCZEGÓŁY SERII I PRZERW) ===
 ${lastWorkoutDetails}
 
-=== HISTORIA OSTATNICH SESJI ===
+=== HISTORIA SESJI TRENINGOWYCH (${historyPeriodLabel.toUpperCase()}) ===
 ${recentHistorySummary}
 
 === DOTYCHCZASOWY PRZEBIEG ROZMOWY W TYM WĄTKU ===
@@ -6477,6 +6618,7 @@ Udziel naturalnej, merytorycznej, spersonalizowanej odpowiedzi po polsku jako Tr
     const ans = await callGemini(fullPrompt, tier);
     targetThread.messages.push({ role: 'assistant', text: ans, time: Date.now() });
     targetThread.updatedAt = Date.now();
+    recordCoachCrossThreadMemory(targetThread.id, targetThread.title, q, ans);
   } catch (err) {
     targetThread.messages.push({ role: 'assistant', text: `⚠️ Błąd: ${err.message}`, time: Date.now() });
   } finally {
@@ -6687,6 +6829,8 @@ function loadApiKey() {
   if (backupInput) backupInput.value = STATE.backupApiKey || '';
   const tierSelect = document.getElementById('gemini-preferred-tier');
   if (tierSelect) tierSelect.value = STATE.preferredGeminiTier || 'fast';
+  const contextDaysSelect = document.getElementById('coach-context-days');
+  if (contextDaysSelect) contextDaysSelect.value = STATE.coachContextDays || '30';
   if (STATE.lastUsedGeminiModel) {
     updateGeminiModelBadges(STATE.lastUsedGeminiModel, Boolean(STATE.lastGeminiFallback));
   }
@@ -6851,7 +6995,9 @@ function buildFullBackupObject() {
     customGifMap: JSON.parse(localStorage.getItem('iron_custom_gif_map') || '{}'),
     coachThreads: STATE.coachThreads,
     activeCoachThreadId: STATE.activeCoachThreadId,
-    coachChat: STATE.coachChat
+    coachChat: STATE.coachChat,
+    coachContextDays: STATE.coachContextDays,
+    coachCrossThreadMemory: STATE.coachCrossThreadMemory
   };
 }
 
@@ -7047,6 +7193,26 @@ function importDataJson(event) {
       if (data.calendarAiSummaries && typeof data.calendarAiSummaries === 'object') {
         STATE.calendarAiSummaries = { ...(STATE.calendarAiSummaries || {}), ...data.calendarAiSummaries };
         localStorage.setItem('iron_calendar_ai_summaries', JSON.stringify(STATE.calendarAiSummaries));
+      }
+
+      // 5. Restore Coach Context Days & Cross-Thread Memory
+      if (data.coachContextDays) {
+        STATE.coachContextDays = data.coachContextDays;
+        localStorage.setItem('iron_coach_context_days', STATE.coachContextDays);
+        const contextDaysSelect = document.getElementById('coach-context-days');
+        if (contextDaysSelect) contextDaysSelect.value = STATE.coachContextDays;
+      }
+
+      if (Array.isArray(data.coachCrossThreadMemory)) {
+        const existingIds = new Set((STATE.coachCrossThreadMemory || []).map(m => m.id));
+        const mergedMem = [...(STATE.coachCrossThreadMemory || [])];
+        data.coachCrossThreadMemory.forEach(item => {
+          if (item && item.id && !existingIds.has(item.id)) {
+            mergedMem.push(item);
+          }
+        });
+        STATE.coachCrossThreadMemory = mergedMem;
+        saveCoachCrossThreadMemory();
       }
 
       renderPlans();
