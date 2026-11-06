@@ -3227,9 +3227,22 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
   // Keys with an active 429 quota cooldown are placed last.
   // The key that succeeded on the last request is tried FIRST!
   STATE.keyCooldowns = STATE.keyCooldowns || {};
+  STATE.modelQuotaCooldowns = STATE.modelQuotaCooldowns || {};
   STATE.unavailableModels = STATE.unavailableModels || new Set();
 
   const now = Date.now();
+
+  // Automatic Google AI Studio Daily Quota Reset
+  // Google resets quotas at midnight Pacific Time (00:00 PST = 09:00 CET in Poland)
+  const lastResetCheck = STATE.lastQuotaResetCheck || 0;
+  const currentPSTDay = new Date(now - (8 * 3600 * 1000)).getUTCDate();
+  const lastPSTDay = lastResetCheck > 0 ? new Date(lastResetCheck - (8 * 3600 * 1000)).getUTCDate() : currentPSTDay;
+  if (lastResetCheck > 0 && currentPSTDay !== lastPSTDay) {
+    STATE.modelQuotaCooldowns = {};
+    STATE.keyCooldowns = {};
+    console.log('[Gemini Quota] Dobowy reset limitów Google AI Studio (9:00 CET / Midnight PST). Odblokowano modele.');
+  }
+  STATE.lastQuotaResetCheck = now;
   const keysToTry = [...rawKeys].sort((a, b) => {
     const aCooldown = (STATE.keyCooldowns[a.key] || 0) > now ? 1 : 0;
     const bCooldown = (STATE.keyCooldowns[b.key] || 0) > now ? 1 : 0;
