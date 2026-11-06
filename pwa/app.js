@@ -31,6 +31,7 @@ const STATE = {
     return saved;
   })(),
   keyCooldowns: {},
+  modelQuotaCooldowns: {},
   unavailableModels: new Set(),
   lastWorkingKey: null,
   lastUsedGeminiModel: null,
@@ -3289,6 +3290,13 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
         }
 
         const { key, label } = keysToTry[kIdx];
+        const quotaKey = `${key}:${modelName}`;
+
+        // If this specific model has exhausted its quota on this key, skip it instantly (0ms delay)
+        if ((STATE.modelQuotaCooldowns?.[quotaKey] || 0) > now) {
+          continue;
+        }
+
         attemptCount++;
 
         let response = null;
@@ -3332,8 +3340,9 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
           const resParts = data.candidates?.[0]?.content?.parts || [];
           const text = resParts.map(p => p.text || '').join('').trim();
           if (text) {
-            // Mark this key as healthy and working
+            // Mark this key and model as healthy and working
             delete STATE.keyCooldowns[key];
+            if (STATE.modelQuotaCooldowns) delete STATE.modelQuotaCooldowns[quotaKey];
             STATE.lastWorkingKey = key;
 
             const isFallback = (attemptCount > 1 || kIdx > 0 || tIdx > 0);
@@ -3364,8 +3373,9 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
           if (status === 429 || rawMsg.toLowerCase().includes('quota') || rawMsg.toLowerCase().includes('resource_exhausted')) {
             reason = 'Wyczerpany limit (Quota / 429)';
             quotaExhaustedKeyIndices.add(kIdx);
-            // Cooldown key for 30 minutes so other calls skip it immediately
-            STATE.keyCooldowns[key] = Date.now() + (30 * 60 * 1000);
+            // Cooldown this specific model on this key for 60 minutes so other calls skip it immediately
+            STATE.modelQuotaCooldowns = STATE.modelQuotaCooldowns || {};
+            STATE.modelQuotaCooldowns[quotaKey] = Date.now() + (60 * 60 * 1000);
           } else if (status === 404) {
             reason = 'Model niedostępny (404)';
             STATE.unavailableModels.add(modelName);
@@ -5411,7 +5421,7 @@ Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown:
       ingredientsSummary: parsed.ingredientsSummary || '',
       coachComment: parsed.coachComment || '',
       userComment: '',
-      modelUsed: STATE.lastUsedGeminiModel || 'Gemini Pro'
+      modelUsed: STATE.lastUsedGeminiModel || 'Gemini Flash'
     });
   } catch (err) {
     alert('Błąd analizy posiłku przez AI: ' + err.message);
@@ -5488,7 +5498,7 @@ Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown:
       ingredientsSummary: parsed.ingredientsSummary || curIngredients,
       coachComment: parsed.coachComment || curCoachComment,
       userComment: existingUserComment,
-      modelUsed: STATE.lastUsedGeminiModel || 'Gemini Pro'
+      modelUsed: STATE.lastUsedGeminiModel || 'Gemini Flash'
     });
   } catch (err) {
     alert('Błąd podczas przeliczania posiłku przez AI: ' + err.message);
@@ -6720,6 +6730,7 @@ async function testApiKeysConnection() {
 
         if (res.ok) {
           delete (STATE.keyCooldowns || {})[key];
+          if (STATE.modelQuotaCooldowns) delete STATE.modelQuotaCooldowns[`${key}:${item.name}`];
           STATE.lastWorkingKey = key;
           const quotaNote = quotaHit ? ' <span style="font-size: 11px; color: #ffb74d;">(Flash osiągnął limit, ale Flash-Lite ma 500 zapytań/dzień!)</span>' : '';
           return {
@@ -6736,6 +6747,8 @@ async function testApiKeysConnection() {
 
         if (status === 429 || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource_exhausted')) {
           quotaHit = true;
+          STATE.modelQuotaCooldowns = STATE.modelQuotaCooldowns || {};
+          STATE.modelQuotaCooldowns[`${key}:${item.name}`] = Date.now() + (60 * 60 * 1000);
           lastError = { status: 429, msg: 'Limit dobowy wyczerpany (Quota 429)' };
           // Try Flash-Lite next because it has a separate 500 RPD pool!
           continue;

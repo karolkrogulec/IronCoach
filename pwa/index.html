@@ -940,7 +940,7 @@
           </div>
 
           <div id="scale-import-loading" style="display: none; text-align: center; padding: 14px; color: var(--accent); background: var(--surface-elevated); border-radius: 10px; margin-bottom: 12px;">
-            <span id="scale-import-loading-text">⏳ Gemini Pro analizuje przesłane pliki, składa dane z tych samych dni i sprawdza duplikaty...</span>
+            <span id="scale-import-loading-text">⏳ Gemini analizuje przesłane pliki, składa dane z tych samych dni i sprawdza duplikaty...</span>
           </div>
 
           <div id="scale-import-summary" style="display: none; padding: 10px 12px; border-radius: 10px; background: rgba(0, 230, 118, 0.1); border: 1px solid rgba(0, 230, 118, 0.35); color: var(--text); font-size: 12px; margin-bottom: 12px; line-height: 1.5;"></div>
@@ -1043,10 +1043,10 @@
       <div class="card" style="padding: 14px;">
         <div class="card-title" style="margin-bottom: 8px;">
           <span>📸 Dodaj Posiłek (Analiza Zdjęcia AI)</span>
-          <span id="nutrition-model-badge" class="badge badge-cyan">Gemini Pro Vision</span>
+          <span id="nutrition-model-badge" class="badge badge-cyan">Gemini Flash</span>
         </div>
         <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 10px;">
-          Zrób zdjęcie talerza aparatem lub wgraj z galerii (możesz też dodać zdjęcie etykiety). Wysoki model Gemini Pro oszacuje gramaturę, kalorie i makroskładniki.
+          Zrób zdjęcie talerza aparatem lub wgraj z galerii (możesz też dodać zdjęcie etykiety). Gemini oszacuje gramaturę, kalorie i makroskładniki.
         </p>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
@@ -1078,7 +1078,7 @@
         </div>
 
         <div id="meal-ai-loading" style="display: none; text-align: center; padding: 14px; color: var(--accent); background: var(--surface-elevated); border-radius: 10px; margin-top: 10px;">
-          ⏳ Wysoki model Gemini Pro analizuje posiłek, szacuje gramaturę składników i wylicza makro...
+          ⏳ Gemini analizuje posiłek, szacuje gramaturę składników i wylicza makro...
         </div>
 
         <!-- Editable AI Meal Preview / Manual Entry Box -->
@@ -1225,7 +1225,7 @@
           </select>
           <div style="background: rgba(0, 229, 255, 0.05); border: 1px solid rgba(0, 229, 255, 0.2); border-radius: 8px; padding: 8px; font-size: 11px; color: var(--text-muted); line-height: 1.45;">
             🔄 <b>Inteligentny Fallback Jakościowy (Quality-First Multi-Project):</b><br>
-            Aplikacja najpierw próbuje najwyższy model (np. Pro) na <b>Kluczu głównym</b>. Jeśli limit na Pro jest wyczerpany, natychmiast próbuje Pro na <b>Kluczu zapasowym (Projekt 2)</b>! Dopiero gdy oba projekty wyczerpią limit na Pro, przechodzi na poziom Flash.
+            Aplikacja najpierw próbuje flagowy model <b>Gemini 3.8 Flash</b>. Jeśli dobowy limit na 3.8 zostanie wyczerpany, natychmiast przechodzi na <b>Gemini 3.6 Flash</b>, a w razie potrzeby na <b>Gemini 3.5 Flash-Lite (aż 500 zapytań/dzień!)</b>, rotując między oboma skonfigurowanymi projektami.
           </div>
           <div id="gemini-last-used-info" style="margin-top: 8px; font-size: 11px; color: var(--accent); display: none;"></div>
         </div>
@@ -1434,6 +1434,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=49"></script>
+  <script src="app.js?v=50"></script>
 </body>
 </html>
