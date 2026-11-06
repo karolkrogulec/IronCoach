@@ -43,6 +43,9 @@ const STATE = {
   timerTargetSeconds: 90,
   timerIsTechnical: false,
   timerRefText: null,
+  timerStartedAt: null,
+  timerAdjustedSeconds: 0,
+  timerAlertPlayed: false,
   currentRestInfo: null,
   workoutDurationInterval: null,
   wakeLockSentinel: null,
@@ -83,9 +86,39 @@ const STATE = {
   gdriveOauthToken: localStorage.getItem('iron_gdrive_oauth_token') || ''
 };
 
+// Safe localStorage wrapper to protect against QuotaExceededError
+function safeLocalStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (err) {
+    if (err.name === 'QuotaExceededError' || err.code === 22 || err.code === 1014) {
+      console.error(`[Storage Quota] Przekroczono limit pamięci dla klucza ${key}:`, err);
+      const warnEl = document.getElementById('storage-quota-warning');
+      if (warnEl) warnEl.style.display = 'block';
+    } else {
+      console.error(`[Storage] Błąd zapisu do localStorage dla ${key}:`, err);
+    }
+    return false;
+  }
+}
+
+// Offline connection detector
+function initOfflineDetector() {
+  const banner = document.getElementById('offline-status-banner');
+  const updateStatus = () => {
+    if (!banner) return;
+    banner.style.display = navigator.onLine ? 'none' : 'block';
+  };
+  window.addEventListener('online', updateStatus);
+  window.addEventListener('offline', updateStatus);
+  updateStatus();
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
   registerServiceWorker();
+  initOfflineDetector();
   checkSharedParams();
   loadApiKey();
   initBodyMeasurements();
@@ -174,8 +207,22 @@ async function releaseWakeLock() {
 
 function setupWakeLockVisibilityListener() {
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && STATE.activeWorkout) {
-      requestWakeLock();
+    if (document.visibilityState === 'visible') {
+      if (STATE.activeWorkout) {
+        requestWakeLock();
+        updateWorkoutDurationCounter();
+      }
+      if (STATE.timerStartedAt) {
+        tickRestTimer();
+      }
+    }
+  });
+
+  window.addEventListener('focus', () => {
+    if (STATE.timerStartedAt) {
+      tickRestTimer();
+    }
+    if (STATE.activeWorkout) {
       updateWorkoutDurationCounter();
     }
   });
@@ -1073,7 +1120,23 @@ function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').then(reg => {
       try { reg.update(); } catch (e) {}
+
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        if (newWorker) {
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              const toast = document.getElementById('pwa-update-toast');
+              if (toast) toast.style.display = 'flex';
+            }
+          });
+        }
+      });
     }).catch(console.error);
+
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      console.log('[PWA] Service Worker controller changed.');
+    });
   }
 }
 
@@ -1814,6 +1877,52 @@ function updateWorkoutDurationCounter() {
   counterEl.textContent = formatDuration(elapsedSec);
 }
 
+function getPreviousExercisePerformance(exerciseName) {
+  if (!STATE.history || !Array.isArray(STATE.history) || STATE.history.length === 0 || !exerciseName) {
+    return null;
+  }
+  const targetNorm = normalizeExKey(exerciseName);
+  if (!targetNorm) return null;
+
+  for (const session of STATE.history) {
+    if (!session || !Array.isArray(session.sets) || session.sets.length === 0) continue;
+    const matchingSets = session.sets.filter(s => normalizeExKey(s.exercise) === targetNorm);
+    if (matchingSets.length > 0) {
+      const dateStr = new Date(session.endTime || session.startTime).toLocaleDateString('pl-PL', {
+        day: 'numeric',
+        month: 'numeric'
+      });
+      const summary = matchingSets.map(s => {
+        const w = s.weight > 0 ? `${s.weight}kg` : (s.loadType === 'bodyweight' ? 'BW' : '0kg');
+        return `${w}×${s.reps}`;
+      }).join(', ');
+      return {
+        dateStr,
+        summary,
+        sets: matchingSets
+      };
+    }
+  }
+  return null;
+}
+
+function adjustSetVal(exIdx, sIdx, field, delta) {
+  if (!STATE.activeWorkout) return;
+  const ex = STATE.activeWorkout.exercises?.[exIdx];
+  if (!ex || !ex.sets || !ex.sets[sIdx]) return;
+  const set = ex.sets[sIdx];
+  if (field === 'weight') {
+    const cur = parseFloat(set.weight) || 0;
+    set.weight = Math.max(0, Math.round((cur + delta) * 10) / 10);
+  } else if (field === 'reps') {
+    const cur = parseInt(set.reps) || 0;
+    set.reps = Math.max(0, cur + delta);
+  }
+  saveActiveWorkout();
+  renderActiveExercises();
+  updateWorkoutStats();
+}
+
 function loadActiveWorkoutUI() {
   if (!STATE.activeWorkout) return;
   document.getElementById('workout-plan-title').textContent = STATE.activeWorkout.planName;
@@ -1986,9 +2095,17 @@ function renderSupersetGroupCard(groupMembers, ssGroup, restSS, restMain) {
         }
       }
 
-      const metaSubRow = (timePillHtml || effortSmallLabelHtml)
+      const prevPerf = getPreviousExercisePerformance(ex.name);
+      const prevS = prevPerf?.sets?.[sIdx];
+      const prevSWeight = prevS ? (prevS.weight > 0 ? `${prevS.weight}kg` : (prevS.loadType === 'bodyweight' ? 'BW' : '0kg')) : '';
+      const prevHintHtml = prevS
+        ? `<span style="font-size: 10px; color: var(--accent); opacity: 0.9;">⏮️ Ostatnio: ${prevSWeight} × ${prevS.reps}</span>`
+        : '';
+
+      const metaSubRow = (timePillHtml || effortSmallLabelHtml || prevHintHtml)
         ? `<div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px;">
             ${timePillHtml}
+            ${prevHintHtml}
             ${effortSmallLabelHtml}
           </div>`
         : '';
@@ -2015,16 +2132,26 @@ function renderSupersetGroupCard(groupMembers, ssGroup, restSS, restMain) {
             </div>
           </div>
 
-          <!-- Set input row -->
+          <!-- Set input row with steppers and numeric keypad -->
           <div class="set-row" style="grid-template-columns: ${gridCols}; margin-bottom: 0;">
             <div class="set-num ${isDone ? 'done' : ''}">${set.num}</div>
             ${isBodyweightNoLoad ? '' : `
               <div>
-                <input type="number" step="0.5" class="input-box" value="${set.weight}" onchange="updateSetData(${exIdx}, ${sIdx}, 'weight', this.value)">
+                <div style="display: flex; align-items: center; gap: 2px;">
+                  <button type="button" onclick="adjustSetVal(${exIdx}, ${sIdx}, 'weight', -2.5)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-muted); border-radius: 6px; width: 22px; height: 34px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;" title="-2.5 kg">−</button>
+                  <input type="number" step="0.5" inputmode="decimal" class="input-box" style="text-align: center; font-weight: 700; padding: 6px 2px; min-width: 0; flex: 1;" value="${set.weight}" onchange="updateSetData(${exIdx}, ${sIdx}, 'weight', this.value)">
+                  <button type="button" onclick="adjustSetVal(${exIdx}, ${sIdx}, 'weight', 2.5)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-muted); border-radius: 6px; width: 22px; height: 34px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;" title="+2.5 kg">+</button>
+                </div>
                 ${dualHint}
               </div>
             `}
-            <input type="number" class="input-box" value="${set.reps}" onchange="updateSetData(${exIdx}, ${sIdx}, 'reps', this.value)">
+            <div>
+              <div style="display: flex; align-items: center; gap: 2px;">
+                <button type="button" onclick="adjustSetVal(${exIdx}, ${sIdx}, 'reps', -1)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-muted); border-radius: 6px; width: 22px; height: 34px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;" title="-1 powt.">−</button>
+                <input type="number" step="1" inputmode="numeric" class="input-box" style="text-align: center; font-weight: 700; padding: 6px 2px; min-width: 0; flex: 1;" value="${set.reps}" onchange="updateSetData(${exIdx}, ${sIdx}, 'reps', this.value)">
+                <button type="button" onclick="adjustSetVal(${exIdx}, ${sIdx}, 'reps', 1)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-muted); border-radius: 6px; width: 22px; height: 34px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;" title="+1 powt.">+</button>
+              </div>
+            </div>
             <button class="check-btn ${isDone ? 'completed' : ''}" onclick="toggleSetComplete(${exIdx}, ${sIdx})">
               ${isDone ? '✓' : '○'}
             </button>
@@ -2189,6 +2316,14 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
           <a href="https://www.youtube.com/results?search_query=${encodeURIComponent('ćwiczenie ' + ex.name + ' technika')}" target="_blank" class="btn btn-sm btn-secondary" style="padding: 4px 10px; font-size: 11px; flex: 1; text-decoration: none; color: #ff5252; border-color: rgba(255,82,82,0.35);">▶️ YouTube</a>
           ${extraWeightToggleBtn}
         </div>
+        ${(() => {
+          const prevPerf = getPreviousExercisePerformance(ex.name);
+          return prevPerf ? `
+            <div style="font-size: 11px; color: var(--accent); background: rgba(0,229,255,0.06); border: 1px solid rgba(0,229,255,0.22); border-radius: 6px; padding: 4px 8px; margin-top: 6px; display: flex; align-items: center; justify-content: space-between;">
+              <span>⏮️ <b>Ostatnio (${escapeHtml(prevPerf.dateStr)}):</b> ${escapeHtml(prevPerf.summary)}</span>
+            </div>
+          ` : '';
+        })()}
       </div>
       <div style="display: grid; grid-template-columns: ${gridCols}; gap: 8px; margin-bottom: 6px; font-size: 11px; color: var(--text-muted);">
         <span>SER</span>
@@ -2196,7 +2331,9 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
         <span>POWT</span>
         <span>OK</span>
       </div>
-      ${ex.sets.map((set, sIdx) => {
+      ${(() => {
+        const prevPerf = getPreviousExercisePerformance(ex.name);
+        return ex.sets.map((set, sIdx) => {
         const wVal = parseFloat(set.weight) || 0;
         const dualHint = isDualDumbbell && wVal > 0
           ? `<div style="font-size: 10px; color: var(--accent); text-align: center; margin-top: 2px;">= ${wVal * 2} kg łącznie</div>`
@@ -2207,6 +2344,13 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
         // Relative time badge for completed set
         const timePillHtml = (set.completed && set.relTimeLabel)
           ? `<span style="display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--text-muted); background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); padding: 2px 7px; border-radius: 999px;">⏱️ ${escapeHtml(set.relTimeLabel)}</span>`
+          : '';
+
+        // Previous performance hint for this specific set
+        const prevS = prevPerf?.sets?.[sIdx];
+        const prevSWeight = prevS ? (prevS.weight > 0 ? `${prevS.weight}kg` : (prevS.loadType === 'bodyweight' ? 'BW' : '0kg')) : '';
+        const prevHintHtml = prevS
+          ? `<span style="font-size: 10px; color: var(--accent); opacity: 0.9;">⏮️ Ostatnio: ${prevSWeight} × ${prevS.reps}</span>`
           : '';
 
         // Small effort label or inline 1-6 selector (ONLY for weighted exercises; calisthenics has NO scale 1-6)
@@ -2266,9 +2410,10 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
           }
         }
 
-        const setMetaSubRowHtml = (timePillHtml || effortSmallLabelHtml)
+        const setMetaSubRowHtml = (timePillHtml || effortSmallLabelHtml || prevHintHtml)
           ? `<div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap; margin: -4px 0 8px 38px;">
               ${timePillHtml}
+              ${prevHintHtml}
               ${effortSmallLabelHtml}
             </div>`
           : '';
@@ -2278,11 +2423,21 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
             <div class="set-num ${set.completed ? 'done' : ''}">${set.num}</div>
             ${isBodyweightNoLoad ? '' : `
               <div>
-                <input type="number" step="0.5" class="input-box" value="${set.weight}" onchange="updateSetData(${exIdx}, ${sIdx}, 'weight', this.value)">
+                <div style="display: flex; align-items: center; gap: 2px;">
+                  <button type="button" onclick="adjustSetVal(${exIdx}, ${sIdx}, 'weight', -2.5)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-muted); border-radius: 6px; width: 22px; height: 34px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;" title="-2.5 kg">−</button>
+                  <input type="number" step="0.5" inputmode="decimal" class="input-box" style="text-align: center; font-weight: 700; padding: 6px 2px; min-width: 0; flex: 1;" value="${set.weight}" onchange="updateSetData(${exIdx}, ${sIdx}, 'weight', this.value)">
+                  <button type="button" onclick="adjustSetVal(${exIdx}, ${sIdx}, 'weight', 2.5)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-muted); border-radius: 6px; width: 22px; height: 34px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;" title="+2.5 kg">+</button>
+                </div>
                 ${dualHint}
               </div>
             `}
-            <input type="number" class="input-box" value="${set.reps}" onchange="updateSetData(${exIdx}, ${sIdx}, 'reps', this.value)">
+            <div>
+              <div style="display: flex; align-items: center; gap: 2px;">
+                <button type="button" onclick="adjustSetVal(${exIdx}, ${sIdx}, 'reps', -1)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-muted); border-radius: 6px; width: 22px; height: 34px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;" title="-1 powt.">−</button>
+                <input type="number" step="1" inputmode="numeric" class="input-box" style="text-align: center; font-weight: 700; padding: 6px 2px; min-width: 0; flex: 1;" value="${set.reps}" onchange="updateSetData(${exIdx}, ${sIdx}, 'reps', this.value)">
+                <button type="button" onclick="adjustSetVal(${exIdx}, ${sIdx}, 'reps', 1)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-muted); border-radius: 6px; width: 22px; height: 34px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;" title="+1 powt.">+</button>
+              </div>
+            </div>
             <button class="check-btn ${set.completed ? 'completed' : ''}" onclick="toggleSetComplete(${exIdx}, ${sIdx})">
               ${set.completed ? '✓' : '○'}
             </button>
@@ -2290,7 +2445,8 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
           ${setMetaSubRowHtml}
           ${effortInlinePickerHtml}
         `;
-      }).join('')}
+      }).join('');
+      })()}
     </div>
   `;
 }
@@ -2776,6 +2932,69 @@ function updateWorkoutStats() {
 // ============================================================================
 // MODULE 1: FOCUS OVERLAY — DUAL MODE: TECHNICAL BREAK (Count UP) vs REST TIMER (Count DOWN + Red Overtime)
 // ============================================================================
+function playRestTimerAlertSound() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === 'suspended') {
+      ctx.resume();
+    }
+    const now = ctx.currentTime;
+    // Pleasant double chime: A5 (880Hz) -> D6 (1174Hz)
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(880, now);
+    gain1.gain.setValueAtTime(0.28, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.22);
+
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(1174.66, now + 0.16);
+    gain2.gain.setValueAtTime(0.32, now + 0.16);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.16);
+    osc2.stop(now + 0.55);
+  } catch (err) {
+    console.warn('[Audio Alert] Nie można odtworzyć dźwięku stopera:', err);
+  }
+}
+
+function tickRestTimer() {
+  if (!STATE.timerStartedAt) return;
+  const now = Date.now();
+  const elapsed = Math.max(0, Math.floor((now - STATE.timerStartedAt) / 1000));
+  STATE.timerElapsedSeconds = elapsed;
+
+  if (STATE.timerIsTechnical) {
+    STATE.timerSeconds = Math.max(1, elapsed);
+    updateTimerDisplayUI();
+  } else {
+    const effectiveTarget = (STATE.timerTargetSeconds || 90) + (STATE.timerAdjustedSeconds || 0);
+    const remaining = effectiveTarget - elapsed;
+    STATE.timerRemainingSeconds = remaining;
+    STATE.timerSeconds = remaining;
+
+    if (remaining <= 0 && !STATE.timerAlertPlayed) {
+      STATE.timerAlertPlayed = true;
+      playRestTimerAlertSound();
+      if (navigator.vibrate) {
+        try { navigator.vibrate([200, 100, 200, 100, 250]); } catch (e) {}
+      }
+    }
+
+    updateTimerDisplayUI();
+  }
+}
+
 function startRestTimer(
   targetSeconds = 90,
   labelText = '🟢 ODPOCZYNEK MIĘDZY SERIAMI',
@@ -2789,14 +3008,17 @@ function startRestTimer(
 
   const isTechnical = (restType === 'technical-prep' || restType === 'technical-break');
   STATE.timerIsTechnical = isTechnical;
+  STATE.timerStartedAt = Date.now();
   STATE.timerElapsedSeconds = 0;
+  STATE.timerAdjustedSeconds = 0;
+  STATE.timerAlertPlayed = false;
   STATE.timerTargetSeconds = isTechnical ? 0 : (parseInt(targetSeconds) || 90);
   STATE.timerRemainingSeconds = STATE.timerTargetSeconds;
   STATE.timerSeconds = isTechnical ? 1 : STATE.timerRemainingSeconds;
   STATE.timerRefText = refText;
 
   STATE.currentRestInfo = {
-    startedAt: Date.now(),
+    startedAt: STATE.timerStartedAt,
     plannedSeconds: isTechnical ? 0 : STATE.timerTargetSeconds,
     afterExercise: afterExercise,
     afterSet: afterSet,
@@ -2842,27 +3064,10 @@ function startRestTimer(
   }
 
   // Initial UI render
-  updateTimerDisplayUI();
+  tickRestTimer();
 
-  STATE.timerInterval = setInterval(() => {
-    STATE.timerElapsedSeconds++;
-
-    if (STATE.timerIsTechnical) {
-      // Technical break: counts upwards continuously from 1s, never overtime
-      STATE.timerSeconds = Math.max(1, STATE.timerElapsedSeconds);
-      updateTimerDisplayUI();
-    } else {
-      // Planned rest: counts downwards from targetSeconds
-      STATE.timerRemainingSeconds--;
-      STATE.timerSeconds = STATE.timerRemainingSeconds;
-
-      if (STATE.timerRemainingSeconds === 0) {
-        if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 250]);
-      }
-
-      updateTimerDisplayUI();
-    }
-  }, 1000);
+  // Wall-clock synced interval
+  STATE.timerInterval = setInterval(tickRestTimer, 500);
 }
 
 function updateTimerDisplayUI() {
@@ -2884,7 +3089,7 @@ function updateTimerDisplayUI() {
   } else {
     // Planned Rest: Count DOWN from targetSeconds
     const remaining = STATE.timerRemainingSeconds;
-    const target = STATE.timerTargetSeconds || 90;
+    const target = (STATE.timerTargetSeconds || 90) + (STATE.timerAdjustedSeconds || 0);
 
     if (remaining > 0) {
       // On track: green background
@@ -2923,12 +3128,16 @@ function updateTimerDisplayUI() {
 
 function addTimerSeconds(secs) {
   if (STATE.timerIsTechnical) return;
-  STATE.timerTargetSeconds = Math.max(10, (STATE.timerTargetSeconds || 90) + secs);
-  STATE.timerRemainingSeconds = (STATE.timerRemainingSeconds || 0) + secs;
+  STATE.timerAdjustedSeconds = (STATE.timerAdjustedSeconds || 0) + secs;
+  const effectiveTarget = (STATE.timerTargetSeconds || 90) + STATE.timerAdjustedSeconds;
   if (STATE.currentRestInfo) {
-    STATE.currentRestInfo.plannedSeconds = STATE.timerTargetSeconds;
+    STATE.currentRestInfo.plannedSeconds = effectiveTarget;
   }
-  updateTimerDisplayUI();
+  const elapsed = Math.max(0, Math.floor((Date.now() - (STATE.timerStartedAt || Date.now())) / 1000));
+  if (effectiveTarget - elapsed > 0) {
+    STATE.timerAlertPlayed = false;
+  }
+  tickRestTimer();
 }
 
 function finalizeCurrentRestLog(nextExerciseName = null, nextSetNum = null) {
@@ -2937,7 +3146,7 @@ function finalizeCurrentRestLog(nextExerciseName = null, nextSetNum = null) {
 
   if (STATE.currentRestInfo && !STATE.currentRestInfo.logged) {
     const isTech = (STATE.currentRestInfo.type === 'technical-prep' || STATE.currentRestInfo.type === 'technical-break');
-    const actualSec = Math.max(1, STATE.timerElapsedSeconds || Math.round((Date.now() - STATE.currentRestInfo.startedAt) / 1000));
+    const actualSec = Math.max(1, Math.round((Date.now() - (STATE.currentRestInfo.startedAt || Date.now())) / 1000));
     const plannedSec = isTech ? 0 : (STATE.currentRestInfo.plannedSeconds || 90);
     const overtimeSec = isTech ? 0 : Math.max(0, actualSec - plannedSec);
 
@@ -2978,6 +3187,7 @@ function stopTimer() {
   }
   clearInterval(STATE.timerInterval);
   STATE.timerInterval = null;
+  STATE.timerStartedAt = null;
   document.body.classList.remove('focus-lock');
   const bar = document.getElementById('rest-timer-bar');
   if (bar) {
@@ -3074,7 +3284,7 @@ async function finishCurrentWorkout() {
   };
 
   STATE.history.unshift(session);
-  localStorage.setItem('iron_history', JSON.stringify(STATE.history));
+  safeLocalStorageSet('iron_history', JSON.stringify(STATE.history));
 
   STATE.activeWorkout = null;
   localStorage.removeItem('iron_active_workout');
@@ -3277,15 +3487,11 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
 
   const allAttempts = [];
   let attemptCount = 0;
-  const quotaExhaustedKeyIndices = new Set();
 
   for (let tIdx = 0; tIdx < orderedTiers.length; tIdx++) {
     const tierObj = orderedTiers[tIdx];
     const tierModels = tierObj.models;
     if (!tierModels || tierModels.length === 0) continue;
-
-    // Reset quota exhaustion tracker for this tier
-    quotaExhaustedKeyIndices.clear();
 
     for (let mIdx = 0; mIdx < tierModels.length; mIdx++) {
       const modelName = tierModels[mIdx];
@@ -3295,15 +3501,7 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
         continue;
       }
 
-      if (quotaExhaustedKeyIndices.size >= keysToTry.length) {
-        break;
-      }
-
       for (let kIdx = 0; kIdx < keysToTry.length; kIdx++) {
-        if (quotaExhaustedKeyIndices.has(kIdx)) {
-          continue;
-        }
-
         const { key, label } = keysToTry[kIdx];
         const quotaKey = `${key}:${modelName}`;
 
@@ -3387,7 +3585,6 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
           let reason = `HTTP ${status}`;
           if (status === 429 || rawMsg.toLowerCase().includes('quota') || rawMsg.toLowerCase().includes('resource_exhausted')) {
             reason = 'Wyczerpany limit (Quota / 429)';
-            quotaExhaustedKeyIndices.add(kIdx);
             // Cooldown this specific model on this key for 60 minutes so other calls skip it immediately
             STATE.modelQuotaCooldowns = STATE.modelQuotaCooldowns || {};
             STATE.modelQuotaCooldowns[quotaKey] = Date.now() + (60 * 60 * 1000);
@@ -6030,7 +6227,7 @@ function saveCoachContextDays(val) {
 }
 
 function saveCoachCrossThreadMemory() {
-  localStorage.setItem('iron_coach_cross_thread_memory', JSON.stringify(STATE.coachCrossThreadMemory || []));
+  safeLocalStorageSet('iron_coach_cross_thread_memory', JSON.stringify(STATE.coachCrossThreadMemory || []));
 }
 
 function pruneCoachCrossThreadMemory() {
@@ -6723,15 +6920,15 @@ async function retryLastCoachMessage() {
 }
 
 function saveCoachThreads() {
-  localStorage.setItem('iron_coach_threads', JSON.stringify(STATE.coachThreads));
+  safeLocalStorageSet('iron_coach_threads', JSON.stringify(STATE.coachThreads));
   if (STATE.activeCoachThreadId) {
-    localStorage.setItem('iron_active_coach_thread_id', STATE.activeCoachThreadId);
+    safeLocalStorageSet('iron_active_coach_thread_id', STATE.activeCoachThreadId);
   }
   // Keep legacy STATE.coachChat synced with active thread for backward compatibility
   const active = STATE.coachThreads.find(t => t.id === STATE.activeCoachThreadId);
   if (active) {
     STATE.coachChat = active.messages || [];
-    localStorage.setItem('iron_coach_chat', JSON.stringify(STATE.coachChat));
+    safeLocalStorageSet('iron_coach_chat', JSON.stringify(STATE.coachChat));
   }
 }
 
@@ -7862,7 +8059,7 @@ async function shareBackupToGoogleDriveApp() {
 // HELPERS
 // ============================================================================
 function saveActiveWorkout() {
-  localStorage.setItem('iron_active_workout', JSON.stringify(STATE.activeWorkout));
+  safeLocalStorageSet('iron_active_workout', JSON.stringify(STATE.activeWorkout));
   checkActiveWorkout();
 }
 
@@ -7880,7 +8077,8 @@ function escapeHtml(str) {
 }
 
 function formatMarkdown(text) {
-  return String(text || '')
+  const safe = escapeHtml(String(text || ''));
+  return safe
     .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
     .replace(/\*(.*?)\*/g, '<i>$1</i>')
     .replace(/\n/g, '<br>');

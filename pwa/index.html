@@ -546,6 +546,28 @@
     </div>
   </header>
 
+  <!-- Offline Status Banner -->
+  <div id="offline-status-banner" style="display: none; background: rgba(255, 179, 0, 0.16); border-bottom: 1px solid var(--primary); padding: 8px 14px; font-size: 12px; color: var(--primary); text-align: center; font-weight: 700;">
+    📡 Jesteś w trybie offline — Trening i stoper działają w 100% lokalnie. Moduły AI (Gemini) zostaną wznowione po powrocie zasięgu.
+  </div>
+
+  <!-- PWA Update Available Toast -->
+  <div id="pwa-update-toast" style="display: none; position: fixed; top: 68px; left: 50%; transform: translateX(-50%); z-index: 1000; background: var(--surface-elevated); border: 1px solid var(--accent); padding: 8px 16px; border-radius: 999px; box-shadow: 0 4px 16px rgba(0,0,0,0.5); font-size: 13px; font-weight: 700; color: var(--text); align-items: center; gap: 10px;">
+    <span>✨ Dostępna nowa wersja IronCoach</span>
+    <button onclick="window.location.reload()" class="btn btn-sm btn-primary" style="padding: 4px 12px; font-size: 12px; border-radius: 999px; cursor: pointer;">Odśwież</button>
+  </div>
+
+  <!-- Storage Quota Warning Modal/Banner -->
+  <div id="storage-quota-warning" style="display: none; position: fixed; top: 12px; left: 16px; right: 16px; z-index: 2000; background: rgba(255, 82, 82, 0.96); backdrop-filter: blur(8px); border: 1px solid #ff1744; padding: 12px 16px; border-radius: 12px; color: #fff; font-size: 13px; box-shadow: 0 4px 20px rgba(0,0,0,0.6);">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <b>⚠️ Pamięć przeglądarki jest zapełniona!</b>
+      <button onclick="this.parentElement.parentElement.style.display='none'" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;">✕</button>
+    </div>
+    <div style="font-size: 12px; opacity: 0.95; line-height: 1.4;">
+      Zbliżasz się do limitu pamięci lokalnej (5MB). Aby nie stracić danych, przejdź do <b>Opcji</b> i pobierz <b>Kopię zapasową JSON</b>.
+    </div>
+  </div>
+
   <!-- Full-Screen Focus Overlay (Technical Break & Rest Lock) -->
   <div id="rest-timer-bar">
     <div class="focus-overlay-card" id="focus-overlay-card">
@@ -1450,6 +1472,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=52"></script>
+  <script src="app.js?v=53"></script>
 </body>
 </html>
