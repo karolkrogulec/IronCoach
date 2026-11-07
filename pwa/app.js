@@ -31,7 +31,14 @@ const STATE = {
     return saved;
   })(),
   keyCooldowns: {},
-  modelQuotaCooldowns: {},
+  modelQuotaCooldowns: (() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('iron_gemini_model_cooldowns') || '{}');
+      return (typeof saved === 'object' && saved !== null) ? saved : {};
+    } catch (_) {
+      return {};
+    }
+  })(),
   unavailableModels: new Set(),
   lastWorkingKey: null,
   lastUsedGeminiModel: null,
@@ -101,6 +108,22 @@ function safeLocalStorageSet(key, value) {
     }
     return false;
   }
+}
+
+function saveModelQuotaCooldowns() {
+  try {
+    localStorage.setItem('iron_gemini_model_cooldowns', JSON.stringify(STATE.modelQuotaCooldowns || {}));
+  } catch (_) {}
+}
+
+function getNextPacificMidnightMs() {
+  const now = new Date();
+  const nextReset = new Date(now);
+  nextReset.setHours(9, 0, 0, 0); // 09:00 AM CET (midnight PST reset in Google AI Studio)
+  if (now.getTime() >= nextReset.getTime()) {
+    nextReset.setDate(nextReset.getDate() + 1);
+  }
+  return nextReset.getTime();
 }
 
 // Offline connection detector
@@ -896,7 +919,7 @@ Zwróć obiekt JSON bez markdown:
   "keywords": ["słowo1", "słowo2", "słowo3"],
   "equipment": "barbell | dumbbell | cable | lever | bodyweight | kettlebell | band | ez-barbell"
 }`;
-    const res1 = await callGemini(prompt1, 'fast');
+    const res1 = await callGemini(prompt1, 'lite');
     const parsed1 = JSON.parse(res1.replace(/```json/g, '').replace(/```/g, '').trim());
     const kws = (parsed1.keywords || []).map(k => String(k).toLowerCase());
     const eq = String(parsed1.equipment || '').toLowerCase();
@@ -919,7 +942,7 @@ Dla ćwiczenia "${exerciseName}" wybierz JEDEN najlepiej pasujący identyfikator
 [${candidateListText}]
 Zwróć wyłącznie sam wybrany slug (np. barbell-straight-leg-deadlift), bez żadnych innych słów.`;
 
-    const chosenSlugRaw = await callGemini(prompt2, 'fast');
+    const chosenSlugRaw = await callGemini(prompt2, 'lite');
     const chosenSlug = chosenSlugRaw.toLowerCase().replace(/[^a-z0-9-]/g, '').trim();
     const exactMatch = STATE.exerciseGifs.find(item => item.s === chosenSlug)
       || (scoredCandidates[0] && scoredCandidates[0].item);
@@ -3625,6 +3648,7 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
   if (lastResetCheck > 0 && currentPSTDay !== lastPSTDay) {
     STATE.modelQuotaCooldowns = {};
     STATE.keyCooldowns = {};
+    saveModelQuotaCooldowns();
     console.log('[Gemini Quota] Dobowy reset limitów Google AI Studio (9:00 CET / Midnight PST). Odblokowano modele.');
   }
   STATE.lastQuotaResetCheck = now;
@@ -3689,46 +3713,23 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
         let networkErr = null;
 
         const useStreaming = (typeof onChunk === 'function' && !inlineData);
-        const endpointAction = useStreaming ? 'streamGenerateContent?alt=sse&key=' : 'generateContent?key=';
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:${endpointAction}${key}`;
 
-        // PRD-04: Auto-retry with exponential backoff on momentary mobile connection drop / Failed to fetch
-        for (let retry = 0; retry < 3; retry++) {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s generation timeout
+        // 1. Try Live SSE Streaming First (TTFT < 1.5s) if supported
+        if (useStreaming) {
+          const streamUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:streamGenerateContent?alt=sse&key=${key}`;
+          const streamController = new AbortController();
+          const streamTimeoutId = setTimeout(() => streamController.abort(), 45000);
 
           try {
-            response = await fetch(url, {
+            response = await fetch(streamUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ contents: [{ parts: parts }] }),
-              signal: controller.signal
+              signal: streamController.signal
             });
-            clearTimeout(timeoutId);
-            networkErr = null;
-            break;
-          } catch (err) {
-            clearTimeout(timeoutId);
-            networkErr = err;
-            if (retry < 2 && !controller.signal.aborted) {
-              const backoffMs = (retry + 1) * 1200;
-              await new Promise(r => setTimeout(r, backoffMs));
-            }
-          }
-        }
+            clearTimeout(streamTimeoutId);
 
-        if (networkErr) {
-          const isTimeout = networkErr.name === 'AbortError';
-          const reason = isTimeout ? 'Timeout połączenia (45s)' : 'Błąd sieci';
-          allAttempts.push({ keyLabel: label, model: modelName, status: 0, reason, details: networkErr.message });
-          console.warn(`[Gemini Auto-Fallback] ${reason} dla modelu ${modelName} [${label}]:`, networkErr);
-          continue;
-        }
-
-        if (response.ok) {
-          // PRD-04: Live SSE Stream Chunk Consumer (TTFT < 1.5s)
-          if (useStreaming && response.body) {
-            try {
+            if (response.ok && response.body) {
               const reader = response.body.getReader();
               const decoder = new TextDecoder();
               let buffer = '';
@@ -3757,25 +3758,78 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
               }
               const finalText = accumulatedText.trim();
               if (finalText) {
-                delete STATE.keyCooldowns[key];
-                if (STATE.modelQuotaCooldowns) delete STATE.modelQuotaCooldowns[quotaKey];
+                delete (STATE.keyCooldowns || {})[key];
+                if (STATE.modelQuotaCooldowns) {
+                  delete STATE.modelQuotaCooldowns[quotaKey];
+                  saveModelQuotaCooldowns();
+                }
                 STATE.lastWorkingKey = key;
                 const isFallback = (attemptCount > 1 || kIdx > 0 || tIdx > 0);
                 updateGeminiModelBadges(modelName, isFallback, label);
                 return finalText;
               }
-            } catch (streamErr) {
-              console.warn(`[Gemini Streaming] Strumieniowanie przerwane dla ${modelName}, pobieram standardowo:`, streamErr);
+            } else if (response.status === 429 || response.status === 404) {
+              // Known quota or missing model -> don't retry streaming, handle status directly below
+            } else {
+              // Non-OK status or empty body -> try standard non-streaming
+              response = null;
+            }
+          } catch (streamErr) {
+            clearTimeout(streamTimeoutId);
+            console.warn(`[Gemini Streaming] Połączenie SSE przerwane lub zablokowane dla ${modelName} [${label}]. Przełączam na standardowe zapytanie HTTP POST:`, streamErr);
+            response = null;
+          }
+        }
+
+        // 2. Standard Non-Streaming HTTP POST fallback (resilient on cellular networks and proxies)
+        if (!response) {
+          const standardUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`;
+          const retries = (!navigator.onLine) ? 1 : 3;
+
+          for (let retry = 0; retry < retries; retry++) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s generation timeout
+
+            try {
+              response = await fetch(standardUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: [{ parts: parts }] }),
+                signal: controller.signal
+              });
+              clearTimeout(timeoutId);
+              networkErr = null;
+              break;
+            } catch (err) {
+              clearTimeout(timeoutId);
+              networkErr = err;
+              if (retry < retries - 1 && !controller.signal.aborted) {
+                const backoffMs = (retry + 1) * 1500;
+                await new Promise(r => setTimeout(r, backoffMs));
+              }
             }
           }
+        }
 
+        if (networkErr && !response) {
+          const isTimeout = networkErr.name === 'AbortError';
+          const reason = isTimeout ? 'Timeout połączenia (45s)' : 'Błąd sieci';
+          allAttempts.push({ keyLabel: label, model: modelName, status: 0, reason, details: networkErr.message });
+          console.warn(`[Gemini Auto-Fallback] ${reason} dla modelu ${modelName} [${label}]:`, networkErr);
+          continue;
+        }
+
+        if (response && response.ok) {
           const data = await response.json();
           const resParts = data.candidates?.[0]?.content?.parts || [];
           const text = resParts.map(p => p.text || '').join('').trim();
           if (text) {
             // Mark this key and model as healthy and working
-            delete STATE.keyCooldowns[key];
-            if (STATE.modelQuotaCooldowns) delete STATE.modelQuotaCooldowns[quotaKey];
+            delete (STATE.keyCooldowns || {})[key];
+            if (STATE.modelQuotaCooldowns) {
+              delete STATE.modelQuotaCooldowns[quotaKey];
+              saveModelQuotaCooldowns();
+            }
             STATE.lastWorkingKey = key;
 
             const isFallback = (attemptCount > 1 || kIdx > 0 || tIdx > 0);
@@ -3797,7 +3851,7 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
           } else {
             allAttempts.push({ keyLabel: label, model: modelName, status: 200, reason: 'Pusta odpowiedź (brak treści)' });
           }
-        } else {
+        } else if (response) {
           const errJson = await response.json().catch(() => ({}));
           const status = response.status;
           const rawMsg = errJson.error?.message || `HTTP ${status}`;
@@ -3805,9 +3859,10 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
           let reason = `HTTP ${status}`;
           if (status === 429 || rawMsg.toLowerCase().includes('quota') || rawMsg.toLowerCase().includes('resource_exhausted')) {
             reason = 'Wyczerpany limit (Quota / 429)';
-            // Cooldown this specific model on this key for 60 minutes so other calls skip it immediately
+            // Cooldown this specific model on this key until next Pacific Midnight (09:00 CET reset in AI Studio)
             STATE.modelQuotaCooldowns = STATE.modelQuotaCooldowns || {};
-            STATE.modelQuotaCooldowns[quotaKey] = Date.now() + (60 * 60 * 1000);
+            STATE.modelQuotaCooldowns[quotaKey] = Math.max(Date.now() + (2 * 60 * 60 * 1000), getNextPacificMidnightMs());
+            saveModelQuotaCooldowns();
           } else if (status === 404) {
             reason = 'Model niedostępny (404)';
             STATE.unavailableModels.add(modelName);
@@ -3907,7 +3962,7 @@ ${rawText}
 """`;
 
   try {
-    const rawResponse = await callGemini(prompt, 'fast');
+    const rawResponse = await callGemini(prompt, 'lite');
     let parsed = extractJsonFromGemini(rawResponse);
 
     if (!Array.isArray(parsed)) {
@@ -4012,7 +4067,7 @@ function openNewPlanModal() {
   document.getElementById('modal-plan-ss-rest').value = 30;
   document.getElementById('modal-exercises-list').innerHTML = '';
   addModalExerciseRow('Wyciskanie sztangi leżąc', 4, 8, 80, '', 'standard');
-  addModalExerciseRow('Wyciskanie hantli skos', 3, 10, 26, 'A', 'dual_dumbbell');
+  addModalExerciseRow('Wyciskanie hantli skos', 3, 10, 27, 'A', 'dual_dumbbell');
   addModalExerciseRow('Pompki na poręczach (Dipy)', 3, 10, 0, 'A', 'bodyweight');
   updateModalSupersetsView();
   const modal = document.getElementById('plan-modal');
@@ -4201,6 +4256,87 @@ function updateModalSupersetsView() {
   `;
 }
 
+function stepModalWeight(btnEl, direction) {
+  const row = btnEl.closest('.modal-ex-row');
+  if (!row) return;
+  row.dataset.manualEdited = '1';
+
+  const selectEl = row.querySelector('select.modal-ex-weight');
+  if (selectEl) {
+    const curVal = parseFloat(selectEl.value) || ZIPRO_DUMBBELL_STEPS[0];
+    const nextVal = stepZiproDumbbell(curVal, direction);
+    selectEl.value = nextVal;
+    return;
+  }
+
+  const inputEl = row.querySelector('input.modal-ex-weight');
+  if (inputEl) {
+    const curVal = parseFloat(inputEl.value) || 0;
+    const loadTypeSelect = row.querySelector('.modal-ex-loadtype');
+    const loadType = loadTypeSelect ? loadTypeSelect.value : 'standard';
+    const delta = (loadType === 'bodyweight') ? 1.0 : 2.5;
+    inputEl.value = Math.max(0, Math.round((curVal + (direction * delta)) * 10) / 10);
+  }
+}
+
+function renderModalWeightControl(row, loadType, weightVal) {
+  const weightContainer = row.querySelector('.modal-weight-container');
+  const bwAddContainer = row.querySelector('.modal-bw-add-container');
+  if (!weightContainer || !bwAddContainer) return;
+
+  const exNameInput = row.querySelector('.modal-ex-name');
+  const exName = exNameInput ? exNameInput.value.trim() : '';
+  const isDumbbell = (loadType === 'dual_dumbbell') || isDumbbellExercise({ name: exName, loadType });
+
+  if (loadType === 'bodyweight') {
+    const rawNum = parseFloat(weightVal) || 0;
+    if (rawNum > 0) {
+      bwAddContainer.style.display = 'none';
+      weightContainer.style.display = 'block';
+      weightContainer.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 2px;">
+          <button type="button" onclick="stepModalWeight(this, -1)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-muted); border-radius: 6px; width: 22px; height: 32px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;" title="-1 kg">−</button>
+          <input type="number" step="0.5" class="input-box modal-ex-weight" style="font-size: 13px; padding: 6px 2px; text-align: center; font-weight: 700; flex: 1; min-width: 0;" placeholder="0" value="${rawNum}" title="Dołożony ciężar (kg)" oninput="this.closest('.modal-ex-row').dataset.manualEdited='1'">
+          <button type="button" onclick="stepModalWeight(this, 1)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-muted); border-radius: 6px; width: 22px; height: 32px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;" title="+1 kg">+</button>
+        </div>
+        <span class="modal-weight-label" style="font-size: 9px; color: var(--success); display: block; text-align: center; margin-top: 2px;">+DOŁOŻONO (KG)</span>
+      `;
+    } else {
+      weightContainer.style.display = 'none';
+      weightContainer.innerHTML = '';
+      bwAddContainer.style.display = 'flex';
+    }
+    return;
+  }
+
+  bwAddContainer.style.display = 'none';
+  weightContainer.style.display = 'block';
+
+  if (isDumbbell) {
+    const currentW = snapToZiproDumbbellWeight(parseFloat(weightVal) || 11.3);
+    weightContainer.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 2px;">
+        <button type="button" onclick="stepModalWeight(this, -1)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--accent); border-radius: 6px; width: 22px; height: 32px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;" title="Poprzedni skok Zipro">−</button>
+        <select class="input-box modal-ex-weight" style="font-size: 12px; padding: 5px 2px; text-align: center; font-weight: 700; flex: 1; min-width: 0; color: var(--accent); background: var(--surface);" onchange="this.closest('.modal-ex-row').dataset.manualEdited='1'">
+          ${ZIPRO_DUMBBELL_STEPS.map(sw => `<option value="${sw}" ${Math.abs(currentW - sw) < 0.1 ? 'selected' : ''}>${sw} kg</option>`).join('')}
+        </select>
+        <button type="button" onclick="stepModalWeight(this, 1)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--accent); border-radius: 6px; width: 22px; height: 32px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;" title="Następny skok Zipro">+</button>
+      </div>
+      <span class="modal-weight-label" style="font-size: 9px; color: var(--accent); display: block; text-align: center; margin-top: 2px;">🔧 ZIPRO (2.3–36 kg)</span>
+    `;
+  } else {
+    const curW = parseFloat(weightVal) || 0;
+    weightContainer.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 2px;">
+        <button type="button" onclick="stepModalWeight(this, -1)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-muted); border-radius: 6px; width: 22px; height: 32px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;" title="-2.5 kg">−</button>
+        <input type="number" step="0.5" class="input-box modal-ex-weight" style="font-size: 13px; padding: 6px 2px; text-align: center; font-weight: 700; flex: 1; min-width: 0;" placeholder="kg" value="${curW}" title="Ciężar (kg)" oninput="this.closest('.modal-ex-row').dataset.manualEdited='1'">
+        <button type="button" onclick="stepModalWeight(this, 1)" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-muted); border-radius: 6px; width: 22px; height: 32px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;" title="+2.5 kg">+</button>
+      </div>
+      <span class="modal-weight-label" style="font-size: 9px; color: var(--text-muted); display: block; text-align: center; margin-top: 2px;">CIĘŻAR (KG)</span>
+    `;
+  }
+}
+
 function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, supersetGroup = '', loadType = 'standard', exObj = null) {
   const listEl = document.getElementById('modal-exercises-list');
   const row = document.createElement('div');
@@ -4234,15 +4370,9 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
 
   const loadOptions = [
     { val: 'standard', label: '🏋️ Ciężar standard (1×)' },
-    { val: 'dual_dumbbell', label: '💪 2× Hantle (licz ×2)' },
+    { val: 'dual_dumbbell', label: '💪 2× Hantle (Zipro 2.3-36kg)' },
     { val: 'bodyweight', label: '🤸 Masa ciała (bez ciężaru)' }
   ];
-
-  const hasExtraBwWeight = loadType === 'bodyweight' && (parseFloat(weight) || 0) > 0;
-  const hideWeightBox = loadType === 'bodyweight' && !hasExtraBwWeight;
-  const weightLabelText = loadType === 'dual_dumbbell'
-    ? '1 HANTEL (KG ×2)'
-    : (loadType === 'bodyweight' ? '+DOŁOŻONO (KG)' : 'CIĘŻAR (KG)');
 
   const hasGifAssigned = Boolean(initUrl);
 
@@ -4277,7 +4407,7 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
         ${loadOptions.map(o => `<option value="${o.val}" ${loadType === o.val ? 'selected' : ''}>${o.label}</option>`).join('')}
       </select>
     </div>
-    <div style="display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 6px; align-items: center;">
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1.35fr; gap: 6px; align-items: center;">
       <div style="position: relative;">
         <input type="number" class="input-box modal-ex-sets" style="font-size: 13px; padding: 6px;" placeholder="Ser" value="${sets}" title="Serie" oninput="this.closest('.modal-ex-row').dataset.manualEdited='1'">
         <span style="font-size: 9px; color: var(--text-muted); display: block; text-align: center;">SERIE</span>
@@ -4286,11 +4416,8 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
         <input type="number" class="input-box modal-ex-reps" style="font-size: 13px; padding: 6px;" placeholder="Powt" value="${reps}" title="Powtórzenia" oninput="this.closest('.modal-ex-row').dataset.manualEdited='1'">
         <span style="font-size: 9px; color: var(--text-muted); display: block; text-align: center;">POWT</span>
       </div>
-      <div class="modal-weight-container" style="position: relative; ${hideWeightBox ? 'display: none;' : ''}">
-        <input type="number" step="0.5" class="input-box modal-ex-weight" style="font-size: 13px; padding: 6px;" placeholder="kg" value="${weight}" title="Ciężar (kg)" oninput="this.closest('.modal-ex-row').dataset.manualEdited='1'">
-        <span class="modal-weight-label" style="font-size: 9px; color: var(--text-muted); display: block; text-align: center;">${weightLabelText}</span>
-      </div>
-      <div class="modal-bw-add-container" style="${hideWeightBox ? 'display: flex;' : 'display: none;'} flex-direction: column; align-items: center; justify-content: center;">
+      <div class="modal-weight-container" style="position: relative;"></div>
+      <div class="modal-bw-add-container" style="display: none; flex-direction: column; align-items: center; justify-content: center;">
         <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 6px 8px; width: 100%; color: var(--primary);" onclick="enableModalBwExtraWeight(this)">➕ Dołóż ciężar</button>
         <span style="font-size: 9px; color: var(--success); display: block; text-align: center; margin-top: 2px;">MASA CIAŁA</span>
       </div>
@@ -4315,15 +4442,27 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
     </div>
   `;
   listEl.appendChild(row);
+  renderModalWeightControl(row, loadType, weight);
 }
 
 function handleModalExNameInput(inputEl) {
   const row = inputEl.closest('.modal-ex-row');
-  if (row && row.dataset.gifLocked !== '1') {
-    const exName = inputEl.value.trim();
+  if (!row) return;
+  const exName = inputEl.value.trim();
+  if (row.dataset.gifLocked !== '1') {
     const matched = exName ? findExerciseGif(exName) : null;
     updateModalRowGifPreview(row, matched);
   }
+
+  // If user typed a dumbbell exercise and loadType is still standard, auto-switch to dual_dumbbell and Zipro steps
+  const loadTypeSelect = row.querySelector('.modal-ex-loadtype');
+  if (loadTypeSelect && loadTypeSelect.value === 'standard' && isDumbbellExercise({ name: exName })) {
+    loadTypeSelect.value = 'dual_dumbbell';
+    const curWeightEl = row.querySelector('.modal-ex-weight');
+    const curWeight = curWeightEl ? curWeightEl.value : 11.3;
+    renderModalWeightControl(row, 'dual_dumbbell', curWeight);
+  }
+
   updateModalSupersetsView();
 }
 
@@ -4346,35 +4485,20 @@ function openGifModalFromPlanRow(btnEl) {
 function handleModalLoadTypeChange(selectEl) {
   const row = selectEl.closest('.modal-ex-row');
   if (!row) return;
+  row.dataset.manualEdited = '1';
   const val = selectEl.value;
-  const weightContainer = row.querySelector('.modal-weight-container');
-  const bwAddContainer = row.querySelector('.modal-bw-add-container');
-  const weightInput = row.querySelector('.modal-ex-weight');
-  const weightLabel = row.querySelector('.modal-weight-label');
-
-  if (val === 'bodyweight') {
-    weightInput.value = 0;
-    weightContainer.style.display = 'none';
-    bwAddContainer.style.display = 'flex';
-  } else {
-    weightContainer.style.display = 'block';
-    bwAddContainer.style.display = 'none';
-    weightLabel.textContent = val === 'dual_dumbbell' ? '1 HANTEL (KG ×2)' : 'CIĘŻAR (KG)';
-  }
+  const curWeightEl = row.querySelector('.modal-ex-weight');
+  const curWeight = curWeightEl ? curWeightEl.value : 0;
+  renderModalWeightControl(row, val, curWeight);
 }
 
 function enableModalBwExtraWeight(btnEl) {
   const row = btnEl.closest('.modal-ex-row');
   if (!row) return;
-  const weightContainer = row.querySelector('.modal-weight-container');
-  const bwAddContainer = row.querySelector('.modal-bw-add-container');
-  const weightLabel = row.querySelector('.modal-weight-label');
+  row.dataset.manualEdited = '1';
+  renderModalWeightControl(row, 'bodyweight', 5.0);
   const weightInput = row.querySelector('.modal-ex-weight');
-
-  bwAddContainer.style.display = 'none';
-  weightContainer.style.display = 'block';
-  weightLabel.textContent = '+DOŁOŻONO (KG)';
-  weightInput.focus();
+  if (weightInput) weightInput.focus();
 }
 
 function saveModalPlan() {
@@ -5701,7 +5825,7 @@ Zwróć WYŁĄCZNIE poprawny obiekt JSON bez znaczników markdown:
 }`;
 
   try {
-    const raw = await callGemini(prompt, 'fast');
+    const raw = await callGemini(prompt, 'lite');
     const parsed = extractJsonFromGemini(raw);
 
     const proteinG = Math.max(40, parseInt(parsed.proteinG) || 180);
@@ -7142,14 +7266,45 @@ function renderCoachChat() {
   const bubblesHtml = msgs.map(m => {
     const isUser = m.role === 'user';
     const textToDisplay = stripFallbackDisclaimer(m.text || '');
-    const isError = !isUser && textToDisplay.startsWith('⚠️ Błąd:');
-    const retryBtnHtml = isError ? `
-      <div style="margin-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 8px;">
-        <button type="button" onclick="retryLastCoachMessage()" class="btn btn-secondary" style="font-size: 12px; padding: 6px 14px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; background: rgba(0, 229, 255, 0.12); border: 1px solid rgba(0, 229, 255, 0.35); color: var(--accent); cursor: pointer; border-radius: 6px;">
-          <span>🔄</span> <b>Ponów próbę odpowiedzi</b>
-        </button>
-      </div>
-    ` : '';
+    const isError = !isUser && (textToDisplay.startsWith('⚠️') || textToDisplay.includes('Failed to fetch') || m.isError);
+
+    if (isError) {
+      return `
+        <div style="display: flex; justify-content: flex-start; margin-bottom: 12px; width: 100%;">
+          <div style="
+            max-width: 92%;
+            width: 100%;
+            padding: 12px 14px;
+            border-radius: 14px 14px 14px 2px;
+            background: rgba(255, 82, 82, 0.08);
+            border: 1px solid rgba(255, 82, 82, 0.45);
+            color: var(--text);
+            box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+          ">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+              <span style="font-size: 18px;">⚠️</span>
+              <b style="color: #ff5252; font-size: 14px;">Chwilowy problem z połączeniem</b>
+            </div>
+            <div style="font-size: 13px; line-height: 1.45; color: var(--text); margin-bottom: 10px;">
+              Nie udało się pobrać odpowiedzi z serwerów Gemini (chwilowy zanik zasięgu w telefonie lub wyczerpany dobowy limit projektu). Twoja wiadomość została zachowana!
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <button type="button" onclick="retryLastCoachMessage()" class="btn btn-primary" style="font-size: 12px; padding: 8px 14px; flex: 1; min-width: 130px; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 2px 8px rgba(255, 179, 0, 0.3);">
+                <span>🔄</span> <b>Ponów próbę teraz</b>
+              </button>
+              <button type="button" onclick="editLastCoachMessage()" class="btn btn-secondary" style="font-size: 12px; padding: 8px 12px; display: flex; align-items: center; justify-content: center; gap: 4px; background: rgba(255,255,255,0.06);">
+                <span>✏️</span> <b>Edytuj treść</b>
+              </button>
+            </div>
+            <details style="margin-top: 10px; border-top: 1px solid rgba(255, 82, 82, 0.2); padding-top: 6px;">
+              <summary style="font-size: 11px; color: var(--text-muted); cursor: pointer; user-select: none;">ℹ️ Szczegóły techniczne błędu</summary>
+              <div style="font-size: 11px; color: var(--text-muted); margin-top: 6px; font-family: monospace; white-space: pre-wrap; word-break: break-word; line-height: 1.4; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px;">${escapeHtml(textToDisplay)}</div>
+            </details>
+          </div>
+        </div>
+      `;
+    }
+
     return `
       <div style="display: flex; justify-content: ${isUser ? 'flex-end' : 'flex-start'}; margin-bottom: 10px;">
         <div style="
@@ -7164,7 +7319,7 @@ function renderCoachChat() {
           box-shadow: 0 2px 8px rgba(0,0,0,0.2);
           border: ${isUser ? 'none' : '1px solid var(--border)'};
         ">
-          ${isUser ? escapeHtml(textToDisplay) : formatMarkdown(textToDisplay)}${retryBtnHtml}
+          ${isUser ? escapeHtml(textToDisplay) : formatMarkdown(textToDisplay)}
         </div>
       </div>
     `;
@@ -7198,10 +7353,14 @@ function renderCoachChat() {
 }
 
 async function retryLastCoachMessage() {
+  if (!navigator.onLine) {
+    alert('Brak połączenia z internetem w telefonie (offline). Sprawdź połączenie komórkowe lub Wi-Fi i ponów próbę.');
+    return;
+  }
   const activeThread = getActiveCoachThread();
   if (!activeThread) return;
   const msgs = activeThread.messages || [];
-  if (msgs.length > 0 && msgs[msgs.length - 1].role === 'assistant' && msgs[msgs.length - 1].text.startsWith('⚠️ Błąd:')) {
+  while (msgs.length > 0 && msgs[msgs.length - 1].role === 'assistant' && (msgs[msgs.length - 1].text.includes('⚠️') || msgs[msgs.length - 1].isError)) {
     msgs.pop();
   }
   const lastUserMsg = [...msgs].reverse().find(m => m.role === 'user');
@@ -7215,6 +7374,30 @@ async function retryLastCoachMessage() {
   const inputEl = document.getElementById('coach-question-input');
   if (inputEl) inputEl.value = lastUserMsg.text;
   await askCoachQuestion();
+}
+
+function editLastCoachMessage() {
+  const activeThread = getActiveCoachThread();
+  if (!activeThread) return;
+  const msgs = activeThread.messages || [];
+  while (msgs.length > 0 && msgs[msgs.length - 1].role === 'assistant' && (msgs[msgs.length - 1].text.includes('⚠️') || msgs[msgs.length - 1].isError)) {
+    msgs.pop();
+  }
+  const lastUserMsg = [...msgs].reverse().find(m => m.role === 'user');
+  if (lastUserMsg) {
+    const inputEl = document.getElementById('coach-question-input');
+    if (inputEl) {
+      inputEl.value = lastUserMsg.text;
+      inputEl.focus();
+      inputEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    const userIdx = msgs.lastIndexOf(lastUserMsg);
+    if (userIdx !== -1) {
+      msgs.splice(userIdx, 1);
+    }
+  }
+  saveCoachThreads();
+  renderCoachChat();
 }
 
 function saveCoachThreads() {
@@ -7382,7 +7565,10 @@ async function testApiKeysConnection() {
 
         if (res.ok) {
           delete (STATE.keyCooldowns || {})[key];
-          if (STATE.modelQuotaCooldowns) delete STATE.modelQuotaCooldowns[`${key}:${item.name}`];
+          if (STATE.modelQuotaCooldowns) {
+            delete STATE.modelQuotaCooldowns[`${key}:${item.name}`];
+            saveModelQuotaCooldowns();
+          }
           STATE.lastWorkingKey = key;
           const quotaNote = quotaHit ? ' <span style="font-size: 11px; color: #ffb74d;">(Flash osiągnął limit, ale Flash-Lite ma 500 zapytań/dzień!)</span>' : '';
           return {
@@ -7400,7 +7586,8 @@ async function testApiKeysConnection() {
         if (status === 429 || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource_exhausted')) {
           quotaHit = true;
           STATE.modelQuotaCooldowns = STATE.modelQuotaCooldowns || {};
-          STATE.modelQuotaCooldowns[`${key}:${item.name}`] = Date.now() + (60 * 60 * 1000);
+          STATE.modelQuotaCooldowns[`${key}:${item.name}`] = Math.max(Date.now() + (2 * 60 * 60 * 1000), getNextPacificMidnightMs());
+          saveModelQuotaCooldowns();
           lastError = { status: 429, msg: 'Limit dobowy wyczerpany (Quota 429)' };
           // Try Flash-Lite next because it has a separate 500 RPD pool!
           continue;
@@ -8093,7 +8280,7 @@ Zwróć WYŁĄCZNIE poprawny obiekt JSON:
 }
 Bez znaczników markdown.`;
 
-    const raw = await callGemini(prompt, 'fast');
+    const raw = await callGemini(prompt, 'lite');
     const parsed = extractJsonFromGemini(raw);
     if (!STATE.calendarAiSummaries) STATE.calendarAiSummaries = {};
     STATE.calendarAiSummaries[dateKey] = {
