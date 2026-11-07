@@ -1906,6 +1906,44 @@ function getPreviousExercisePerformance(exerciseName) {
   return null;
 }
 
+// PRD-05: Strict Zipro Adjustable Dumbbell Steps (2.3 - 36.0 kg)
+const ZIPRO_DUMBBELL_STEPS = [2.3, 4.5, 6.8, 9.0, 11.3, 13.5, 15.8, 18.0, 20.3, 22.5, 24.8, 27.0, 29.3, 31.5, 33.8, 36.0];
+
+function isDumbbellExercise(ex) {
+  if (!ex) return false;
+  if (ex.loadType === 'dual_dumbbell') return true;
+  const n = String(ex.name || '').toLowerCase();
+  return n.includes('hant') || n.includes('dumbbell') || n.includes('hantl');
+}
+
+function snapToZiproDumbbellWeight(targetWeight) {
+  const w = parseFloat(targetWeight) || 0;
+  if (w <= ZIPRO_DUMBBELL_STEPS[0]) return ZIPRO_DUMBBELL_STEPS[0];
+  if (w >= ZIPRO_DUMBBELL_STEPS[ZIPRO_DUMBBELL_STEPS.length - 1]) return ZIPRO_DUMBBELL_STEPS[ZIPRO_DUMBBELL_STEPS.length - 1];
+  let closest = ZIPRO_DUMBBELL_STEPS[0];
+  let minDiff = Math.abs(w - closest);
+  for (let i = 0; i < ZIPRO_DUMBBELL_STEPS.length; i++) {
+    const step = ZIPRO_DUMBBELL_STEPS[i];
+    const diff = Math.abs(w - step);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = step;
+    }
+  }
+  return closest;
+}
+
+function stepZiproDumbbell(currentWeight, delta) {
+  const w = parseFloat(currentWeight) || 0;
+  const closest = snapToZiproDumbbellWeight(w);
+  const idx = ZIPRO_DUMBBELL_STEPS.indexOf(closest);
+  if (delta > 0) {
+    return idx < ZIPRO_DUMBBELL_STEPS.length - 1 ? ZIPRO_DUMBBELL_STEPS[idx + 1] : ZIPRO_DUMBBELL_STEPS[idx];
+  } else {
+    return idx > 0 ? ZIPRO_DUMBBELL_STEPS[idx - 1] : ZIPRO_DUMBBELL_STEPS[0];
+  }
+}
+
 function adjustSetVal(exIdx, sIdx, field, delta) {
   if (!STATE.activeWorkout) return;
   const ex = STATE.activeWorkout.exercises?.[exIdx];
@@ -1913,7 +1951,11 @@ function adjustSetVal(exIdx, sIdx, field, delta) {
   const set = ex.sets[sIdx];
   if (field === 'weight') {
     const cur = parseFloat(set.weight) || 0;
-    set.weight = Math.max(0, Math.round((cur + delta) * 10) / 10);
+    if (isDumbbellExercise(ex)) {
+      set.weight = stepZiproDumbbell(cur, delta);
+    } else {
+      set.weight = Math.max(0, Math.round((cur + delta) * 10) / 10);
+    }
   } else if (field === 'reps') {
     const cur = parseInt(set.reps) || 0;
     set.reps = Math.max(0, cur + delta);
@@ -2526,12 +2568,39 @@ function promptChangeSupersetRest(ssGroup) {
   renderActiveExercises();
 }
 
+// PRD-08: Biomechanical Bodyweight Volume Calculation
+function getUserCurrentWeightKg() {
+  const latestScale = (STATE.bodyMeasurements || []).find(m => m.weightKg);
+  const w = parseFloat(latestScale && latestScale.weightKg) || parseFloat(STATE.userProfile && STATE.userProfile.weightKg) || 80.0;
+  return w > 0 ? w : 80.0;
+}
+
+function getExerciseBodyweightRatio(ex) {
+  const name = String(ex?.name || '').toLowerCase();
+  // Pull-ups / chin-ups / dips / poręcze: 1.0 (100% masy ciała)
+  if (name.includes('podciąg') || name.includes('pull-up') || name.includes('chin-up') || name.includes('dip') || name.includes('dipy') || name.includes('poręcz')) {
+    return 1.0;
+  }
+  // Push-ups / pompki: 0.66 (66% masy ciała)
+  if (name.includes('pompk') || name.includes('push-up') || name.includes('push up')) {
+    return 0.66;
+  }
+  // Air squats / bodyweight squats / lunges / przysiady: 0.73 (73% masy ciała)
+  if (name.includes('przysiad') || name.includes('squat') || name.includes('wykrok') || name.includes('lunge')) {
+    return 0.73;
+  }
+  return 0.66;
+}
+
 function getEffectiveSetWeight(ex, set) {
   const loadType = ex.loadType || 'standard';
-  if (loadType === 'bodyweight' && !ex.showExtraWeight) {
-    return 0;
-  }
   const rawWeight = parseFloat(set.weight) || 0;
+  if (loadType === 'bodyweight') {
+    const userWeight = getUserCurrentWeightKg();
+    const ratio = getExerciseBodyweightRatio(ex);
+    const extraWeight = ex.showExtraWeight ? rawWeight : 0;
+    return Math.round(((userWeight * ratio) + extraWeight) * 10) / 10;
+  }
   if (loadType === 'dual_dumbbell') {
     return rawWeight * 2;
   }
@@ -2540,7 +2609,13 @@ function getEffectiveSetWeight(ex, set) {
 
 function updateSetData(exIdx, sIdx, field, val) {
   if (!STATE.activeWorkout) return;
-  STATE.activeWorkout.exercises[exIdx].sets[sIdx][field] = parseFloat(val) || 0;
+  const ex = STATE.activeWorkout.exercises[exIdx];
+  if (!ex || !ex.sets || !ex.sets[sIdx]) return;
+  let parsed = parseFloat(val) || 0;
+  if (field === 'weight' && isDumbbellExercise(ex)) {
+    parsed = snapToZiproDumbbellWeight(parsed);
+  }
+  ex.sets[sIdx][field] = parsed;
   saveActiveWorkout();
   renderActiveExercises();
   updateWorkoutStats();
@@ -3063,6 +3138,62 @@ function startRestTimer(
     overtimeBadge.style.display = 'none';
   }
 
+  // PRD-05: Populate Next Up & Zipro dumbbell setup preview
+  const nextUpCard = document.getElementById('timer-next-up-card');
+  const nextUpName = document.getElementById('timer-next-up-name');
+  const nextUpDetails = document.getElementById('timer-next-up-details');
+  const nextUpZipro = document.getElementById('timer-next-up-zipro');
+
+  let nextUpcoming = null;
+  if (STATE.activeWorkout && Array.isArray(STATE.activeWorkout.exercises)) {
+    for (let eIdx = 0; eIdx < STATE.activeWorkout.exercises.length; eIdx++) {
+      const exItem = STATE.activeWorkout.exercises[eIdx];
+      for (let sIdx = 0; sIdx < (exItem.sets || []).length; sIdx++) {
+        const sItem = exItem.sets[sIdx];
+        if (!sItem.completed) {
+          nextUpcoming = { ex: exItem, set: sItem, eIdx, sIdx };
+          break;
+        }
+      }
+      if (nextUpcoming) break;
+    }
+  }
+
+  if (nextUpCard && nextUpcoming) {
+    const ex = nextUpcoming.ex;
+    const s = nextUpcoming.set;
+    const isDualDb = ex.loadType === 'dual_dumbbell';
+    const isDb = isDumbbellExercise(ex);
+    const ssPrefix = ex.supersetGroup ? `[SS ${escapeHtml(ex.supersetGroup)}] ` : '';
+
+    if (nextUpName) {
+      nextUpName.textContent = `${ssPrefix}${ex.name}`;
+    }
+
+    if (nextUpDetails) {
+      let wStr = `${s.weight} kg`;
+      if (isDualDb) {
+        wStr = `2×${s.weight} kg (łącznie ${s.weight * 2} kg)`;
+      } else if (ex.loadType === 'bodyweight') {
+        wStr = s.weight > 0 ? `Masa ciała + ${s.weight} kg` : 'Masa ciała';
+      }
+      nextUpDetails.textContent = `Seria ${s.num} z ${ex.sets.length} • Ciężar: ${wStr} • Cel: ${s.reps} powt.`;
+    }
+
+    if (nextUpZipro) {
+      if (isDualDb || isDb) {
+        const snapW = snapToZiproDumbbellWeight(s.weight);
+        nextUpZipro.style.display = 'block';
+        nextUpZipro.textContent = `🔧 Zipro: ustaw ${snapW} kg na ${isDualDb ? 'każdym hantlu' : 'hantlu'}`;
+      } else {
+        nextUpZipro.style.display = 'none';
+      }
+    }
+    nextUpCard.style.display = 'block';
+  } else if (nextUpCard) {
+    nextUpCard.style.display = 'none';
+  }
+
   // Initial UI render
   tickRestTimer();
 
@@ -3280,9 +3411,51 @@ async function finishCurrentWorkout() {
     epocKcal: epocKcal,
     completedSets: completedSets,
     sets: completedSetsList,
+    userFeedback: null,
     coachFeedback: null
   };
 
+  STATE.pendingFinishedSession = session;
+
+  // PRD-07: Open Post-Workout Feedback Modal before running AI
+  const modal = document.getElementById('modal-post-workout-context');
+  if (modal) {
+    const badge = document.getElementById('post-workout-modal-badge');
+    if (badge) badge.textContent = `${session.planName} • ${session.completedSets} ukończonych serii`;
+    const notesInput = document.getElementById('post-workout-notes');
+    if (notesInput) notesInput.value = '';
+    modal.style.display = 'flex';
+  } else {
+    finalizeFinishedWorkout(session);
+  }
+}
+
+function submitPostWorkoutFeedback(withFeedback) {
+  const modal = document.getElementById('modal-post-workout-context');
+  if (modal) modal.style.display = 'none';
+
+  const session = STATE.pendingFinishedSession;
+  if (!session) return;
+  STATE.pendingFinishedSession = null;
+
+  if (withFeedback) {
+    const rpeVal = parseInt(document.getElementById('post-rpe-input')?.value || '8', 10);
+    const energyVal = parseInt(document.getElementById('post-energy-input')?.value || '4', 10);
+    const sleepVal = parseInt(document.getElementById('post-sleep-input')?.value || '4', 10);
+    const notesVal = (document.getElementById('post-workout-notes')?.value || '').trim();
+
+    session.userFeedback = {
+      rpe: rpeVal,
+      energy: energyVal,
+      sleep: sleepVal,
+      notes: notesVal
+    };
+  }
+
+  finalizeFinishedWorkout(session);
+}
+
+function finalizeFinishedWorkout(session) {
   STATE.history.unshift(session);
   safeLocalStorageSet('iron_history', JSON.stringify(STATE.history));
 
@@ -3386,7 +3559,7 @@ function updateGeminiModelBadges(model, isFallback = false, keyLabel = '') {
   }
 }
 
-async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
+async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onChunk = null) {
   const primaryKey = (STATE.apiKey || '').trim();
   const backupKey = (STATE.backupApiKey || '').trim();
 
@@ -3515,13 +3688,16 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
         let response = null;
         let networkErr = null;
 
-        // Auto-retry once on momentary mobile connection drop / Failed to fetch
-        for (let retry = 0; retry < 2; retry++) {
+        const useStreaming = (typeof onChunk === 'function' && !inlineData);
+        const endpointAction = useStreaming ? 'streamGenerateContent?alt=sse&key=' : 'generateContent?key=';
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:${endpointAction}${key}`;
+
+        // PRD-04: Auto-retry with exponential backoff on momentary mobile connection drop / Failed to fetch
+        for (let retry = 0; retry < 3; retry++) {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s generation timeout
 
           try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`;
             response = await fetch(url, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -3534,8 +3710,9 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
           } catch (err) {
             clearTimeout(timeoutId);
             networkErr = err;
-            if (retry === 0 && !controller.signal.aborted) {
-              await new Promise(r => setTimeout(r, 1200));
+            if (retry < 2 && !controller.signal.aborted) {
+              const backoffMs = (retry + 1) * 1200;
+              await new Promise(r => setTimeout(r, backoffMs));
             }
           }
         }
@@ -3549,6 +3726,49 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null) {
         }
 
         if (response.ok) {
+          // PRD-04: Live SSE Stream Chunk Consumer (TTFT < 1.5s)
+          if (useStreaming && response.body) {
+            try {
+              const reader = response.body.getReader();
+              const decoder = new TextDecoder();
+              let buffer = '';
+              let accumulatedText = '';
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // keep trailing partial line
+                for (let li = 0; li < lines.length; li++) {
+                  const line = lines[li].trim();
+                  if (line.startsWith('data: ')) {
+                    const jsonStr = line.slice(6).trim();
+                    if (jsonStr === '[DONE]') continue;
+                    try {
+                      const chunkObj = JSON.parse(jsonStr);
+                      const chunkText = chunkObj.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                      if (chunkText) {
+                        accumulatedText += chunkText;
+                        onChunk(accumulatedText, chunkText);
+                      }
+                    } catch (_) {}
+                  }
+                }
+              }
+              const finalText = accumulatedText.trim();
+              if (finalText) {
+                delete STATE.keyCooldowns[key];
+                if (STATE.modelQuotaCooldowns) delete STATE.modelQuotaCooldowns[quotaKey];
+                STATE.lastWorkingKey = key;
+                const isFallback = (attemptCount > 1 || kIdx > 0 || tIdx > 0);
+                updateGeminiModelBadges(modelName, isFallback, label);
+                return finalText;
+              }
+            } catch (streamErr) {
+              console.warn(`[Gemini Streaming] Strumieniowanie przerwane dla ${modelName}, pobieram standardowo:`, streamErr);
+            }
+          }
+
           const data = await response.json();
           const resParts = data.candidates?.[0]?.content?.parts || [];
           const text = resParts.map(p => p.text || '').join('').trim();
@@ -4227,7 +4447,7 @@ function saveModalPlan() {
         name: exName,
         sets,
         reps,
-        weight,
+        weight: (loadType === 'dual_dumbbell' && weight > 0) ? snapToZiproDumbbellWeight(weight) : weight,
         supersetGroup,
         loadType,
         restSeconds: customRest,
@@ -5816,11 +6036,14 @@ function saveEditedMealToDiary() {
     const existing = STATE.nutritionDiary.find(m => m.id === STATE.editingMealId);
     if (existing) {
       existing.name = name;
+      existing.meal_name = name;
       existing.kcal = kcal;
       existing.proteinG = proteinG;
       existing.carbsG = carbsG;
       existing.fatG = fatG;
+      existing.macro_nutrients = { kcal, proteinG, carbsG, fatG };
       existing.ingredientsSummary = ingredientsSummary;
+      existing.ingredients_list = ingredientsSummary;
       existing.coachComment = coachComment;
       existing.userComment = userComment;
       if (thumbUrl) existing.thumbUrl = thumbUrl;
@@ -5828,17 +6051,22 @@ function saveEditedMealToDiary() {
   } else {
     const now = new Date();
     const timeStr = now.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+    const fullDateTime = `${dateKey} ${timeStr}`;
     STATE.nutritionDiary.unshift({
       id: 'meal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
       dateKey,
       timeLabel: timeStr,
+      fullDateTime: fullDateTime,
       timestamp: Date.now(),
       name,
+      meal_name: name,
       kcal,
       proteinG,
       carbsG,
       fatG,
+      macro_nutrients: { kcal, proteinG, carbsG, fatG },
       ingredientsSummary,
+      ingredients_list: ingredientsSummary,
       coachComment,
       userComment,
       thumbUrl
@@ -6129,15 +6357,21 @@ function renderNutritionView() {
         </p>
       `;
     } else {
-      mealsListEl.innerHTML = totals.meals.map(m => `
+      mealsListEl.innerHTML = totals.meals.map(m => {
+        const mealTitle = m.meal_name || m.name || 'Posiłek';
+        const mealIngredients = m.ingredients_list || m.ingredientsSummary || '';
+        const dateHeader = m.fullDateTime || (m.dateKey ? `${m.dateKey} ${m.timeLabel || ''}` : (m.timeLabel || ''));
+        return `
         <div style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;">
+          <div style="font-size: 10px; font-weight: 800; color: var(--accent); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">
+            📅 ${escapeHtml(dateHeader)}
+          </div>
           <div style="display: flex; gap: 10px; align-items: flex-start;">
             ${m.thumbUrl ? `<img src="${m.thumbUrl}" alt="Posiłek" style="width: 54px; height: 54px; border-radius: 8px; object-fit: cover; flex-shrink: 0; border: 1px solid var(--border);">` : ''}
             <div style="flex: 1; min-width: 0;">
               <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 6px;">
                 <div style="font-weight: 800; font-size: 14px; color: var(--text);">
-                  ${escapeHtml(m.name)}
-                  ${m.timeLabel ? `<span style="font-size: 11px; color: var(--text-muted); font-weight: 500; margin-left: 4px;">${escapeHtml(m.timeLabel)}</span>` : ''}
+                  ${escapeHtml(mealTitle)}
                 </div>
                 <span style="font-weight: 900; font-size: 14px; color: var(--primary); white-space: nowrap;">${Math.round(m.kcal)} kcal</span>
               </div>
@@ -6146,7 +6380,7 @@ function renderNutritionView() {
                 🍚 W: <b style="color: var(--accent);">${Math.round(m.carbsG)}g</b> •
                 🥑 T: <b style="color: var(--primary);">${Math.round(m.fatG)}g</b>
               </div>
-              ${m.ingredientsSummary ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">⚖️ ${escapeHtml(m.ingredientsSummary)}</div>` : ''}
+              ${mealIngredients ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">⚖️ ${escapeHtml(mealIngredients)}</div>` : ''}
               ${m.coachComment ? `<div style="font-size: 11px; color: var(--accent); margin-top: 3px;">💡 AI: ${escapeHtml(m.coachComment)}</div>` : ''}
               ${m.userComment ? `<div style="font-size: 11px; color: var(--primary); margin-top: 3px;">📝 Notatka: ${escapeHtml(m.userComment)}</div>` : ''}
               <div style="display: flex; justify-content: flex-end; gap: 6px; margin-top: 7px; flex-wrap: wrap;">
@@ -6172,7 +6406,8 @@ function renderNutritionView() {
             </div>
           </div>
         </div>
-      `).join('');
+      `;
+    }).join('');
     }
   }
 
@@ -6501,6 +6736,17 @@ async function triggerCoachAnalysis(session) {
   const { profileSection, plansSection, userWeightKg } = buildCoachProfileAndPlansContext();
   const currentSessionDetails = formatSessionDetailsForCoach(session, userWeightKg);
 
+  let userFeedbackSection = '';
+  if (session.userFeedback) {
+    const uf = session.userFeedback;
+    userFeedbackSection = `\n=== ODNOTOWANE UWAGI I SAMOPOCZUCIE UŻYTKOWNIKA PO TEJ SESJI ===
+• Zmęczenie sesji (RPE): ${uf.rpe || 8}/10
+• Poziom energii: ${uf.energy || 4}/5 | Poziom snu i regeneracji: ${uf.sleep || 4}/5
+${uf.notes ? `• Bezpośrednie uwagi użytkownika: "${uf.notes}"` : '• Brak dodatkowych uwag tekstowych.'}
+Koniecznie odnieś się do zgłoszonych uwag i samopoczucia użytkownika w analizie!
+`;
+  }
+
   // Also include brief summary of up to 3 previous valid workouts for progression context
   const validHistory = STATE.history.filter(h => h.id !== session.id && !isWorkoutShortOrTest(h));
   const prevSource = validHistory.length > 0 ? validHistory : STATE.history.filter(h => h.id !== session.id);
@@ -6518,6 +6764,7 @@ ${profileSection}
 
 === SZCZEGÓŁY ZAKOŃCZONEGO TRENINGU ===
 ${currentSessionDetails}
+${userFeedbackSection}
 
 === POPRZEDNIE TRENINGI (DO PORÓWNANIA PROGRESU) ===
 ${prevWorkouts}
@@ -6782,9 +7029,22 @@ async function askCoachQuestion() {
 
   const crossThreadMemorySection = buildCrossThreadMemoryContext(targetThread.id);
 
-  const conversationHistory = (targetThread.messages || [])
-    .filter(m => !m.text.startsWith('⚠️ Błąd:'))
-    .slice(-12)
+  // PRD-04: Sliding Window Context Truncation (last 6 messages + synthesized older context)
+  const cleanMessages = (targetThread.messages || []).filter(m => !m.text.startsWith('⚠️ Błąd:'));
+  const olderMessages = cleanMessages.slice(0, -6);
+  const slidingWindowMessages = cleanMessages.slice(-6);
+
+  let earlyContextSummary = '';
+  if (olderMessages.length > 0) {
+    const userTopics = olderMessages
+      .filter(m => m.role === 'user')
+      .slice(-3)
+      .map(m => m.text.slice(0, 45))
+      .join('; ');
+    earlyContextSummary = `[Wcześniejszy kontekst rozmowy w tym wątku: ${userTopics}...]\n\n`;
+  }
+
+  const conversationHistory = earlyContextSummary + slidingWindowMessages
     .map(m => `${m.role === 'user' ? 'Użytkownik' : 'Trener'}: ${m.text}`)
     .join('\n\n');
 
@@ -6812,23 +7072,58 @@ Udziel naturalnej, merytorycznej, spersonalizowanej odpowiedzi po polsku jako Tr
 
   try {
     const tier = STATE.preferredGeminiTier || 'fast';
-    const ans = await callGemini(fullPrompt, tier);
+    targetThread.streamingText = '';
+    // PRD-04: Streaming with live token rendering (TTFT < 1.5s)
+    const ans = await callGemini(fullPrompt, tier, null, (accumulated, _chunk) => {
+      targetThread.streamingText = accumulated;
+      renderCoachChat();
+      scrollCoachChatToBottom(false);
+    });
     targetThread.messages.push({ role: 'assistant', text: ans, time: Date.now() });
     targetThread.updatedAt = Date.now();
     recordCoachCrossThreadMemory(targetThread.id, targetThread.title, q, ans);
   } catch (err) {
     targetThread.messages.push({ role: 'assistant', text: `⚠️ Błąd: ${err.message}`, time: Date.now() });
   } finally {
+    targetThread.streamingText = '';
     targetThread.isThinking = false;
     saveCoachThreads();
     renderCoachThreadsBar();
     renderCoachChat();
+    scrollCoachChatToBottom(true);
   }
+}
+
+function scrollCoachChatToBottom(smooth = false) {
+  const container = document.getElementById('coach-chat-messages');
+  if (!container) return;
+  container.scrollTo({
+    top: container.scrollHeight,
+    behavior: smooth ? 'smooth' : 'auto'
+  });
+}
+
+function initCoachChatScrollListener() {
+  const container = document.getElementById('coach-chat-messages');
+  const fab = document.getElementById('coach-scroll-bottom-btn');
+  if (!container || !fab || container.dataset.scrollListenerAttached === '1') return;
+  container.dataset.scrollListenerAttached = '1';
+
+  container.addEventListener('scroll', () => {
+    const threshold = 150;
+    const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceToBottom > threshold) {
+      fab.style.display = 'flex';
+    } else {
+      fab.style.display = 'none';
+    }
+  });
 }
 
 function renderCoachChat() {
   const container = document.getElementById('coach-chat-messages');
   if (!container) return;
+  initCoachChatScrollListener();
 
   const activeThread = getActiveCoachThread();
   const msgs = activeThread ? (activeThread.messages || []) : [];
@@ -6875,28 +7170,31 @@ function renderCoachChat() {
     `;
   }).join('');
 
+  // PRD-04: Streaming token rendering inside live bubble
   const thinkingHtml = activeThread && activeThread.isThinking ? `
     <div style="display: flex; justify-content: flex-start; margin-bottom: 10px;">
       <div style="
+        max-width: 85%;
         padding: 10px 14px;
         border-radius: 14px 14px 14px 2px;
         background: var(--surface-elevated);
-        color: var(--accent);
-        font-size: 13px;
-        border: 1px dashed var(--accent);
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        animation: coachPulse 1.2s infinite ease-in-out;
+        color: var(--text);
+        font-size: 14px;
+        line-height: 1.5;
+        border: 1px solid var(--accent);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
       ">
-        <span style="font-size: 16px;">⚡</span>
-        <span>Trener analizuje Twoje dane i generuje odpowiedź...</span>
+        ${activeThread.streamingText ? formatMarkdown(activeThread.streamingText) : `
+          <div style="display: flex; align-items: center; gap: 8px; color: var(--accent); font-size: 13px; animation: coachPulse 1.2s infinite ease-in-out;">
+            <span style="font-size: 16px;">⚡</span>
+            <span>Trener analizuje Twoje dane i pisze odpowiedź...</span>
+          </div>
+        `}
       </div>
     </div>
   ` : '';
 
   container.innerHTML = bubblesHtml + thinkingHtml;
-  container.scrollTop = container.scrollHeight;
 }
 
 async function retryLastCoachMessage() {

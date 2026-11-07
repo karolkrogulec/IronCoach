@@ -512,7 +512,20 @@
       margin: 10px 0;
     }
 
-    /* Coach chat bubble */
+    /* Coach chat bubble & Word wrap (PRD-03) */
+    .coach-bubble,
+    .chat-bubble,
+    .error-banner,
+    pre, code,
+    #coach-chat-messages div {
+      overflow-wrap: anywhere !important;
+      word-break: break-word !important;
+      white-space: pre-wrap !important;
+      max-width: 100% !important;
+    }
+    #coach-chat-messages {
+      overflow-x: hidden !important;
+    }
     .coach-bubble {
       background: var(--surface-elevated);
       border-left: 4px solid var(--accent);
@@ -587,10 +600,23 @@
         <button type="button" class="btn btn-sm btn-secondary" style="font-size: 12px; padding: 5px 12px; border-radius: 8px; color: #d7ffe8; border-color: rgba(0,230,118,0.3); background: rgba(0,0,0,0.35);" onclick="addTimerSeconds(30)">+30s</button>
       </div>
 
+      <!-- PRD-05: Next Up & Zipro dumbbell setup card -->
+      <div id="timer-next-up-card" style="display: none; width: 100%; background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 10px 14px; text-align: left; margin: 4px 0;">
+        <div style="font-size: 11px; font-weight: 800; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px;">⏭️ Kolejny zestaw / Next Up:</div>
+        <div id="timer-next-up-name" style="font-size: 14px; font-weight: 800; color: #ffffff; margin-top: 2px;"></div>
+        <div id="timer-next-up-details" style="font-size: 12px; color: #d0f8ce; margin-top: 2px;"></div>
+        <div id="timer-next-up-zipro" style="font-size: 11px; color: var(--primary); font-weight: 700; margin-top: 4px; display: none;"></div>
+      </div>
+
       <div id="timer-effort-strip" style="width: 100%; margin: 2px 0;"></div>
 
       <button type="button" id="timer-confirm-btn" class="btn btn-primary" style="width: 100%; font-size: 18px; font-weight: 900; padding: 16px; border-radius: 16px; background: #00E676; color: #042414; box-shadow: 0 6px 20px rgba(0, 230, 118, 0.45);" onclick="stopTimer()">
         ✅ OK / Gotowe (Kolejny zestaw)
+      </button>
+
+      <!-- PRD-06: Direct finish workout button from rest timer -->
+      <button type="button" id="timer-finish-workout-btn" class="btn btn-secondary" style="width: 100%; font-size: 13px; font-weight: 700; padding: 10px; border-radius: 12px; border-color: rgba(255,255,255,0.2); background: rgba(0,0,0,0.4); color: var(--text-muted); margin-top: 4px;" onclick="stopTimer(); finishCurrentWorkout();">
+        🏁 Zakończ trening teraz
       </button>
     </div>
   </div>
@@ -837,20 +863,45 @@
           <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 9px; white-space: nowrap; flex-shrink: 0;" onclick="prefillCoachPrompt('Jakie ciężary i powtórzenia powinienem dobrać na najbliższy trening?')">📈 Progresja na dziś</button>
         </div>
 
-        <!-- Chat messages container -->
-        <div id="coach-chat-messages" style="
-          height: calc(100vh - 340px);
-          min-height: 260px;
-          max-height: 520px;
-          overflow-y: auto;
-          background: #0d0f13;
-          border: 1px solid var(--border);
-          border-radius: 12px;
-          padding: 12px;
-          margin-bottom: 10px;
-          display: flex;
-          flex-direction: column;
-        "></div>
+        <!-- Chat messages container wrapper with FAB (PRD-02) -->
+        <div style="position: relative; margin-bottom: 10px;">
+          <div id="coach-chat-messages" style="
+            height: calc(100vh - 340px);
+            min-height: 260px;
+            max-height: 520px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            background: #0d0f13;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+          "></div>
+          <button id="coach-scroll-bottom-btn" type="button" onclick="scrollCoachChatToBottom(true)"
+            title="Przewiń na dół"
+            style="
+              display: none;
+              position: absolute;
+              right: 14px;
+              bottom: 14px;
+              width: 38px;
+              height: 38px;
+              border-radius: 50%;
+              background: var(--surface-elevated);
+              border: 1px solid var(--accent);
+              color: var(--accent);
+              box-shadow: 0 4px 14px rgba(0,0,0,0.6);
+              cursor: pointer;
+              z-index: 25;
+              font-size: 16px;
+              align-items: center;
+              justify-content: center;
+              transition: transform 0.2s, opacity 0.2s;
+            ">
+            ⬇️
+          </button>
+        </div>
 
         <!-- Chat Input Bar -->
         <div style="display: flex; gap: 8px; align-items: flex-end;">
@@ -1419,6 +1470,70 @@
     </div>
   </div>
 
+  <!-- MODAL: POST-WORKOUT FEEDBACK (PRD-07) -->
+  <div id="modal-post-workout-context" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 220; align-items: center; justify-content: center; padding: 16px;">
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; max-width: 440px; width: 100%; max-height: 90vh; overflow-y: auto;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h3 style="font-size: 17px; font-weight: 800; color: var(--primary);">📝 Podsumowanie sesji</h3>
+        <span id="post-workout-modal-badge" style="font-size: 11px; background: rgba(255, 179, 0, 0.15); color: var(--primary); padding: 3px 8px; border-radius: 6px; font-weight: 700;">Trening zakończony</span>
+      </div>
+
+      <p style="font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-bottom: 14px;">
+        Wpisz swoje odczucia z treningu, aby Trener AI uwzględnił je w dokładnej analizie biomechanicznej i fizjologicznej:
+      </p>
+
+      <!-- RPE Scale 1-10 -->
+      <div style="margin-bottom: 12px; background: var(--surface-elevated); padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <label style="font-size: 12px; font-weight: 700; color: var(--text);">Zmęczenie całej sesji (RPE):</label>
+          <b id="post-rpe-display" style="font-size: 14px; color: var(--accent); font-weight: 900;">8/10</b>
+        </div>
+        <input type="range" id="post-rpe-input" min="1" max="10" value="8" step="1" style="width: 100%; accent-color: var(--accent);" oninput="document.getElementById('post-rpe-display').textContent = this.value + '/10'">
+        <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-top: 2px;">
+          <span>1 - Bardzo lekki</span>
+          <span>5 - Umiarkowany</span>
+          <span>10 - Maksymalny / Upadek</span>
+        </div>
+      </div>
+
+      <!-- Energy & Sleep Grid -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+        <div style="background: var(--surface-elevated); padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <label style="font-size: 11px; font-weight: 700; color: var(--text);">⚡ Energia:</label>
+            <b id="post-energy-display" style="font-size: 12px; color: var(--primary);">4/5</b>
+          </div>
+          <input type="range" id="post-energy-input" min="1" max="5" value="4" step="1" style="width: 100%; accent-color: var(--primary);" oninput="document.getElementById('post-energy-display').textContent = this.value + '/5'">
+        </div>
+
+        <div style="background: var(--surface-elevated); padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <label style="font-size: 11px; font-weight: 700; color: var(--text);">😴 Sen / Reg.:</label>
+            <b id="post-sleep-display" style="font-size: 12px; color: var(--success);">4/5</b>
+          </div>
+          <input type="range" id="post-sleep-input" min="1" max="5" value="4" step="1" style="width: 100%; accent-color: var(--success);" oninput="document.getElementById('post-sleep-display').textContent = this.value + '/5'">
+        </div>
+      </div>
+
+      <!-- Subjective User Notes -->
+      <div style="margin-bottom: 16px;">
+        <label style="font-size: 12px; font-weight: 700; color: var(--text); display: block; margin-bottom: 6px;">
+          Twoje uwagi (bóle stawów, samopoczucie, pompa, sprzęt):
+        </label>
+        <textarea id="post-workout-notes" class="input-box" rows="3" style="width: 100%; font-size: 13px; min-height: 70px; resize: none; text-align: left; padding: 10px;" placeholder="np. Dobra siła na klatkę, przy drugiej serii bark lekko ciągnął, wznosy z hantlami Zipro 9kg weszły idealnie..."></textarea>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <button type="button" class="btn btn-primary" style="padding: 13px; font-weight: 900; font-size: 14px;" onclick="submitPostWorkoutFeedback(true)">
+          🚀 Zatwierdź i generuj analizę AI
+        </button>
+        <button type="button" class="btn btn-secondary" style="padding: 10px; font-size: 12px; color: var(--text-muted);" onclick="submitPostWorkoutFeedback(false)">
+          Pomiń uwagi i analizuj od razu
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL: GIF TECHNIQUE PREVIEW -->
   <div id="gif-preview-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 210; align-items: center; justify-content: center; padding: 16px;">
     <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; max-width: 440px; width: 100%; max-height: 90vh; overflow-y: auto; text-align: center;">
@@ -1472,6 +1587,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=53"></script>
+  <script src="app.js?v=54"></script>
 </body>
 </html>
