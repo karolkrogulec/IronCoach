@@ -360,6 +360,11 @@
       touch-action: none !important;
       user-select: none;
     }
+    body.focus-lock #modal-active-workout-structure,
+    body.focus-lock #modal-active-workout-structure * {
+      touch-action: pan-y !important;
+      user-select: auto !important;
+    }
     #rest-timer-bar {
       display: none;
       position: fixed;
@@ -601,7 +606,7 @@
       </div>
 
       <!-- PRD-05: Next Up & Zipro dumbbell setup card (Supports full superset & series preparation) -->
-      <div id="timer-next-up-card" style="display: none; width: 100%; background: rgba(0,0,0,0.55); border: 1px solid rgba(0, 229, 255, 0.35); border-radius: 12px; padding: 10px 14px; text-align: left; margin: 4px 0; max-height: 250px; overflow-y: auto;">
+      <div id="timer-next-up-card" style="display: none; width: 100%; background: rgba(0,0,0,0.55); border: 1px solid rgba(0, 229, 255, 0.35); border-radius: 12px; padding: 10px 14px; text-align: left; margin: 4px 0; max-height: 280px; overflow-y: auto;">
         <div id="timer-next-up-header" style="font-size: 11px; font-weight: 800; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">⏭️ Kolejny zestaw / Next Up:</div>
         <div id="timer-next-up-content">
           <div id="timer-next-up-name" style="font-size: 14px; font-weight: 800; color: #ffffff; margin-top: 2px;"></div>
@@ -609,6 +614,11 @@
           <div id="timer-next-up-zipro" style="font-size: 11px; color: var(--primary); font-weight: 700; margin-top: 4px; display: none;"></div>
         </div>
       </div>
+
+      <!-- Button to reorder structure (exercise sequence, sets, supersets) -->
+      <button type="button" id="timer-reorder-structure-btn" class="btn btn-secondary" style="display: none; width: 100%; font-size: 13px; font-weight: 700; padding: 11px 14px; border-radius: 12px; border: 1px solid rgba(0,229,255,0.45); background: rgba(0,229,255,0.12); color: var(--accent); margin: 6px 0;" onclick="openActiveWorkoutStructureModal()">
+        🔀 Zmień kolejność ćwiczeń / superserii
+      </button>
 
       <div id="timer-effort-strip" style="width: 100%; margin: 2px 0;"></div>
 
@@ -1475,8 +1485,8 @@
   </div>
 
   <!-- MODAL: ACTIVE WORKOUT STRUCTURE & REORDERING (REQUEST 4) -->
-  <div id="modal-active-workout-structure" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 225; align-items: center; justify-content: center; padding: 14px;">
-    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px; max-width: 500px; width: 100%; max-height: 90vh; overflow-y: auto;">
+  <div id="modal-active-workout-structure" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 10050; align-items: center; justify-content: center; padding: 14px; pointer-events: all; touch-action: auto;">
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px; max-width: 500px; width: 100%; max-height: 90vh; overflow-y: auto; touch-action: pan-y;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
         <h3 style="font-size: 16px; font-weight: 800; color: var(--accent);">🔀 Edycja sesji: kolejność i serie</h3>
         <button type="button" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;" onclick="closeActiveWorkoutStructureModal()">✕</button>
@@ -1614,6 +1624,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=60"></script>
+  <script src="app.js?v=61"></script>
 </body>
 </html>

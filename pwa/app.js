@@ -2139,7 +2139,23 @@ function startWorkout(planId) {
 
   saveActiveWorkout();
   loadActiveWorkoutUI();
+  checkActiveWorkout();
   showView('active-workout');
+
+  // Request 2: Po rozpoczęciu treningu zacznij od przerwy technicznej do weryfikacji stanowisk i edycji kolejności
+  const firstBlock = getNextWorkoutBlockInfo(-1, null);
+  const firstBlockName = firstBlock ? firstBlock.name : (exercises[0] ? exercises[0].name : 'Pierwsze ćwiczenie');
+  const firstExName = firstBlock ? firstBlock.firstExerciseName : (exercises[0] ? exercises[0].name : 'Pierwsze ćwiczenie');
+
+  startRestTimer(
+    0,
+    '🔧 PRZYGOTOWANIE STANOWISKA PRZED TRENINGIEM',
+    'Start treningu',
+    0,
+    'technical-prep',
+    `Przygotuj sprzęt i obciążenia pod: ${firstBlockName}`,
+    `✅ Stanowisko gotowe – Rozpocznij: ${firstExName}`
+  );
 }
 
 function checkActiveWorkout() {
@@ -3073,6 +3089,10 @@ function saveActiveWorkoutStructureChanges() {
   loadActiveWorkoutUI();
   updateWorkoutStats();
   closeActiveWorkoutStructureModal();
+
+  if (STATE.timerIsTechnical) {
+    refreshTechnicalBreakOverlayUI();
+  }
 }
 
 // PRD-08 & Request: Biomechanical Bodyweight Volume Calculation
@@ -3620,6 +3640,155 @@ function tickRestTimer() {
   }
 }
 
+function renderTechnicalBreakBlockContent(blockExercises, curSs = '', isInitialPrep = false) {
+  if (!Array.isArray(blockExercises) || blockExercises.length === 0) {
+    return '<div style="color: var(--text-muted); font-size: 12px;">Brak ćwiczeń w tym bloku.</div>';
+  }
+
+  return `
+    <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); margin-bottom: 8px; font-weight: 800;">
+      ${isInitialPrep ? '📋 Przygotuj sprzęt i ustaw obciążenia na start:' : '📋 Ćwiczenia i obciążenia do przygotowania:'}
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      ${blockExercises.map((e, idx) => {
+        const prefix = curSs ? `[${curSs}${idx + 1}] ` : '• ';
+        const uncompletedSets = (e.sets || []).filter(s => !s.completed);
+        const targetSet = uncompletedSets[0] || (e.sets && e.sets[0]) || { weight: 0, reps: 10, num: 1 };
+        const totalSetsCount = (e.sets || []).length;
+        const setNum = targetSet.num || 1;
+        const reps = targetSet.reps || 10;
+        const rawW = parseFloat(targetSet.weight) || 0;
+
+        const isDualDb = (e.loadType === 'dual_dumbbell' || isDumbbellExercise(e));
+        const isBw = (e.loadType === 'bodyweight' || isCalisthenicsExercise(e));
+
+        let loadBadge = '';
+        if (isDualDb) {
+          const snapW = snapToZiproDumbbellWeight(rawW);
+          const totalW = Math.round(snapW * 2 * 10) / 10;
+          loadBadge = `
+            <div style="margin-top: 5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+              <span style="font-size: 13px; font-weight: 800; color: #ffeb3b; background: rgba(255, 235, 59, 0.16); border: 1px solid rgba(255, 235, 59, 0.45); border-radius: 6px; padding: 4px 8px;">
+                🔧 Hantle Zipro: <b>2× ${snapW} kg</b>
+              </span>
+              <span style="font-size: 11.5px; color: #e0e0e0; font-weight: 600;">(łącznie: ${totalW} kg)</span>
+            </div>
+          `;
+        } else if (isBw) {
+          if (rawW > 0) {
+            loadBadge = `
+              <div style="margin-top: 5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                <span style="font-size: 13px; font-weight: 800; color: #00E5FF; background: rgba(0, 229, 255, 0.16); border: 1px solid rgba(0, 229, 255, 0.45); border-radius: 6px; padding: 4px 8px;">
+                  🤸 Ciężar: <b>Masa ciała (BW) + ${rawW} kg</b>
+                </span>
+                <span style="font-size: 11.5px; color: #e0e0e0; font-weight: 600;">(dodatkowe obciążenie)</span>
+              </div>
+            `;
+          } else {
+            loadBadge = `
+              <div style="margin-top: 5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                <span style="font-size: 13px; font-weight: 800; color: #00E676; background: rgba(0, 230, 118, 0.16); border: 1px solid rgba(0, 230, 118, 0.45); border-radius: 6px; padding: 4px 8px;">
+                  🤸 Ciężar: <b>Masa własnego ciała (BW)</b>
+                </span>
+              </div>
+            `;
+          }
+        } else {
+          loadBadge = `
+            <div style="margin-top: 5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+              <span style="font-size: 13px; font-weight: 800; color: #00E5FF; background: rgba(0, 229, 255, 0.16); border: 1px solid rgba(0, 229, 255, 0.45); border-radius: 6px; padding: 4px 8px;">
+                ⚖️ Obciążenie do przygotowania: <b>${rawW} kg</b>
+              </span>
+            </div>
+          `;
+        }
+
+        let progressionStr = '';
+        if (uncompletedSets.length > 1) {
+          const weights = uncompletedSets.map(s => `${s.weight}kg`);
+          const allSame = weights.every(w => w === weights[0]);
+          if (!allSame) {
+            progressionStr = `<div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">Kolejne serie: <b style="color: #fff;">${weights.join(' → ')}</b></div>`;
+          }
+        }
+
+        return `
+          <div style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 10px 12px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+              <span style="font-size: 15px; font-weight: 800; color: #ffffff;">${prefix}${escapeHtml(e.name)}</span>
+              <span style="font-size: 11px; color: var(--text-muted); background: rgba(0,0,0,0.35); padding: 3px 7px; border-radius: 6px;">Seria ${setNum}/${totalSetsCount} • ${reps} powt.</span>
+            </div>
+            ${loadBadge}
+            ${progressionStr}
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function refreshTechnicalBreakOverlayUI() {
+  const bar = document.getElementById('rest-timer-bar');
+  if (!bar || bar.style.display === 'none' || !STATE.timerIsTechnical) return;
+
+  const nextUpCard = document.getElementById('timer-next-up-card');
+  const nextUpHeader = document.getElementById('timer-next-up-header');
+  const nextUpContent = document.getElementById('timer-next-up-content');
+  const confirmBtn = document.getElementById('timer-confirm-btn');
+  const reorderBtn = document.getElementById('timer-reorder-structure-btn');
+
+  if (reorderBtn) reorderBtn.style.display = 'block';
+
+  let nextUpcoming = null;
+  if (STATE.activeWorkout && Array.isArray(STATE.activeWorkout.exercises)) {
+    for (let eIdx = 0; eIdx < STATE.activeWorkout.exercises.length; eIdx++) {
+      const exItem = STATE.activeWorkout.exercises[eIdx];
+      for (let sIdx = 0; sIdx < (exItem.sets || []).length; sIdx++) {
+        const sItem = exItem.sets[sIdx];
+        if (!sItem.completed) {
+          nextUpcoming = { ex: exItem, set: sItem, eIdx, sIdx };
+          break;
+        }
+      }
+      if (nextUpcoming) break;
+    }
+  }
+
+  if (!nextUpcoming || !nextUpCard) {
+    if (nextUpCard) nextUpCard.style.display = 'none';
+    return;
+  }
+
+  const curSs = nextUpcoming.ex.supersetGroup;
+  let blockExercises = [];
+  if (curSs) {
+    blockExercises = STATE.activeWorkout.exercises.filter(e => (e.supersetGroup || '').trim() === curSs);
+  } else {
+    blockExercises = [nextUpcoming.ex];
+  }
+
+  const isInitialPrep = Boolean(STATE.currentRestInfo && STATE.currentRestInfo.afterExercise === 'Start treningu');
+
+  if (nextUpHeader) {
+    nextUpHeader.textContent = curSs
+      ? `🔧 PRZYGOTOWANIE STANOWISKA • SUPERSERIA ${curSs}:`
+      : (isInitialPrep ? '🔧 PRZYGOTOWANIE STANOWISKA (START TRENINGU):' : '🔧 PRZYGOTOWANIE STANOWISKA (KOLEJNY BLOK):');
+  }
+
+  if (nextUpContent) {
+    nextUpContent.innerHTML = renderTechnicalBreakBlockContent(blockExercises, curSs, isInitialPrep);
+  }
+
+  if (confirmBtn) {
+    const firstExName = (nextUpcoming && nextUpcoming.ex) ? nextUpcoming.ex.name : 'Pierwsze ćwiczenie';
+    confirmBtn.textContent = isInitialPrep
+      ? `✅ Stanowisko gotowe – Rozpocznij: ${firstExName}`
+      : `Zakończ przerwę – ${firstExName}`;
+  }
+
+  nextUpCard.style.display = 'block';
+}
+
 function startRestTimer(
   targetSeconds = 90,
   labelText = '🟢 ODPOCZYNEK MIĘDZY SERIAMI',
@@ -3660,10 +3829,15 @@ function startRestTimer(
   const confirmBtn = document.getElementById('timer-confirm-btn');
   const quickAdjust = document.getElementById('timer-quick-adjust-row');
   const overtimeBadge = document.getElementById('timer-overtime-badge');
+  const reorderBtn = document.getElementById('timer-reorder-structure-btn');
 
   if (bar) {
     bar.classList.remove('overtime');
     bar.style.display = 'flex';
+  }
+
+  if (reorderBtn) {
+    reorderBtn.style.display = isTechnical ? 'block' : 'none';
   }
 
   if (badgePill) {
@@ -3707,7 +3881,9 @@ function startRestTimer(
       confirmBtn.textContent = btnText;
     } else if (isTechnical) {
       const firstExName = (nextUpcoming && nextUpcoming.ex) ? nextUpcoming.ex.name : 'Pierwsze ćwiczenie';
-      confirmBtn.textContent = `Zakończ przerwę – ${firstExName}`;
+      confirmBtn.textContent = (afterExercise === 'Start treningu')
+        ? `✅ Stanowisko gotowe – Rozpocznij: ${firstExName}`
+        : `Zakończ przerwę – ${firstExName}`;
     } else {
       const nextExName = (nextUpcoming && nextUpcoming.ex) ? nextUpcoming.ex.name : 'Kolejne ćwiczenie';
       confirmBtn.textContent = `Zakończ przerwę – ${nextExName}`;
@@ -3716,8 +3892,8 @@ function startRestTimer(
 
   if (nextUpCard && nextUpcoming) {
     if (isTechnical) {
-      // PRZERWA TECHNICZNA (między seriami/superseriami/blokami):
-      // Przygotowanie stanowiska: Wyświetlana jest prosta lista samych nazw ćwiczeń wchodzących w skład całego nadchodzącego bloku (do następnej przerwy technicznej), co ułatwia wcześniejsze rozstawienie sprzętu.
+      // PRZERWA TECHNICZNA (między seriami/superseriami/blokami oraz na start treningu):
+      // Przygotowanie stanowiska: Wyświetlana jest lista ćwiczeń wraz z DOKŁADNYMI OBCIĄŻENIAMI do przygotowania
       const curSs = nextUpcoming.ex.supersetGroup;
       let blockExercises = [];
       if (curSs) {
@@ -3726,30 +3902,16 @@ function startRestTimer(
         blockExercises = [nextUpcoming.ex];
       }
 
+      const isInitialPrep = (afterExercise === 'Start treningu');
+
       if (nextUpHeader) {
         nextUpHeader.textContent = curSs
           ? `🔧 PRZYGOTOWANIE STANOWISKA • SUPERSERIA ${curSs}:`
-          : '🔧 PRZYGOTOWANIE STANOWISKA (KOLEJNY BLOK):';
+          : (isInitialPrep ? '🔧 PRZYGOTOWANIE STANOWISKA (START TRENINGU):' : '🔧 PRZYGOTOWANIE STANOWISKA (KOLEJNY BLOK):');
       }
 
       if (nextUpContent) {
-        nextUpContent.innerHTML = `
-          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 6px;">
-            Lista ćwiczeń do przygotowania w tym bloku:
-          </div>
-          <div style="display: flex; flex-direction: column; gap: 6px;">
-            ${blockExercises.map((e, idx) => {
-              const prefix = curSs ? `[${curSs}${idx + 1}] ` : '• ';
-              const isDb = (e.loadType === 'dual_dumbbell' || isDumbbellExercise(e));
-              return `
-                <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 7px 10px;">
-                  <span style="font-size: 14px; font-weight: 700; color: #ffffff;">${prefix}${escapeHtml(e.name)}</span>
-                  ${isDb ? '<span style="font-size: 11px; font-weight: 800; color: #ffeb3b; background: rgba(255,235,59,0.12); padding: 2px 6px; border-radius: 4px;">🔧 Zipro</span>' : ''}
-                </div>
-              `;
-            }).join('')}
-          </div>
-        `;
+        nextUpContent.innerHTML = renderTechnicalBreakBlockContent(blockExercises, curSs, isInitialPrep);
       }
     } else {
       // ZWYKŁA PRZERWA (między seriami wewnątrz bloku):
