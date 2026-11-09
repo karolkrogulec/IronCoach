@@ -1819,12 +1819,17 @@ function startWorkout(planId) {
       ? (parseInt(ssCfg.supersetRestSeconds) || parseInt(ex.supersetRestSeconds) || null)
       : null;
 
+    const isBw = loadType === 'bodyweight';
+    const incBw = (typeof ex.includeBodyweightInTonnage === 'boolean')
+      ? ex.includeBodyweightInTonnage
+      : (isBw ? getDefaultBodyweightTonnageFlag(ex) : false);
+
     return {
       name: ex.name,
       muscle: ex.muscle || 'Inne',
       supersetGroup: ex.supersetGroup || '',
       loadType: loadType,
-      includeBodyweightInTonnage: Boolean(ex.includeBodyweightInTonnage),
+      includeBodyweightInTonnage: incBw,
       restSeconds: effectiveRest,
       supersetRestSeconds: effectiveSsRest,
       gifSlug: ex.gifSlug || (matchedGif ? matchedGif.s : ''),
@@ -2669,6 +2674,16 @@ function renderActiveWorkoutStructureList() {
             <button type="button" class="btn btn-sm btn-secondary" style="padding: 2px 7px; font-size: 12px;" onclick="addSetToActiveExercise(${idx})" title="Dodaj serię">+</button>
           </div>
         </div>
+
+        ${ex.loadType === 'bodyweight' ? `
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; padding: 5px 8px; background: rgba(0,230,118,0.06); border: 1px solid rgba(0,230,118,0.18); border-radius: 6px;">
+            <label style="display: flex; align-items: center; gap: 6px; color: var(--text); cursor: pointer; margin: 0;">
+              <input type="checkbox" ${ex.includeBodyweightInTonnage ? 'checked' : ''} onchange="tempActiveWorkoutExercises[${idx}].includeBodyweightInTonnage = this.checked;" style="accent-color: var(--primary); width: 15px; height: 15px; cursor: pointer;">
+              <span>Wliczaj masę ciała (${getUserCurrentWeightKg()} kg) do tonażu</span>
+            </label>
+            <span style="font-size: 9.5px; color: var(--text-muted);">${isIsometricOrTimedExercise(ex) ? '⏳ izometryczne' : '⚡ dynamiczne'}</span>
+          </div>
+        ` : ''}
       </div>
     `;
   }).join('');
@@ -2782,11 +2797,27 @@ function saveActiveWorkoutStructureChanges() {
   closeActiveWorkoutStructureModal();
 }
 
-// PRD-08: Biomechanical Bodyweight Volume Calculation
+// PRD-08 & Request: Biomechanical Bodyweight Volume Calculation
 function getUserCurrentWeightKg() {
   const latestScale = (STATE.bodyMeasurements || []).find(m => m.weightKg);
   const w = parseFloat(latestScale && latestScale.weightKg) || parseFloat(STATE.userProfile && STATE.userProfile.weightKg) || 80.0;
   return w > 0 ? w : 80.0;
+}
+
+function isIsometricOrTimedExercise(ex) {
+  const name = String(ex?.name || '').toLowerCase();
+  const isometricKeywords = [
+    'plank', 'deska', 'hollow', 'hold', 'l-sit', 'lsit', 'wall sit',
+    'hang', 'wiszenie', 'statyczn', 'izometr', 'mostek', 'bridge hold'
+  ];
+  return isometricKeywords.some(kw => name.includes(kw));
+}
+
+function getDefaultBodyweightTonnageFlag(ex) {
+  if (ex && typeof ex.includeBodyweightInTonnage === 'boolean') {
+    return ex.includeBodyweightInTonnage;
+  }
+  return !isIsometricOrTimedExercise(ex);
 }
 
 function getExerciseBodyweightRatio(ex) {
@@ -2808,17 +2839,29 @@ function getExerciseBodyweightRatio(ex) {
 
 function getEffectiveSetWeight(ex, set) {
   const loadType = ex.loadType || 'standard';
-  const rawWeight = parseFloat(set.weight) || 0;
+  const rawWeight = parseFloat(set?.weight) || 0;
+
   if (loadType === 'bodyweight') {
+    const isTimedOrIso = isIsometricOrTimedExercise(ex) || Boolean(set?.isTimed) || String(set?.reps || '').toLowerCase().includes('s');
     const extraWeight = ex.showExtraWeight ? rawWeight : 0;
-    // Request 3: Only include bodyweight in tonnage if explicitly enabled in plan/exercise settings (default: false)
-    if (ex.includeBodyweightInTonnage) {
-      const userWeight = getUserCurrentWeightKg();
-      const ratio = getExerciseBodyweightRatio(ex);
-      return Math.round(((userWeight * ratio) + extraWeight) * 10) / 10;
+    const reps = parseInt(set?.reps) || 0;
+
+    // Gdy brak ciężaru dodatkowego (lub seria na czas): Tonaż = 0 kg
+    if (isTimedOrIso && reps === 0) {
+      return 0;
     }
+
+    if (ex.includeBodyweightInTonnage) {
+      // Gdy opcja jest zaznaczona: Tonaż = (Masa ciała + Ciężar dodatkowy) * Powtórzenia
+      const userWeight = getUserCurrentWeightKg();
+      return Math.round((userWeight + extraWeight) * 10) / 10;
+    }
+
+    // Gdy opcja jest odznaczona, ale podano ciężar dodatkowy: Tonaż = Ciężar dodatkowy * Powtórzenia
+    // Gdy brak ciężaru dodatkowego: Tonaż = 0 kg
     return extraWeight;
   }
+
   if (loadType === 'dual_dumbbell') {
     return rawWeight * 2;
   }
@@ -2948,15 +2991,21 @@ function getNextWorkoutBlockInfo(currentExIdx, currentSsGroup) {
     const hasIncompleteSet = Array.isArray(candidate.sets) && candidate.sets.some(s => !s.completed);
     if (hasIncompleteSet) {
       if (candSs) {
+        const blockExercises = exercises.filter(e => (e.supersetGroup || '').trim() === candSs);
+        const firstExerciseName = blockExercises[0]?.name || candidate.name;
         return {
           shortName: `Superseria ${candSs}`,
-          name: `Superseria ${candSs} (${candidate.name})`,
+          name: `Superseria ${candSs} (${firstExerciseName})`,
+          firstExerciseName: firstExerciseName,
+          blockExercises: blockExercises,
           exercise: candidate
         };
       } else {
         return {
           shortName: candidate.name,
           name: candidate.name,
+          firstExerciseName: candidate.name,
+          blockExercises: [candidate],
           exercise: candidate
         };
       }
@@ -2973,15 +3022,21 @@ function getNextWorkoutBlockInfo(currentExIdx, currentSsGroup) {
     const hasIncompleteSet = Array.isArray(candidate.sets) && candidate.sets.some(s => !s.completed);
     if (hasIncompleteSet) {
       if (candSs) {
+        const blockExercises = exercises.filter(e => (e.supersetGroup || '').trim() === candSs);
+        const firstExerciseName = blockExercises[0]?.name || candidate.name;
         return {
           shortName: `Superseria ${candSs}`,
-          name: `Superseria ${candSs} (${candidate.name})`,
+          name: `Superseria ${candSs} (${firstExerciseName})`,
+          firstExerciseName: firstExerciseName,
+          blockExercises: blockExercises,
           exercise: candidate
         };
       } else {
         return {
           shortName: candidate.name,
           name: candidate.name,
+          firstExerciseName: candidate.name,
+          blockExercises: [candidate],
           exercise: candidate
         };
       }
@@ -3071,7 +3126,7 @@ function toggleSetComplete(exIdx, sIdx) {
           set.num,
           'superset-short',
           `⏱️ Krótki odpoczynek w superserii przed: ${nextExName} • Cel: ${shortRest}s (odliczanie w dół)`,
-          `✅ OK / Gotowe (Rozpocznij: ${nextExName})`
+          `Zakończ przerwę – ${nextExName}`
         );
       } else {
         // Round sIdx is fully complete!
@@ -3080,6 +3135,7 @@ function toggleSetComplete(exIdx, sIdx) {
 
         if (hasNextRound) {
           // Long rest between rounds of superset (odliczanie w dół z czasem zdefiniowanym w treningu)
+          const nextRoundFirstEx = groupMembers[0].item.name;
           startRestTimer(
             mainRest,
             `🟢 ODPOCZYNEK PO OBWODZIE ${sIdx + 1}/${maxSets} (SUPERSERIA ${ssGroup})`,
@@ -3087,7 +3143,7 @@ function toggleSetComplete(exIdx, sIdx) {
             set.num,
             'superset-round',
             `⏱️ Dłuższy odpoczynek po całym obwodzie • Cel: ${mainRest}s (odliczanie w dół)`,
-            `✅ OK / Gotowe (Rozpocznij Obwód ${sIdx + 2}/${maxSets})`
+            `Zakończ przerwę – ${nextRoundFirstEx}`
           );
         } else {
           // Entire Superset is fully completed (all rounds done)!
@@ -3096,12 +3152,12 @@ function toggleSetComplete(exIdx, sIdx) {
           if (nextBlock) {
             startRestTimer(
               0,
-              `⚡ PRZERWA TECHNICZNA • PRZYGOTUJ STANOWISKO: ${nextBlock.shortName}`,
+              `⚡ PRZERWA TECHNICZNA • PRZYGOTUJ STANOWISKO`,
               ex.name,
               set.num,
               'technical-prep',
-              `🔧 Przygotowanie siłowni pod kolejny zestaw: ${nextBlock.name} • Brak limitu czasu`,
-              `✅ Stanowisko gotowe (Rozpocznij: ${nextBlock.shortName})`
+              `🔧 Przygotowanie sprzętu pod kolejny blok: ${nextBlock.name} • Brak limitu czasu`,
+              `Zakończ przerwę – ${nextBlock.firstExerciseName}`
             );
           } else {
             // Whole workout completed!
@@ -3129,7 +3185,7 @@ function toggleSetComplete(exIdx, sIdx) {
           set.num,
           'standard',
           `⏱️ Planowany odpoczynek przed Serią ${set.num + 1}/${ex.sets.length}: ${mainRest}s (odliczanie w dół)`,
-          `✅ OK / Gotowe (Rozpocznij Serię ${set.num + 1}/${ex.sets.length})`
+          `Zakończ przerwę – ${ex.name}`
         );
       } else {
         // Entire single exercise is complete!
@@ -3138,12 +3194,12 @@ function toggleSetComplete(exIdx, sIdx) {
         if (nextBlock) {
           startRestTimer(
             0,
-            `⚡ PRZERWA TECHNICZNA • PRZYGOTUJ STANOWISKO: ${nextBlock.shortName}`,
+            `⚡ PRZERWA TECHNICZNA • PRZYGOTUJ STANOWISKO`,
             ex.name,
             set.num,
             'technical-prep',
-            `🔧 Przygotowanie siłowni pod kolejny zestaw: ${nextBlock.name} • Brak limitu czasu`,
-            `✅ Stanowisko gotowe (Rozpocznij: ${nextBlock.shortName})`
+            `🔧 Przygotowanie sprzętu pod kolejny blok: ${nextBlock.name} • Brak limitu czasu`,
+            `Zakończ przerwę – ${nextBlock.firstExerciseName}`
           );
         } else {
           // Whole workout completed!
@@ -3344,19 +3400,7 @@ function startRestTimer(
 
   if (modeLabel) modeLabel.textContent = labelText;
 
-  if (confirmBtn) {
-    confirmBtn.textContent = btnText || (isTechnical ? '✅ Stanowisko gotowe — Rozpocznij kolejny zestaw' : '✅ OK / Gotowe (Kolejna seria)');
-  }
-
-  if (quickAdjust) {
-    quickAdjust.style.display = isTechnical ? 'none' : 'flex';
-  }
-
-  if (overtimeBadge) {
-    overtimeBadge.style.display = 'none';
-  }
-
-  // PRD-05 & Request 5: Populate Next Up & Zipro dumbbell setup preview (including all exercises in superset)
+  // PRD-05 & Request: Clean separation of Rest Overlay vs Technical Station Break
   const nextUpCard = document.getElementById('timer-next-up-card');
   const nextUpHeader = document.getElementById('timer-next-up-header');
   const nextUpContent = document.getElementById('timer-next-up-content');
@@ -3379,61 +3423,69 @@ function startRestTimer(
     }
   }
 
-  if (nextUpCard && nextUpcoming) {
-    const curSs = nextUpcoming.ex.supersetGroup;
-    const isSs = Boolean(curSs);
+  // Determine button label according to user specification:
+  // - Zwykła przerwa: "Zakończ przerwę – [Kolejne ćwiczenie]"
+  // - Przerwa techniczna: "Zakończ przerwę – [Pierwsze ćwiczenie]"
+  if (confirmBtn) {
+    if (btnText) {
+      confirmBtn.textContent = btnText;
+    } else if (isTechnical) {
+      const firstExName = (nextUpcoming && nextUpcoming.ex) ? nextUpcoming.ex.name : 'Pierwsze ćwiczenie';
+      confirmBtn.textContent = `Zakończ przerwę – ${firstExName}`;
+    } else {
+      const nextExName = (nextUpcoming && nextUpcoming.ex) ? nextUpcoming.ex.name : 'Kolejne ćwiczenie';
+      confirmBtn.textContent = `Zakończ przerwę – ${nextExName}`;
+    }
+  }
 
-    if (isSs) {
-      // Find all exercises belonging to this superset so user can prepare the entire station/dumbbells
-      const ssGroupExercises = STATE.activeWorkout.exercises.filter(e => e.supersetGroup === curSs);
+  if (nextUpCard && nextUpcoming) {
+    if (isTechnical) {
+      // PRZERWA TECHNICZNA (między seriami/superseriami/blokami):
+      // Przygotowanie stanowiska: Wyświetlana jest prosta lista samych nazw ćwiczeń wchodzących w skład całego nadchodzącego bloku (do następnej przerwy technicznej), co ułatwia wcześniejsze rozstawienie sprzętu.
+      const curSs = nextUpcoming.ex.supersetGroup;
+      let blockExercises = [];
+      if (curSs) {
+        blockExercises = STATE.activeWorkout.exercises.filter(e => (e.supersetGroup || '').trim() === curSs);
+      } else {
+        blockExercises = [nextUpcoming.ex];
+      }
+
       if (nextUpHeader) {
-        nextUpHeader.textContent = isTechnical
-          ? `🔧 PRZYGOTUJ CAŁY ZESTAW (SUPERSET ${curSs}):`
-          : `🔗 NASTĘPNA SUPERSERIA ${curSs} (WSZYSTKIE ĆWICZENIA W SERII):`;
+        nextUpHeader.textContent = curSs
+          ? `🔧 PRZYGOTOWANIE STANOWISKA • SUPERSERIA ${curSs}:`
+          : '🔧 PRZYGOTOWANIE STANOWISKA (KOLEJNY BLOK):';
       }
 
       if (nextUpContent) {
-        const itemsHtml = ssGroupExercises.map((ex, exOrder) => {
-          const s = (ex.sets || []).find(st => !st.completed) || (ex.sets && ex.sets[0]) || { num: 1, reps: 10, weight: 0 };
-          const isDualDb = ex.loadType === 'dual_dumbbell';
-          const isDb = isDumbbellExercise(ex);
-          let wStr = `${s.weight} kg`;
-          if (isDualDb) {
-            wStr = `2×${s.weight} kg (łącznie ${s.weight * 2} kg)`;
-          } else if (ex.loadType === 'bodyweight') {
-            wStr = s.weight > 0 ? `Masa ciała + ${s.weight} kg` : 'Masa ciała';
-          }
-
-          let ziproHtml = '';
-          if (isDualDb || isDb) {
-            const snapW = snapToZiproDumbbellWeight(s.weight);
-            ziproHtml = `<div style="font-size: 11.5px; font-weight: 800; color: #ffeb3b; background: rgba(255, 235, 59, 0.12); border: 1px dashed rgba(255, 235, 59, 0.4); padding: 4px 6px; border-radius: 6px; margin-top: 4px;">🔧 Zipro: ustaw ${snapW} kg na ${isDualDb ? 'każdym hantlu' : 'hantlu'}</div>`;
-          }
-
-          return `
-            <div style="padding: 8px 0; ${exOrder > 0 ? 'border-top: 1px solid rgba(255,255,255,0.08);' : ''}">
-              <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
-                <span style="font-size: 13.5px; font-weight: 800; color: #ffffff;">[${curSs}${exOrder + 1}] ${escapeHtml(ex.name)}</span>
-                <span style="font-size: 11px; color: var(--accent); font-weight: 700;">Seria ${s.num}/${ex.sets.length}</span>
-              </div>
-              <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">
-                Ciężar: <b style="color: var(--text);">${wStr}</b> • Cel: <b style="color: var(--text);">${s.reps} powt.</b>
-              </div>
-              ${ziproHtml}
-            </div>
-          `;
-        }).join('');
-        nextUpContent.innerHTML = itemsHtml;
+        nextUpContent.innerHTML = `
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 6px;">
+            Lista ćwiczeń do przygotowania w tym bloku:
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            ${blockExercises.map((e, idx) => {
+              const prefix = curSs ? `[${curSs}${idx + 1}] ` : '• ';
+              const isDb = (e.loadType === 'dual_dumbbell' || isDumbbellExercise(e));
+              return `
+                <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 7px 10px;">
+                  <span style="font-size: 14px; font-weight: 700; color: #ffffff;">${prefix}${escapeHtml(e.name)}</span>
+                  ${isDb ? '<span style="font-size: 11px; font-weight: 800; color: #ffeb3b; background: rgba(255,235,59,0.12); padding: 2px 6px; border-radius: 4px;">🔧 Zipro</span>' : ''}
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
       }
     } else {
-      // Single isolated exercise
-      if (nextUpHeader) {
-        nextUpHeader.textContent = isTechnical ? '🔧 PRZYGOTUJ STANOWISKO:' : '⏭️ NASTĘPNE W KOLEJCE:';
-      }
+      // ZWYKŁA PRZERWA (między seriami wewnątrz bloku):
+      // Minimalistyczny widok: timer i informacja wyłącznie o bezpośrednio nadchodzącej serii.
       const ex = nextUpcoming.ex;
       const s = nextUpcoming.set;
       const isDualDb = ex.loadType === 'dual_dumbbell';
       const isDb = isDumbbellExercise(ex);
+
+      if (nextUpHeader) {
+        nextUpHeader.textContent = '⏭️ NASTĘPNA SERIA:';
+      }
 
       let wStr = `${s.weight} kg`;
       if (isDualDb) {
@@ -3448,9 +3500,11 @@ function startRestTimer(
         ziproHtml = `<div style="font-size: 12px; font-weight: 800; color: #ffeb3b; background: rgba(255, 235, 59, 0.12); border: 1px dashed rgba(255, 235, 59, 0.4); padding: 6px 8px; border-radius: 6px; margin-top: 6px;">🔧 Zipro: ustaw ${snapW} kg na ${isDualDb ? 'każdym hantlu' : 'hantlu'}</div>`;
       }
 
+      const ssPrefix = ex.supersetGroup ? `[SS ${escapeHtml(ex.supersetGroup)}] ` : '';
+
       if (nextUpContent) {
         nextUpContent.innerHTML = `
-          <div style="font-size: 14.5px; font-weight: 800; color: #ffffff; line-height: 1.3;">${escapeHtml(ex.name)}</div>
+          <div style="font-size: 14.5px; font-weight: 800; color: #ffffff; line-height: 1.3;">${ssPrefix}${escapeHtml(ex.name)}</div>
           <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Seria ${s.num} z ${ex.sets.length} • Ciężar: <b style="color: var(--text);">${wStr}</b> • Cel: <b style="color: var(--text);">${s.reps} powt.</b></div>
           ${ziproHtml}
         `;
@@ -4594,13 +4648,15 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
 
   // Rest for single exercises
   const exRest = (!supersetGroup && exObj && exObj.restSeconds) ? parseInt(exObj.restSeconds) : '';
-  const includeBwTonnage = Boolean(exObj && exObj.includeBodyweightInTonnage);
+  const defaultBwFlag = getDefaultBodyweightTonnageFlag({ name, includeBodyweightInTonnage: exObj?.includeBodyweightInTonnage });
+  const includeBwTonnage = defaultBwFlag;
 
   if (initSlug) row.dataset.gifSlug = initSlug;
   if (initUrl) row.dataset.gifUrl = initUrl;
   if (initGifName) row.dataset.gifName = initGifName;
   if (exObj && exObj.gifUrl) row.dataset.gifLocked = '1';
   if (exObj && exObj.manualUpdatedAt) row.dataset.manualUpdatedAt = String(exObj.manualUpdatedAt);
+  if (exObj && typeof exObj.includeBodyweightInTonnage === 'boolean') row.dataset.bwManual = '1';
   row.dataset.origSets = String(sets);
   row.dataset.origReps = String(reps);
   row.dataset.origWeight = String(weight);
@@ -4686,12 +4742,15 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
       <span style="font-size: 10px; color: var(--text-muted);">Przerwy określa konfiguracja Superserii powyżej ⬆️</span>
     </div>
 
-    <!-- Bodyweight tonnage inclusion checkbox (Request 3: default false) -->
+    <!-- Bodyweight tonnage inclusion checkbox -->
     <div class="modal-ex-bw-tonnage-box" style="display: ${loadType === 'bodyweight' ? 'block' : 'none'}; margin-top: 6px; padding: 6px 8px; background: rgba(0, 230, 118, 0.08); border: 1px solid rgba(0, 230, 118, 0.2); border-radius: 8px;">
       <label style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text); cursor: pointer; margin: 0;">
-        <input type="checkbox" class="modal-ex-include-bw" ${includeBwTonnage ? 'checked' : ''} style="width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer;" onchange="this.closest('.modal-ex-row').dataset.manualEdited='1'">
+        <input type="checkbox" class="modal-ex-include-bw" ${includeBwTonnage ? 'checked' : ''} style="width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer;" onchange="this.closest('.modal-ex-row').dataset.manualEdited='1'; this.closest('.modal-ex-row').dataset.bwManual='1';">
         <span>Wliczaj masę ciała (${getUserCurrentWeightKg()} kg) do ogólnego tonażu</span>
       </label>
+      <div class="modal-ex-bw-hint" style="font-size: 9.5px; color: var(--text-muted); margin-top: 2px; padding-left: 24px;">
+        ${isIsometricOrTimedExercise({ name }) ? '⏳ Ćwiczenie izometryczne/czasowe: domyślnie wyłączone' : '⚡ Ćwiczenie dynamiczne: domyślnie włączone'}
+      </div>
     </div>
   `;
   listEl.appendChild(row);
@@ -4705,6 +4764,19 @@ function handleModalExNameInput(inputEl) {
   if (row.dataset.gifLocked !== '1') {
     const matched = exName ? findExerciseGif(exName) : null;
     updateModalRowGifPreview(row, matched);
+  }
+
+  // Automatic default rules for bodyweight exercises: dynamic -> on, isometric/timed -> off
+  const bwCheck = row.querySelector('.modal-ex-include-bw');
+  const bwHint = row.querySelector('.modal-ex-bw-hint');
+  if (bwCheck && row.dataset.bwManual !== '1') {
+    const isIso = isIsometricOrTimedExercise({ name: exName });
+    bwCheck.checked = !isIso;
+    if (bwHint) {
+      bwHint.textContent = isIso
+        ? '⏳ Ćwiczenie izometryczne/czasowe: domyślnie wyłączone'
+        : '⚡ Ćwiczenie dynamiczne: domyślnie włączone';
+    }
   }
 
   // If user typed a dumbbell exercise and loadType is still standard, auto-switch to dual_dumbbell and Zipro steps
@@ -4747,6 +4819,19 @@ function handleModalLoadTypeChange(selectEl) {
   const bwTonnageBox = row.querySelector('.modal-ex-bw-tonnage-box');
   if (bwTonnageBox) {
     bwTonnageBox.style.display = (val === 'bodyweight') ? 'block' : 'none';
+    if (val === 'bodyweight' && row.dataset.bwManual !== '1') {
+      const nameInput = row.querySelector('.modal-ex-name');
+      const exName = nameInput ? nameInput.value.trim() : '';
+      const bwCheck = row.querySelector('.modal-ex-include-bw');
+      const bwHint = row.querySelector('.modal-ex-bw-hint');
+      const isIso = isIsometricOrTimedExercise({ name: exName });
+      if (bwCheck) bwCheck.checked = !isIso;
+      if (bwHint) {
+        bwHint.textContent = isIso
+          ? '⏳ Ćwiczenie izometryczne/czasowe: domyślnie wyłączone'
+          : '⚡ Ćwiczenie dynamiczne: domyślnie włączone';
+      }
+    }
   }
 }
 

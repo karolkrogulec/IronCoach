@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ironcoach-v56';
+const CACHE_NAME = 'ironcoach-v57';
 const ASSETS = [
   './',
   './index.html',
