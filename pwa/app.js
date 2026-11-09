@@ -1824,6 +1824,7 @@ function startWorkout(planId) {
       muscle: ex.muscle || 'Inne',
       supersetGroup: ex.supersetGroup || '',
       loadType: loadType,
+      includeBodyweightInTonnage: Boolean(ex.includeBodyweightInTonnage),
       restSeconds: effectiveRest,
       supersetRestSeconds: effectiveSsRest,
       gifSlug: ex.gifSlug || (matchedGif ? matchedGif.s : ''),
@@ -2591,6 +2592,196 @@ function promptChangeSupersetRest(ssGroup) {
   renderActiveExercises();
 }
 
+// ============================================================================
+// ACTIVE WORKOUT STRUCTURE & REORDERING (REQUEST 4)
+// ============================================================================
+let tempActiveWorkoutExercises = null;
+
+function openActiveWorkoutStructureModal() {
+  if (!STATE.activeWorkout || !Array.isArray(STATE.activeWorkout.exercises)) {
+    return alert('Brak aktywnego treningu do edycji.');
+  }
+  tempActiveWorkoutExercises = JSON.parse(JSON.stringify(STATE.activeWorkout.exercises));
+  renderActiveWorkoutStructureList();
+  const modal = document.getElementById('modal-active-workout-structure');
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeActiveWorkoutStructureModal() {
+  tempActiveWorkoutExercises = null;
+  const modal = document.getElementById('modal-active-workout-structure');
+  if (modal) modal.style.display = 'none';
+}
+
+function renderActiveWorkoutStructureList() {
+  const container = document.getElementById('active-workout-structure-list');
+  if (!container || !tempActiveWorkoutExercises) return;
+
+  if (tempActiveWorkoutExercises.length === 0) {
+    container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 18px;">Brak ćwiczeń w sesji. Dodaj ćwiczenie poniżej.</div>';
+    return;
+  }
+
+  const ssOptions = [
+    { val: '', label: 'Pojedyncze' },
+    { val: 'A', label: '🔗 Superseria A' },
+    { val: 'B', label: '🔗 Superseria B' },
+    { val: 'C', label: '🔗 Superseria C' },
+    { val: 'D', label: '🔗 Superseria D' }
+  ];
+
+  container.innerHTML = tempActiveWorkoutExercises.map((ex, idx) => {
+    const isFirst = idx === 0;
+    const isLast = idx === tempActiveWorkoutExercises.length - 1;
+    const setsCount = (ex.sets || []).length;
+    const completedSetsCount = (ex.sets || []).filter(s => s.completed).length;
+
+    const ssSelect = `
+      <select class="input-box" style="font-size: 11px; padding: 4px 6px; width: auto; color: var(--accent);" onchange="changeActiveExerciseSuperset(${idx}, this.value)">
+        ${ssOptions.map(o => `<option value="${o.val}" ${ex.supersetGroup === o.val ? 'selected' : ''}>${o.label}</option>`).join('')}
+      </select>
+    `;
+
+    return `
+      <div style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1;">
+            <span style="font-size: 12px; font-weight: 800; color: var(--primary); background: rgba(0,230,118,0.12); border-radius: 6px; padding: 2px 6px;">#${idx + 1}</span>
+            <div style="font-size: 13.5px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              ${escapeHtml(ex.name)}
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 4px;">
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 12px;" onclick="moveActiveExercise(${idx}, ${idx - 1})" ${isFirst ? 'disabled style="opacity: 0.35;"' : ''} title="Przesuń wyżej">⬆️</button>
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 12px;" onclick="moveActiveExercise(${idx}, ${idx + 1})" ${isLast ? 'disabled style="opacity: 0.35;"' : ''} title="Przesuń niżej">⬇️</button>
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 12px; color: var(--danger); border-color: rgba(255,82,82,0.3);" onclick="removeActiveExercise(${idx})" title="Usuń z tej sesji">🗑️</button>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 6px;">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span style="color: var(--text-muted);">Grupa:</span>
+            ${ssSelect}
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span style="color: var(--text-muted); font-size: 11px;">Serie: <b style="color: var(--text);">${setsCount}</b> ${completedSetsCount > 0 ? `(${completedSetsCount} ukończ.)` : ''}</span>
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 2px 7px; font-size: 12px;" onclick="removeSetFromActiveExercise(${idx})" title="Usuń serię">-</button>
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 2px 7px; font-size: 12px;" onclick="addSetToActiveExercise(${idx})" title="Dodaj serię">+</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function moveActiveExercise(fromIdx, toIdx) {
+  if (!tempActiveWorkoutExercises) return;
+  if (toIdx < 0 || toIdx >= tempActiveWorkoutExercises.length) return;
+  const item = tempActiveWorkoutExercises.splice(fromIdx, 1)[0];
+  tempActiveWorkoutExercises.splice(toIdx, 0, item);
+  renderActiveWorkoutStructureList();
+}
+
+function changeActiveExerciseSuperset(exIdx, newSs) {
+  if (!tempActiveWorkoutExercises || !tempActiveWorkoutExercises[exIdx]) return;
+  tempActiveWorkoutExercises[exIdx].supersetGroup = newSs;
+  renderActiveWorkoutStructureList();
+}
+
+function addSetToActiveExercise(exIdx) {
+  if (!tempActiveWorkoutExercises || !tempActiveWorkoutExercises[exIdx]) return;
+  const ex = tempActiveWorkoutExercises[exIdx];
+  ex.sets = ex.sets || [];
+  const lastSet = ex.sets[ex.sets.length - 1] || { weight: 0, reps: 10 };
+  const newNum = ex.sets.length + 1;
+  ex.sets.push({
+    num: newNum,
+    weight: lastSet.weight || 0,
+    reps: lastSet.reps || 10,
+    completed: false,
+    effort: null
+  });
+  renderActiveWorkoutStructureList();
+}
+
+function removeSetFromActiveExercise(exIdx) {
+  if (!tempActiveWorkoutExercises || !tempActiveWorkoutExercises[exIdx]) return;
+  const ex = tempActiveWorkoutExercises[exIdx];
+  if (!ex.sets || ex.sets.length <= 1) {
+    return alert('Ćwiczenie musi posiadać przynajmniej jedną serię.');
+  }
+  const lastSet = ex.sets[ex.sets.length - 1];
+  if (lastSet.completed) {
+    if (!confirm('Ostatnia seria została już oznaczona jako ukończona. Czy na pewno chcesz ją usunąć?')) {
+      return;
+    }
+  }
+  ex.sets.pop();
+  renderActiveWorkoutStructureList();
+}
+
+function removeActiveExercise(exIdx) {
+  if (!tempActiveWorkoutExercises || !tempActiveWorkoutExercises[exIdx]) return;
+  const ex = tempActiveWorkoutExercises[exIdx];
+  if (!confirm(`Czy na pewno usunąć ćwiczenie "${ex.name}" z bieżącej sesji treningowej?`)) {
+    return;
+  }
+  tempActiveWorkoutExercises.splice(exIdx, 1);
+  renderActiveWorkoutStructureList();
+}
+
+function promptAddExerciseToActiveWorkout() {
+  if (!tempActiveWorkoutExercises) return;
+  const name = prompt('Podaj nazwę ćwiczenia do dodania do sesji:');
+  if (!name || !name.trim()) return;
+  const cleanName = name.trim();
+  const matched = findExerciseGif(cleanName);
+  const isDb = isDumbbellExercise({ name: cleanName });
+  const isBw = isCalisthenicsExercise({ name: cleanName });
+  const loadType = isDb ? 'dual_dumbbell' : (isBw ? 'bodyweight' : 'standard');
+  const initWeight = isDb ? 11.3 : (isBw ? 0 : 20);
+
+  tempActiveWorkoutExercises.push({
+    name: cleanName,
+    muscle: (matched && matched.m) || 'Inne',
+    supersetGroup: '',
+    loadType: loadType,
+    includeBodyweightInTonnage: false,
+    restSeconds: STATE.activeWorkout.restSeconds || 90,
+    supersetRestSeconds: null,
+    gifSlug: matched?.s || '',
+    gifUrl: matched?.g || '',
+    gifName: matched?.n || '',
+    showExtraWeight: true,
+    progressionHint: 'Dodane w trakcie sesji',
+    sets: [
+      { num: 1, weight: initWeight, reps: 10, completed: false, effort: null },
+      { num: 2, weight: initWeight, reps: 10, completed: false, effort: null },
+      { num: 3, weight: initWeight, reps: 10, completed: false, effort: null }
+    ]
+  });
+  renderActiveWorkoutStructureList();
+}
+
+function saveActiveWorkoutStructureChanges() {
+  if (!STATE.activeWorkout || !tempActiveWorkoutExercises) return;
+  if (tempActiveWorkoutExercises.length === 0) {
+    return alert('Trening nie może pozostać bez żadnych ćwiczeń!');
+  }
+
+  tempActiveWorkoutExercises.forEach(ex => {
+    (ex.sets || []).forEach((s, sIdx) => {
+      s.num = sIdx + 1;
+    });
+  });
+
+  STATE.activeWorkout.exercises = tempActiveWorkoutExercises;
+  saveActiveWorkout();
+  loadActiveWorkoutUI();
+  updateWorkoutStats();
+  closeActiveWorkoutStructureModal();
+}
+
 // PRD-08: Biomechanical Bodyweight Volume Calculation
 function getUserCurrentWeightKg() {
   const latestScale = (STATE.bodyMeasurements || []).find(m => m.weightKg);
@@ -2619,10 +2810,14 @@ function getEffectiveSetWeight(ex, set) {
   const loadType = ex.loadType || 'standard';
   const rawWeight = parseFloat(set.weight) || 0;
   if (loadType === 'bodyweight') {
-    const userWeight = getUserCurrentWeightKg();
-    const ratio = getExerciseBodyweightRatio(ex);
     const extraWeight = ex.showExtraWeight ? rawWeight : 0;
-    return Math.round(((userWeight * ratio) + extraWeight) * 10) / 10;
+    // Request 3: Only include bodyweight in tonnage if explicitly enabled in plan/exercise settings (default: false)
+    if (ex.includeBodyweightInTonnage) {
+      const userWeight = getUserCurrentWeightKg();
+      const ratio = getExerciseBodyweightRatio(ex);
+      return Math.round(((userWeight * ratio) + extraWeight) * 10) / 10;
+    }
+    return extraWeight;
   }
   if (loadType === 'dual_dumbbell') {
     return rawWeight * 2;
@@ -3161,8 +3356,10 @@ function startRestTimer(
     overtimeBadge.style.display = 'none';
   }
 
-  // PRD-05: Populate Next Up & Zipro dumbbell setup preview
+  // PRD-05 & Request 5: Populate Next Up & Zipro dumbbell setup preview (including all exercises in superset)
   const nextUpCard = document.getElementById('timer-next-up-card');
+  const nextUpHeader = document.getElementById('timer-next-up-header');
+  const nextUpContent = document.getElementById('timer-next-up-content');
   const nextUpName = document.getElementById('timer-next-up-name');
   const nextUpDetails = document.getElementById('timer-next-up-details');
   const nextUpZipro = document.getElementById('timer-next-up-zipro');
@@ -3183,33 +3380,80 @@ function startRestTimer(
   }
 
   if (nextUpCard && nextUpcoming) {
-    const ex = nextUpcoming.ex;
-    const s = nextUpcoming.set;
-    const isDualDb = ex.loadType === 'dual_dumbbell';
-    const isDb = isDumbbellExercise(ex);
-    const ssPrefix = ex.supersetGroup ? `[SS ${escapeHtml(ex.supersetGroup)}] ` : '';
+    const curSs = nextUpcoming.ex.supersetGroup;
+    const isSs = Boolean(curSs);
 
-    if (nextUpName) {
-      nextUpName.textContent = `${ssPrefix}${ex.name}`;
-    }
+    if (isSs) {
+      // Find all exercises belonging to this superset so user can prepare the entire station/dumbbells
+      const ssGroupExercises = STATE.activeWorkout.exercises.filter(e => e.supersetGroup === curSs);
+      if (nextUpHeader) {
+        nextUpHeader.textContent = isTechnical
+          ? `🔧 PRZYGOTUJ CAŁY ZESTAW (SUPERSET ${curSs}):`
+          : `🔗 NASTĘPNA SUPERSERIA ${curSs} (WSZYSTKIE ĆWICZENIA W SERII):`;
+      }
 
-    if (nextUpDetails) {
+      if (nextUpContent) {
+        const itemsHtml = ssGroupExercises.map((ex, exOrder) => {
+          const s = (ex.sets || []).find(st => !st.completed) || (ex.sets && ex.sets[0]) || { num: 1, reps: 10, weight: 0 };
+          const isDualDb = ex.loadType === 'dual_dumbbell';
+          const isDb = isDumbbellExercise(ex);
+          let wStr = `${s.weight} kg`;
+          if (isDualDb) {
+            wStr = `2×${s.weight} kg (łącznie ${s.weight * 2} kg)`;
+          } else if (ex.loadType === 'bodyweight') {
+            wStr = s.weight > 0 ? `Masa ciała + ${s.weight} kg` : 'Masa ciała';
+          }
+
+          let ziproHtml = '';
+          if (isDualDb || isDb) {
+            const snapW = snapToZiproDumbbellWeight(s.weight);
+            ziproHtml = `<div style="font-size: 11.5px; font-weight: 800; color: #ffeb3b; background: rgba(255, 235, 59, 0.12); border: 1px dashed rgba(255, 235, 59, 0.4); padding: 4px 6px; border-radius: 6px; margin-top: 4px;">🔧 Zipro: ustaw ${snapW} kg na ${isDualDb ? 'każdym hantlu' : 'hantlu'}</div>`;
+          }
+
+          return `
+            <div style="padding: 8px 0; ${exOrder > 0 ? 'border-top: 1px solid rgba(255,255,255,0.08);' : ''}">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+                <span style="font-size: 13.5px; font-weight: 800; color: #ffffff;">[${curSs}${exOrder + 1}] ${escapeHtml(ex.name)}</span>
+                <span style="font-size: 11px; color: var(--accent); font-weight: 700;">Seria ${s.num}/${ex.sets.length}</span>
+              </div>
+              <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">
+                Ciężar: <b style="color: var(--text);">${wStr}</b> • Cel: <b style="color: var(--text);">${s.reps} powt.</b>
+              </div>
+              ${ziproHtml}
+            </div>
+          `;
+        }).join('');
+        nextUpContent.innerHTML = itemsHtml;
+      }
+    } else {
+      // Single isolated exercise
+      if (nextUpHeader) {
+        nextUpHeader.textContent = isTechnical ? '🔧 PRZYGOTUJ STANOWISKO:' : '⏭️ NASTĘPNE W KOLEJCE:';
+      }
+      const ex = nextUpcoming.ex;
+      const s = nextUpcoming.set;
+      const isDualDb = ex.loadType === 'dual_dumbbell';
+      const isDb = isDumbbellExercise(ex);
+
       let wStr = `${s.weight} kg`;
       if (isDualDb) {
         wStr = `2×${s.weight} kg (łącznie ${s.weight * 2} kg)`;
       } else if (ex.loadType === 'bodyweight') {
         wStr = s.weight > 0 ? `Masa ciała + ${s.weight} kg` : 'Masa ciała';
       }
-      nextUpDetails.textContent = `Seria ${s.num} z ${ex.sets.length} • Ciężar: ${wStr} • Cel: ${s.reps} powt.`;
-    }
 
-    if (nextUpZipro) {
+      let ziproHtml = '';
       if (isDualDb || isDb) {
         const snapW = snapToZiproDumbbellWeight(s.weight);
-        nextUpZipro.style.display = 'block';
-        nextUpZipro.textContent = `🔧 Zipro: ustaw ${snapW} kg na ${isDualDb ? 'każdym hantlu' : 'hantlu'}`;
-      } else {
-        nextUpZipro.style.display = 'none';
+        ziproHtml = `<div style="font-size: 12px; font-weight: 800; color: #ffeb3b; background: rgba(255, 235, 59, 0.12); border: 1px dashed rgba(255, 235, 59, 0.4); padding: 6px 8px; border-radius: 6px; margin-top: 6px;">🔧 Zipro: ustaw ${snapW} kg na ${isDualDb ? 'każdym hantlu' : 'hantlu'}</div>`;
+      }
+
+      if (nextUpContent) {
+        nextUpContent.innerHTML = `
+          <div style="font-size: 14.5px; font-weight: 800; color: #ffffff; line-height: 1.3;">${escapeHtml(ex.name)}</div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Seria ${s.num} z ${ex.sets.length} • Ciężar: <b style="color: var(--text);">${wStr}</b> • Cel: <b style="color: var(--text);">${s.reps} powt.</b></div>
+          ${ziproHtml}
+        `;
       }
     }
     nextUpCard.style.display = 'block';
@@ -4350,6 +4594,7 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
 
   // Rest for single exercises
   const exRest = (!supersetGroup && exObj && exObj.restSeconds) ? parseInt(exObj.restSeconds) : '';
+  const includeBwTonnage = Boolean(exObj && exObj.includeBodyweightInTonnage);
 
   if (initSlug) row.dataset.gifSlug = initSlug;
   if (initUrl) row.dataset.gifUrl = initUrl;
@@ -4440,6 +4685,14 @@ function addModalExerciseRow(name = '', sets = 3, reps = 10, weight = 0, superse
       </div>
       <span style="font-size: 10px; color: var(--text-muted);">Przerwy określa konfiguracja Superserii powyżej ⬆️</span>
     </div>
+
+    <!-- Bodyweight tonnage inclusion checkbox (Request 3: default false) -->
+    <div class="modal-ex-bw-tonnage-box" style="display: ${loadType === 'bodyweight' ? 'block' : 'none'}; margin-top: 6px; padding: 6px 8px; background: rgba(0, 230, 118, 0.08); border: 1px solid rgba(0, 230, 118, 0.2); border-radius: 8px;">
+      <label style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text); cursor: pointer; margin: 0;">
+        <input type="checkbox" class="modal-ex-include-bw" ${includeBwTonnage ? 'checked' : ''} style="width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer;" onchange="this.closest('.modal-ex-row').dataset.manualEdited='1'">
+        <span>Wliczaj masę ciała (${getUserCurrentWeightKg()} kg) do ogólnego tonażu</span>
+      </label>
+    </div>
   `;
   listEl.appendChild(row);
   renderModalWeightControl(row, loadType, weight);
@@ -4490,6 +4743,11 @@ function handleModalLoadTypeChange(selectEl) {
   const curWeightEl = row.querySelector('.modal-ex-weight');
   const curWeight = curWeightEl ? curWeightEl.value : 0;
   renderModalWeightControl(row, val, curWeight);
+
+  const bwTonnageBox = row.querySelector('.modal-ex-bw-tonnage-box');
+  if (bwTonnageBox) {
+    bwTonnageBox.style.display = (val === 'bodyweight') ? 'block' : 'none';
+  }
 }
 
 function enableModalBwExtraWeight(btnEl) {
@@ -4533,6 +4791,8 @@ function saveModalPlan() {
     const isWeightHidden = weightContainer && weightContainer.style.display === 'none';
     const weight = isWeightHidden ? 0 : (parseFloat(r.querySelector('.modal-ex-weight').value) || 0);
     const supersetGroup = r.querySelector('.modal-ex-ss').value || '';
+    const bwCheck = r.querySelector('.modal-ex-include-bw');
+    const includeBodyweightInTonnage = (loadType === 'bodyweight') ? Boolean(bwCheck && bwCheck.checked) : false;
     
     let customRest = null;
     let customSsRest = null;
@@ -4574,6 +4834,7 @@ function saveModalPlan() {
         weight: (loadType === 'dual_dumbbell' && weight > 0) ? snapToZiproDumbbellWeight(weight) : weight,
         supersetGroup,
         loadType,
+        includeBodyweightInTonnage,
         restSeconds: customRest,
         supersetRestSeconds: customSsRest,
         muscle: (matched && matched.m) || 'Ogólne',
@@ -7200,8 +7461,13 @@ Udziel naturalnej, merytorycznej, spersonalizowanej odpowiedzi po polsku jako Tr
     // PRD-04: Streaming with live token rendering (TTFT < 1.5s)
     const ans = await callGemini(fullPrompt, tier, null, (accumulated, _chunk) => {
       targetThread.streamingText = accumulated;
-      renderCoachChat();
-      scrollCoachChatToBottom(false);
+      const streamEl = document.getElementById('coach-streaming-content');
+      if (streamEl) {
+        streamEl.innerHTML = formatMarkdown(accumulated);
+      } else {
+        renderCoachChat();
+      }
+      // Request 2: DO NOT force-scroll down during streaming! Let user read from top peacefully.
     });
     targetThread.messages.push({ role: 'assistant', text: ans, time: Date.now() });
     targetThread.updatedAt = Date.now();
@@ -7214,7 +7480,7 @@ Udziel naturalnej, merytorycznej, spersonalizowanej odpowiedzi po polsku jako Tr
     saveCoachThreads();
     renderCoachThreadsBar();
     renderCoachChat();
-    scrollCoachChatToBottom(true);
+    // Request 2: Keep scroll position intact so user isn't dragged to bottom after response finishes.
   }
 }
 
@@ -7306,18 +7572,20 @@ function renderCoachChat() {
     }
 
     return `
-      <div style="display: flex; justify-content: ${isUser ? 'flex-end' : 'flex-start'}; margin-bottom: 10px;">
+      <div style="display: flex; justify-content: ${isUser ? 'flex-end' : 'flex-start'}; margin-bottom: 12px;">
         <div style="
-          max-width: 85%;
+          max-width: 88%;
           padding: 10px 14px;
-          border-radius: ${isUser ? '14px 14px 2px 14px' : '14px 14px 14px 2px'};
+          border-radius: ${isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px'};
           background: ${isUser ? 'var(--primary)' : 'var(--surface-elevated)'};
-          color: ${isUser ? '#000' : 'var(--text)'};
+          color: ${isUser ? '#000000' : 'var(--text)'};
           font-weight: ${isUser ? '600' : '400'};
-          font-size: 14px;
-          line-height: 1.5;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-          border: ${isUser ? 'none' : '1px solid var(--border)'};
+          font-size: 14.5px;
+          line-height: 1.55;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+          border: ${isUser ? 'none' : '1px solid rgba(255,255,255,0.08)'};
+          overflow-wrap: anywhere;
+          word-break: break-word;
         ">
           ${isUser ? escapeHtml(textToDisplay) : formatMarkdown(textToDisplay)}
         </div>
@@ -7327,24 +7595,26 @@ function renderCoachChat() {
 
   // PRD-04: Streaming token rendering inside live bubble
   const thinkingHtml = activeThread && activeThread.isThinking ? `
-    <div style="display: flex; justify-content: flex-start; margin-bottom: 10px;">
+    <div style="display: flex; justify-content: flex-start; margin-bottom: 12px;">
       <div style="
-        max-width: 85%;
+        max-width: 88%;
         padding: 10px 14px;
-        border-radius: 14px 14px 14px 2px;
+        border-radius: 16px 16px 16px 4px;
         background: var(--surface-elevated);
         color: var(--text);
-        font-size: 14px;
-        line-height: 1.5;
+        font-size: 14.5px;
+        line-height: 1.55;
         border: 1px solid var(--accent);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        box-shadow: 0 2px 10px rgba(0,0,0,0.3);
       ">
-        ${activeThread.streamingText ? formatMarkdown(activeThread.streamingText) : `
-          <div style="display: flex; align-items: center; gap: 8px; color: var(--accent); font-size: 13px; animation: coachPulse 1.2s infinite ease-in-out;">
-            <span style="font-size: 16px;">⚡</span>
-            <span>Trener analizuje Twoje dane i pisze odpowiedź...</span>
-          </div>
-        `}
+        <div id="coach-streaming-content">
+          ${activeThread.streamingText ? formatMarkdown(activeThread.streamingText) : `
+            <div style="display: flex; align-items: center; gap: 8px; color: var(--accent); font-size: 13px; animation: coachPulse 1.2s infinite ease-in-out;">
+              <span style="font-size: 16px;">⚡</span>
+              <span>Trener analizuje Twoje dane i pisze odpowiedź...</span>
+            </div>
+          `}
+        </div>
       </div>
     </div>
   ` : '';

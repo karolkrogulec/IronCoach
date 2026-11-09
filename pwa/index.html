@@ -600,12 +600,14 @@
         <button type="button" class="btn btn-sm btn-secondary" style="font-size: 12px; padding: 5px 12px; border-radius: 8px; color: #d7ffe8; border-color: rgba(0,230,118,0.3); background: rgba(0,0,0,0.35);" onclick="addTimerSeconds(30)">+30s</button>
       </div>
 
-      <!-- PRD-05: Next Up & Zipro dumbbell setup card -->
-      <div id="timer-next-up-card" style="display: none; width: 100%; background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 10px 14px; text-align: left; margin: 4px 0;">
-        <div style="font-size: 11px; font-weight: 800; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px;">⏭️ Kolejny zestaw / Next Up:</div>
-        <div id="timer-next-up-name" style="font-size: 14px; font-weight: 800; color: #ffffff; margin-top: 2px;"></div>
-        <div id="timer-next-up-details" style="font-size: 12px; color: #d0f8ce; margin-top: 2px;"></div>
-        <div id="timer-next-up-zipro" style="font-size: 11px; color: var(--primary); font-weight: 700; margin-top: 4px; display: none;"></div>
+      <!-- PRD-05: Next Up & Zipro dumbbell setup card (Supports full superset & series preparation) -->
+      <div id="timer-next-up-card" style="display: none; width: 100%; background: rgba(0,0,0,0.55); border: 1px solid rgba(0, 229, 255, 0.35); border-radius: 12px; padding: 10px 14px; text-align: left; margin: 4px 0; max-height: 250px; overflow-y: auto;">
+        <div id="timer-next-up-header" style="font-size: 11px; font-weight: 800; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">⏭️ Kolejny zestaw / Next Up:</div>
+        <div id="timer-next-up-content">
+          <div id="timer-next-up-name" style="font-size: 14px; font-weight: 800; color: #ffffff; margin-top: 2px;"></div>
+          <div id="timer-next-up-details" style="font-size: 12px; color: #d0f8ce; margin-top: 2px;"></div>
+          <div id="timer-next-up-zipro" style="font-size: 11px; color: var(--primary); font-weight: 700; margin-top: 4px; display: none;"></div>
+        </div>
       </div>
 
       <div id="timer-effort-strip" style="width: 100%; margin: 2px 0;"></div>
@@ -718,7 +720,10 @@
             <div id="workout-plan-title" style="font-size: 16px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Trening</div>
             <div id="wake-lock-badge" style="font-size: 10px; color: var(--success);">🔆 Ekran aktywny</div>
           </div>
-          <button class="btn btn-sm btn-primary" style="padding: 8px 14px; font-size: 13px;" onclick="finishCurrentWorkout()">✓ Zakończ</button>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 10px; font-size: 11px; border-color: rgba(0,229,255,0.4); color: var(--accent); font-weight: 700; white-space: nowrap;" onclick="openActiveWorkoutStructureModal()">🔀 Zmień kolejność / serie</button>
+            <button class="btn btn-sm btn-primary" style="padding: 8px 14px; font-size: 13px;" onclick="finishCurrentWorkout()">✓ Zakończ</button>
+          </div>
         </div>
         <div style="display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 8px; text-align: center; background: #101216; padding: 8px; border-radius: 10px; border: 1px solid var(--border);">
           <div>
@@ -821,94 +826,88 @@
     </div>
   </section>
 
-  <!-- VIEW: COACH CHAT (SEPARATE OPTION) -->
+  <!-- VIEW: COACH CHAT (STREAMLINED CLEAN VIEW) -->
   <section id="view-coach" class="view">
-    <div class="container">
-      <!-- Compact Profile Bar -->
-      <div class="compact-profile-bar">
-        <div style="min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-          <b style="color: var(--accent);">👤 Kontekst AI:</b> <span id="coach-profile-summary">Uzupełnij wagę i cel w Opcjach</span>
+    <div style="max-width: 680px; margin: 0 auto; padding: 6px 12px 14px; display: flex; flex-direction: column; min-height: calc(100vh - 145px);">
+      
+      <!-- Top Bar: Active Thread, AI Badge & Thread Management -->
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0 6px; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1;">
+          <span style="font-weight: 800; font-size: 15px; color: var(--text); white-space: nowrap;">💬 Trener AI</span>
+          <span id="coach-model-badge" style="font-size: 10px; color: var(--accent); background: rgba(0,229,255,0.12); padding: 2px 7px; border-radius: 999px; border: 1px solid rgba(0,229,255,0.25); display: none;" title="Model AI"></span>
         </div>
-        <button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 8px;" onclick="showView('settings')">✏️ Profil</button>
+        <div style="display: flex; gap: 4px; flex-shrink: 0;">
+          <button type="button" class="btn btn-sm btn-accent" style="font-size: 11px; padding: 4px 8px;" onclick="createNewCoachThread()">➕ Nowy wątek</button>
+          <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 7px;" onclick="renameActiveCoachThread()" title="Zmień nazwę wątku">✏️</button>
+          <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 7px; color: var(--danger);" onclick="deleteActiveCoachThread()" title="Usuń ten wątek">🗑️</button>
+        </div>
       </div>
 
-      <!-- Interactive Coach Chat (Multi-Thread Support) -->
-      <div class="card" style="padding: 12px; margin-bottom: 8px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 6px;">
-          <div style="display: flex; align-items: center; gap: 6px;">
-            <span style="font-weight: 800; font-size: 15px;">💬 Czaty z Trenerem AI</span>
-            <span id="coach-model-badge" style="font-size: 10px; color: var(--accent); background: rgba(0,229,255,0.12); padding: 2px 7px; border-radius: 999px; border: 1px solid rgba(0,229,255,0.25); display: none;" title="Model AI aktualnie obsługujący asystenta"></span>
-          </div>
-          <div style="display: flex; gap: 5px;">
-            <button class="btn btn-sm btn-accent" style="font-size: 11px; padding: 5px 10px;" onclick="createNewCoachThread()">➕ Nowy wątek</button>
-            <button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 5px 8px;" onclick="renameActiveCoachThread()" title="Zmień nazwę wątku">✏️</button>
-            <button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 5px 8px; color: var(--danger);" onclick="deleteActiveCoachThread()" title="Usuń ten wątek czatu">🗑️</button>
-          </div>
-        </div>
+      <!-- Compact Horizontal Thread Tabs Bar -->
+      <div id="coach-threads-bar" style="display: flex; gap: 5px; overflow-x: auto; padding-bottom: 5px; margin-bottom: 6px;"></div>
 
-        <!-- Horizontal Thread Tabs Bar -->
-        <div id="coach-threads-bar" style="
+      <!-- Quick Starter Chips (Compact Horizontal Scroll) -->
+      <div style="display: flex; gap: 5px; overflow-x: auto; padding-bottom: 5px; margin-bottom: 6px;">
+        <button type="button" class="btn btn-sm btn-secondary" style="font-size: 10.5px; padding: 3px 8px; white-space: nowrap; flex-shrink: 0; background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.1);" onclick="prefillCoachPrompt('Oceń mój aktualny plan treningowy pod kątem mojego celu i wskaż co warto ulepszyć.')">💡 Oceń plan</button>
+        <button type="button" class="btn btn-sm btn-secondary" style="font-size: 10.5px; padding: 3px 8px; white-space: nowrap; flex-shrink: 0; background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.1);" onclick="prefillCoachPrompt('Przeanalizuj moje ostatnie pomiary z wagi Fitdays oraz obwody i doradź na czym się skupić.')">⚖️ Analiza wagi</button>
+        <button type="button" class="btn btn-sm btn-secondary" style="font-size: 10.5px; padding: 3px 8px; white-space: nowrap; flex-shrink: 0; background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.1);" onclick="prefillCoachPrompt('Jakie ciężary i powtórzenia powinienem dobrać na najbliższy trening?')">📈 Progresja na dziś</button>
+      </div>
+
+      <!-- Chat Messages Container Wrapper with Floating Down Button -->
+      <div style="position: relative; flex: 1; min-height: 380px; display: flex; flex-direction: column; margin-bottom: 10px;">
+        <div id="coach-chat-messages" style="
+          flex: 1;
+          min-height: 380px;
+          height: calc(100vh - 300px);
+          max-height: 640px;
+          overflow-y: auto;
+          overflow-x: hidden;
+          background: #0a0c10;
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 14px;
+          padding: 12px;
           display: flex;
-          gap: 6px;
-          overflow-x: auto;
-          padding-bottom: 8px;
-          margin-bottom: 8px;
-          border-bottom: 1px solid var(--border);
+          flex-direction: column;
         "></div>
-
-        <!-- Quick Starter Chips -->
-        <div style="display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 6px;">
-          <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 9px; white-space: nowrap; flex-shrink: 0;" onclick="prefillCoachPrompt('Oceń mój aktualny plan treningowy pod kątem mojego celu i wskaż co warto ulepszyć.')">💡 Oceń mój plan</button>
-          <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 9px; white-space: nowrap; flex-shrink: 0;" onclick="prefillCoachPrompt('Przeanalizuj moje ostatnie pomiary z wagi Fitdays oraz obwody i doradź na czym się skupić.')">⚖️ Analiza wagi i obwodów</button>
-          <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 9px; white-space: nowrap; flex-shrink: 0;" onclick="prefillCoachPrompt('Jakie ciężary i powtórzenia powinienem dobrać na najbliższy trening?')">📈 Progresja na dziś</button>
-        </div>
-
-        <!-- Chat messages container wrapper with FAB (PRD-02) -->
-        <div style="position: relative; margin-bottom: 10px;">
-          <div id="coach-chat-messages" style="
-            height: calc(100vh - 340px);
-            min-height: 260px;
-            max-height: 520px;
-            overflow-y: auto;
-            overflow-x: hidden;
-            background: #0d0f13;
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 12px;
-            display: flex;
-            flex-direction: column;
-          "></div>
-          <button id="coach-scroll-bottom-btn" type="button" onclick="scrollCoachChatToBottom(true)"
-            title="Przewiń na dół"
-            style="
-              display: none;
-              position: absolute;
-              right: 14px;
-              bottom: 14px;
-              width: 38px;
-              height: 38px;
-              border-radius: 50%;
-              background: var(--surface-elevated);
-              border: 1px solid var(--accent);
-              color: var(--accent);
-              box-shadow: 0 4px 14px rgba(0,0,0,0.6);
-              cursor: pointer;
-              z-index: 25;
-              font-size: 16px;
-              align-items: center;
-              justify-content: center;
-              transition: transform 0.2s, opacity 0.2s;
-            ">
-            ⬇️
-          </button>
-        </div>
-
-        <!-- Chat Input Bar -->
-        <div style="display: flex; gap: 8px; align-items: flex-end; margin-bottom: 24px;">
-          <textarea id="coach-question-input" class="text-area" style="min-height: 44px; height: 44px; margin: 0; padding: 10px; font-size: 14px; resize: none; flex: 1;" placeholder="Napisz do trenera..."></textarea>
-          <button id="coach-submit-btn" class="btn btn-primary" style="width: auto; height: 44px; padding: 0 18px; font-size: 14px; white-space: nowrap;" onclick="askCoachQuestion()">Wyślij</button>
-        </div>
+        <button id="coach-scroll-bottom-btn" type="button" onclick="scrollCoachChatToBottom(true)"
+          title="Przewiń na dół"
+          style="
+            display: none;
+            position: absolute;
+            right: 14px;
+            bottom: 14px;
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            background: var(--surface-elevated);
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            box-shadow: 0 4px 14px rgba(0,0,0,0.6);
+            cursor: pointer;
+            z-index: 25;
+            font-size: 16px;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s, opacity 0.2s;
+          ">
+          ⬇️
+        </button>
       </div>
+
+      <!-- Chat Input Bar -->
+      <div style="display: flex; gap: 8px; align-items: flex-end; margin-bottom: 8px;">
+        <textarea id="coach-question-input" class="text-area" style="min-height: 44px; height: 44px; margin: 0; padding: 10px 12px; font-size: 14px; resize: none; flex: 1; border-radius: 12px;" placeholder="Napisz do trenera..."></textarea>
+        <button id="coach-submit-btn" class="btn btn-primary" style="width: auto; height: 44px; padding: 0 18px; font-size: 14px; font-weight: 800; border-radius: 12px; white-space: nowrap;" onclick="askCoachQuestion()">Wyślij</button>
+      </div>
+
+      <!-- Subtle Profile Summary Anchor to preserve JS compatibility -->
+      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 10.5px; color: var(--text-muted); padding: 2px 4px;">
+        <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80%;">
+          <span>👤 Kontekst: </span><span id="coach-profile-summary">Uzupełnij wagę i cel</span>
+        </div>
+        <button type="button" style="background: none; border: none; color: var(--accent); font-size: 11px; cursor: pointer;" onclick="showView('settings')">Ustawienia ⚙️</button>
+      </div>
+
     </div>
   </section>
 
@@ -1470,6 +1469,29 @@
     </div>
   </div>
 
+  <!-- MODAL: ACTIVE WORKOUT STRUCTURE & REORDERING (REQUEST 4) -->
+  <div id="modal-active-workout-structure" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 225; align-items: center; justify-content: center; padding: 14px;">
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px; max-width: 500px; width: 100%; max-height: 90vh; overflow-y: auto;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h3 style="font-size: 16px; font-weight: 800; color: var(--accent);">🔀 Edycja sesji: kolejność i serie</h3>
+        <button type="button" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;" onclick="closeActiveWorkoutStructureModal()">✕</button>
+      </div>
+      <p style="font-size: 11px; color: var(--text-muted); line-height: 1.4; margin-bottom: 12px;">
+        Zmiany dotyczą bieżącej sesji treningowej. Możesz zmienić kolejność ćwiczeń (strzałki ⬆️ ⬇️), połączyć ćwiczenia w superserie lub dodać/usunąć serie.
+      </p>
+
+      <div id="active-workout-structure-list" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;"></div>
+
+      <div style="border-top: 1px solid var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+        <button type="button" class="btn btn-secondary" style="font-size: 12px; padding: 8px; width: 100%;" onclick="promptAddExerciseToActiveWorkout()">➕ Dodaj nowe ćwiczenie do sesji</button>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="btn btn-primary" style="flex: 1;" onclick="saveActiveWorkoutStructureChanges()">💾 Zapisz zmiany w sesji</button>
+          <button type="button" class="btn btn-secondary" onclick="closeActiveWorkoutStructureModal()">Anuluj</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL: POST-WORKOUT FEEDBACK (PRD-07) -->
   <div id="modal-post-workout-context" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 220; align-items: center; justify-content: center; padding: 16px;">
     <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; max-width: 440px; width: 100%; max-height: 90vh; overflow-y: auto;">
@@ -1587,6 +1609,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=55"></script>
+  <script src="app.js?v=56"></script>
 </body>
 </html>
