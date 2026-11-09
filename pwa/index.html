@@ -797,11 +797,16 @@
 
       <!-- Session Selector & Visual Scorecard -->
       <div class="card" style="padding: 14px;">
-        <div class="card-title" style="margin-bottom: 10px;">
+        <div class="card-title" style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
           <span>📊 Analiza Treningu AI</span>
-          <button type="button" class="btn btn-sm btn-accent" style="width: auto; font-size: 11px; padding: 5px 10px;" onclick="regenerateCurrentAnalysis()">
-            🔄 Analizuj z AI
-          </button>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <button type="button" id="btn-reload-current-analysis" class="btn btn-sm btn-secondary" style="width: auto; font-size: 11px; padding: 5px 10px; color: var(--accent); border-color: rgba(0,229,255,0.35);" onclick="reloadCurrentActiveSession()" title="Przelicz tonaż, zaktualizuj notatkę AI i odśwież wpis w kalendarzu">
+              🔄 Przeładuj trening
+            </button>
+            <button type="button" class="btn btn-sm btn-accent" style="width: auto; font-size: 11px; padding: 5px 10px;" onclick="regenerateCurrentAnalysis()">
+              ✨ Analizuj z AI
+            </button>
+          </div>
         </div>
 
         <select id="analysis-session-select" class="input-box" style="text-align: left; font-size: 13px; padding: 9px 10px; margin-bottom: 12px;" onchange="selectAnalysisSession(this.value)">
@@ -1609,6 +1614,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=57"></script>
+  <script src="app.js?v=58"></script>
 </body>
 </html>

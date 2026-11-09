@@ -1379,17 +1379,20 @@ function renderRecentWorkouts() {
     const hasAi = Boolean(session.coachFeedback);
     return `
       <div class="card" style="padding: 12px 14px; margin-bottom: 10px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
-          <div style="min-width: 0; flex: 1;">
-            <div style="font-size: 14px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <div style="min-width: 160px; flex: 1;">
+            <div style="font-size: 14.5px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
               ${escapeHtml(session.planName || 'Trening')}
             </div>
             <div style="color: var(--text-muted); font-size: 11px; margin-top: 2px;">
               ${new Date(session.endTime || Date.now()).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} • <b>${session.completedSets || 0}</b> serii ${durText ? ' • ' + durText : ''}${avgRestText}
             </div>
           </div>
-          <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
-            <span class="badge badge-cyan" style="font-size: 11px;">${session.totalVolumeKg || 0} kg</span>
+          <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end;">
+            <span class="badge badge-cyan" style="font-size: 11px; padding: 4px 8px;">${session.totalVolumeKg || 0} kg</span>
+            <button id="btn-reload-workout-${session.id}" data-reload-session="${session.id}" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 5px 9px; color: var(--accent); border-color: rgba(0,229,255,0.35);" onclick="reloadWorkoutSession('${session.id}')" title="Przelicz tonaż, zaktualizuj notatkę AI i odśwież wpis w kalendarzu">
+              🔄 Przeładuj trening
+            </button>
             <button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 5px 9px; ${hasAi ? 'border-color: rgba(0,230,118,0.4); color: var(--success);' : ''}" onclick="viewHistoryReport('${session.id}')">
               ${hasAi ? '📊 Raport AI' : '✨ Analizuj'}
             </button>
@@ -1399,6 +1402,141 @@ function renderRecentWorkouts() {
       </div>
     `;
   }).join('');
+}
+
+function getSessionWeightKg(session) {
+  if (session && (session.endTime || session.startTime)) {
+    const dayKey = getIsoDateFromTimestamp(session.endTime || session.startTime);
+    const dayMeas = (STATE.bodyMeasurements || []).find(m => getMeasurementDayKey(m) === dayKey && m.weightKg);
+    if (dayMeas && parseFloat(dayMeas.weightKg) > 0) {
+      return parseFloat(dayMeas.weightKg);
+    }
+  }
+  return getUserCurrentWeightKg();
+}
+
+function recalculateSessionTonnage(session) {
+  if (!session || !Array.isArray(session.sets)) return session?.totalVolumeKg || 0;
+
+  const sessionWeight = getSessionWeightKg(session);
+  const planExercises = (session.planSnapshot && session.planSnapshot.exercises) || [];
+  const currentPlan = STATE.plans.find(p => p.id === session.planId);
+  const currentPlanExs = (currentPlan && currentPlan.exercises) || [];
+
+  let newTotalVolume = 0;
+  session.sets.forEach(s => {
+    const exName = s.exercise || s.name || '';
+    const planEx = planExercises.find(e => e.name === exName) || currentPlanExs.find(e => e.name === exName) || null;
+
+    let loadType = s.loadType || planEx?.loadType;
+    if (!loadType) {
+      if (isDumbbellExercise({ name: exName })) loadType = 'dual_dumbbell';
+      else if (isCalisthenicsExercise({ name: exName })) loadType = 'bodyweight';
+      else loadType = 'standard';
+    }
+
+    let incBw = s.includeBodyweightInTonnage;
+    if (typeof incBw !== 'boolean') {
+      if (typeof planEx?.includeBodyweightInTonnage === 'boolean') {
+        incBw = planEx.includeBodyweightInTonnage;
+      } else {
+        incBw = getDefaultBodyweightTonnageFlag({ name: exName, loadType });
+      }
+    }
+
+    const rawWeight = parseFloat(s.weight) || 0;
+    const reps = parseInt(s.reps) || 0;
+    let effectiveWeight = rawWeight;
+
+    if (loadType === 'bodyweight') {
+      const isTimedOrIso = isIsometricOrTimedExercise({ name: exName }) || Boolean(s.isTimed) || String(s.reps || '').toLowerCase().includes('s');
+      if (isTimedOrIso && reps === 0) {
+        effectiveWeight = 0;
+      } else if (incBw) {
+        // Formuła: (Masa ciała + Ciężar dodatkowy) * Powtórzenia
+        effectiveWeight = Math.round((sessionWeight + rawWeight) * 10) / 10;
+      } else {
+        // Gdy opcja odznaczona: Ciężar dodatkowy * Powtórzenia (lub 0 gdy brak)
+        effectiveWeight = rawWeight;
+      }
+    } else if (loadType === 'dual_dumbbell') {
+      effectiveWeight = rawWeight * 2;
+    } else {
+      effectiveWeight = rawWeight;
+    }
+
+    s.effectiveWeight = effectiveWeight;
+    s.loadType = loadType;
+    s.includeBodyweightInTonnage = incBw;
+
+    newTotalVolume += (effectiveWeight * reps);
+  });
+
+  session.totalVolumeKg = Math.round(newTotalVolume);
+
+  const durSec = session.durationSeconds || (session.endTime && session.startTime ? Math.round((session.endTime - session.startTime) / 1000) : 1800);
+  session.burnedKcal = Math.round(((durSec / 60) * 6.5) + (session.totalVolumeKg * 0.012));
+  session.epocKcal = Math.round(session.burnedKcal * 0.15);
+
+  return session.totalVolumeKg;
+}
+
+async function reloadWorkoutSession(sessionId) {
+  const session = STATE.history.find(s => s.id === sessionId);
+  if (!session) return alert('Nie znaleziono treningu do przeładowania.');
+
+  const reloadBtns = document.querySelectorAll(`[data-reload-session="${sessionId}"], #btn-reload-workout-${sessionId}, #btn-reload-current-analysis`);
+  const origHtmlMap = new Map();
+  reloadBtns.forEach(b => {
+    origHtmlMap.set(b, b.innerHTML);
+    b.disabled = true;
+    b.innerHTML = '⏳ Przeładowuję...';
+  });
+
+  try {
+    // 1. Przelicz całkowity tonaż wg aktualnych reguł
+    const oldVolume = session.totalVolumeKg || 0;
+    const newVolume = recalculateSessionTonnage(session);
+    safeLocalStorageSet('iron_history', JSON.stringify(STATE.history));
+
+    // Natychmiast odśwież widok kafelka z nowym tonażem
+    renderRecentWorkouts();
+    renderHomeKpis();
+    if (typeof renderAnalysisSessionSelector === 'function') renderAnalysisSessionSelector();
+    if (typeof renderAnalysisSessionOverview === 'function' && STATE.currentCoachReportSessionId === sessionId) {
+      renderAnalysisSessionOverview(session);
+    }
+
+    // 2. Popraw notatkę od trenera z analizy AI
+    await triggerCoachAnalysis(session);
+
+    // 3. Odśwież widok kafelka z treningiem i wpis w kalendarzu
+    const dateKey = getIsoDateFromTimestamp(session.endTime || session.startTime || Date.now());
+    if (typeof generateCalendarDayAiSummary === 'function') {
+      await generateCalendarDayAiSummary(dateKey, true);
+    }
+    if (typeof renderCalendarDashboard === 'function') {
+      renderCalendarDashboard();
+    }
+    renderRecentWorkouts();
+    renderHomeKpis();
+
+    alert(`✅ Przeładowano trening "${session.planName || 'Trening'}"!\n\n1. Przeliczony całkowity tonaż: ${newVolume} kg (wcześniej: ${oldVolume} kg)\n2. Notatka od trenera z analizy AI została zaktualizowana\n3. Kafelek treningu i wpis w kalendarzu zostały odświeżone.`);
+  } catch (err) {
+    console.error('Błąd przeładowywania treningu:', err);
+    alert('Błąd przeładowywania treningu: ' + (err.message || err));
+  } finally {
+    reloadBtns.forEach(b => {
+      b.disabled = false;
+      b.innerHTML = origHtmlMap.get(b) || '🔄 Przeładuj trening';
+    });
+  }
+}
+
+function reloadCurrentActiveSession() {
+  const targetId = STATE.currentCoachReportSessionId || (STATE.history[0] && STATE.history[0].id);
+  if (!targetId) return alert('Brak zapisanego treningu do przeładowania!');
+  reloadWorkoutSession(targetId);
 }
 
 function deleteHistorySession(sessionId, skipConfirm = false) {
@@ -8472,7 +8610,10 @@ function buildWorkoutDayModuleHtml(dateKey, dayWorkouts, aiCache) {
     <div>
       <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap;">
         <span class="badge" style="background: rgba(255,179,0,0.18); color: var(--primary); font-size: 11px;">🏋️ DZIEŃ TRENINGOWY • ${escapeHtml(planNames)}</span>
-        <button type="button" class="btn btn-sm btn-secondary" style="width: auto; padding: 3px 8px; font-size: 10px;" onclick="generateCalendarDayAiSummary('${dateKey}', true)">🤖 Odśwież Gemini</button>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          ${dayWorkouts[0] ? `<button type="button" class="btn btn-sm btn-secondary" style="width: auto; padding: 3px 8px; font-size: 10px; color: var(--accent); border-color: rgba(0,229,255,0.35);" onclick="reloadWorkoutSession('${dayWorkouts[0].id}')" title="Przelicz tonaż, zaktualizuj notatkę AI i odśwież wpis w kalendarzu">🔄 Przeładuj trening</button>` : ''}
+          <button type="button" class="btn btn-sm btn-secondary" style="width: auto; padding: 3px 8px; font-size: 10px;" onclick="generateCalendarDayAiSummary('${dateKey}', true)">🤖 Odśwież Gemini</button>
+        </div>
       </div>
       <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px;">
         <div style="background: rgba(0,0,0,0.28); border: 1px solid var(--border); border-radius: 8px; padding: 7px 4px; text-align: center;">
