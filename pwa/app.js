@@ -90,7 +90,9 @@ const STATE = {
   calendarAiSummaries: JSON.parse(localStorage.getItem('iron_calendar_ai_summaries') || '{}'),
   gdriveWebhookUrl: localStorage.getItem('iron_gdrive_webhook_url') || '',
   gdriveWebhookSecret: localStorage.getItem('iron_gdrive_webhook_secret') || '',
-  gdriveOauthToken: localStorage.getItem('iron_gdrive_oauth_token') || ''
+  gdriveOauthToken: localStorage.getItem('iron_gdrive_oauth_token') || '',
+  isReloadingWorkout: false,
+  lastWorkoutReloadTime: parseInt(localStorage.getItem('iron_last_workout_reload_ts') || '0', 10) || 0
 };
 
 // Safe localStorage wrapper to protect against QuotaExceededError
@@ -1192,6 +1194,10 @@ function showView(viewName) {
     if (typeof loadGoogleDriveConfig === 'function') loadGoogleDriveConfig();
   }
 
+  if (typeof updateWorkoutReloadButtonsCooldown === 'function') {
+    updateWorkoutReloadButtonsCooldown();
+  }
+
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -1402,6 +1408,10 @@ function renderRecentWorkouts() {
       </div>
     `;
   }).join('');
+
+  if (typeof updateWorkoutReloadButtonsCooldown === 'function') {
+    updateWorkoutReloadButtonsCooldown();
+  }
 }
 
 // Resolve bodyweight for a workout/session closest to the workout date/time, but NEVER forward in time
@@ -1544,17 +1554,77 @@ function recalculateSessionTonnage(session) {
   return session.totalVolumeKg;
 }
 
+// Rate limiting: workout can be reloaded only once every 30 seconds
+const WORKOUT_RELOAD_COOLDOWN_MS = 30000;
+
+function getWorkoutReloadCooldownRemainingSec() {
+  const lastTs = parseInt(localStorage.getItem('iron_last_workout_reload_ts') || '0', 10) || (STATE.lastWorkoutReloadTime || 0);
+  const diff = Date.now() - lastTs;
+  if (diff < WORKOUT_RELOAD_COOLDOWN_MS) {
+    return Math.ceil((WORKOUT_RELOAD_COOLDOWN_MS - diff) / 1000);
+  }
+  return 0;
+}
+
+let workoutReloadCooldownTimer = null;
+
+function updateWorkoutReloadButtonsCooldown() {
+  const remaining = getWorkoutReloadCooldownRemainingSec();
+  const allReloadBtns = document.querySelectorAll('[data-reload-session], #btn-reload-current-analysis, [onclick*="reloadWorkoutSession"]');
+
+  if (STATE.isReloadingWorkout) {
+    allReloadBtns.forEach(btn => {
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Przeładowuję...';
+    });
+    return;
+  }
+
+  if (remaining > 0) {
+    allReloadBtns.forEach(btn => {
+      btn.disabled = true;
+      btn.style.opacity = '0.7';
+      btn.style.cursor = 'not-allowed';
+      btn.innerHTML = `⏳ Odczekaj ${remaining}s`;
+      btn.title = `Blokada 30s: kolejny raz możesz przeładować za ${remaining} s.`;
+    });
+    if (!workoutReloadCooldownTimer) {
+      workoutReloadCooldownTimer = setInterval(() => {
+        updateWorkoutReloadButtonsCooldown();
+      }, 1000);
+    }
+  } else {
+    if (workoutReloadCooldownTimer) {
+      clearInterval(workoutReloadCooldownTimer);
+      workoutReloadCooldownTimer = null;
+    }
+    allReloadBtns.forEach(btn => {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+      btn.innerHTML = '🔄 Przeładuj trening';
+      btn.title = 'Przelicz tonaż, zaktualizuj notatkę AI i odśwież wpis w kalendarzu (raz na 30s)';
+    });
+  }
+}
+
 async function reloadWorkoutSession(sessionId) {
+  if (STATE.isReloadingWorkout) {
+    alert('⏳ Przeładowywanie treningu jest już w toku. Poczekaj na ukończenie.');
+    return;
+  }
+
+  const remaining = getWorkoutReloadCooldownRemainingSec();
+  if (remaining > 0) {
+    alert(`⏳ Blokada 30 sekund: trening można przeładować tylko raz na 30 sekund.\nOdczekaj jeszcze ${remaining} s przed ponowną próbą.`);
+    return;
+  }
+
   const session = STATE.history.find(s => s.id === sessionId);
   if (!session) return alert('Nie znaleziono treningu do przeładowania.');
 
-  const reloadBtns = document.querySelectorAll(`[data-reload-session="${sessionId}"], #btn-reload-workout-${sessionId}, #btn-reload-current-analysis`);
-  const origHtmlMap = new Map();
-  reloadBtns.forEach(b => {
-    origHtmlMap.set(b, b.innerHTML);
-    b.disabled = true;
-    b.innerHTML = '⏳ Przeładowuję...';
-  });
+  STATE.isReloadingWorkout = true;
+  updateWorkoutReloadButtonsCooldown();
 
   try {
     // 1. Przelicz całkowity tonaż wg aktualnych reguł
@@ -1584,15 +1654,22 @@ async function reloadWorkoutSession(sessionId) {
     renderRecentWorkouts();
     renderHomeKpis();
 
+    // Zapisz znacznik czasu przeładowania na blokadę 30 sekund
+    const nowTs = Date.now();
+    STATE.lastWorkoutReloadTime = nowTs;
+    safeLocalStorageSet('iron_last_workout_reload_ts', String(nowTs));
+
     alert(`✅ Przeładowano trening "${session.planName || 'Trening'}"!\n\n1. Przeliczony całkowity tonaż: ${newVolume} kg (wcześniej: ${oldVolume} kg)\n2. Notatka od trenera z analizy AI została zaktualizowana\n3. Kafelek treningu i wpis w kalendarzu zostały odświeżone.`);
   } catch (err) {
     console.error('Błąd przeładowywania treningu:', err);
+    // W przypadku błędu również nałóż blokadę, aby użytkownik nie spamował zapytań
+    const nowTs = Date.now();
+    STATE.lastWorkoutReloadTime = nowTs;
+    safeLocalStorageSet('iron_last_workout_reload_ts', String(nowTs));
     alert('Błąd przeładowywania treningu: ' + (err.message || err));
   } finally {
-    reloadBtns.forEach(b => {
-      b.disabled = false;
-      b.innerHTML = origHtmlMap.get(b) || '🔄 Przeładuj trening';
-    });
+    STATE.isReloadingWorkout = false;
+    updateWorkoutReloadButtonsCooldown();
   }
 }
 
@@ -8798,6 +8875,10 @@ function renderCalendarDaySummaryCard(dateKey) {
   // Automatically generate Gemini summary in background if API key is present and not yet cached
   if (STATE.apiKey && (!aiCache || (!aiCache.workoutSummary && dayWorkouts.length > 0) || (!aiCache.oneWordStatus && measEntry))) {
     generateCalendarDayAiSummary(dateKey, false);
+  }
+
+  if (typeof updateWorkoutReloadButtonsCooldown === 'function') {
+    updateWorkoutReloadButtonsCooldown();
   }
 }
 
