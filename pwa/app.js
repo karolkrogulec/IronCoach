@@ -1404,21 +1404,84 @@ function renderRecentWorkouts() {
   }).join('');
 }
 
-function getSessionWeightKg(session) {
-  if (session && (session.endTime || session.startTime)) {
-    const dayKey = getIsoDateFromTimestamp(session.endTime || session.startTime);
-    const dayMeas = (STATE.bodyMeasurements || []).find(m => getMeasurementDayKey(m) === dayKey && m.weightKg);
-    if (dayMeas && parseFloat(dayMeas.weightKg) > 0) {
-      return parseFloat(dayMeas.weightKg);
+// Resolve bodyweight for a workout/session closest to the workout date/time, but NEVER forward in time
+function getWeightForWorkout(workoutOrTimestamp = null) {
+  let targetTs = Date.now();
+  let targetDayKey = null;
+
+  if (workoutOrTimestamp) {
+    if (typeof workoutOrTimestamp === 'number') {
+      targetTs = workoutOrTimestamp;
+      targetDayKey = getIsoDateFromTimestamp(targetTs);
+    } else if (typeof workoutOrTimestamp === 'string') {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(workoutOrTimestamp)) {
+        targetDayKey = workoutOrTimestamp;
+        targetTs = new Date(`${targetDayKey}T23:59:59`).getTime();
+      } else {
+        const parsed = Date.parse(workoutOrTimestamp);
+        if (!isNaN(parsed)) {
+          targetTs = parsed;
+          targetDayKey = getIsoDateFromTimestamp(targetTs);
+        }
+      }
+    } else if (typeof workoutOrTimestamp === 'object') {
+      if (workoutOrTimestamp.endTime || workoutOrTimestamp.startTime || workoutOrTimestamp.timestamp) {
+        targetTs = workoutOrTimestamp.endTime || workoutOrTimestamp.startTime || workoutOrTimestamp.timestamp;
+        targetDayKey = getIsoDateFromTimestamp(targetTs);
+      } else if (workoutOrTimestamp.dayKey && /^\d{4}-\d{2}-\d{2}$/.test(workoutOrTimestamp.dayKey)) {
+        targetDayKey = workoutOrTimestamp.dayKey;
+        targetTs = new Date(`${targetDayKey}T23:59:59`).getTime();
+      } else if (workoutOrTimestamp.date && /^\d{4}-\d{2}-\d{2}$/.test(workoutOrTimestamp.date)) {
+        targetDayKey = workoutOrTimestamp.date;
+        targetTs = new Date(`${targetDayKey}T23:59:59`).getTime();
+      }
     }
+  } else if (STATE.activeWorkout) {
+    targetTs = STATE.activeWorkout.startTime || Date.now();
+    targetDayKey = getIsoDateFromTimestamp(targetTs);
   }
-  return getUserCurrentWeightKg();
+
+  if (!targetDayKey) {
+    targetDayKey = getIsoDateFromTimestamp(targetTs || Date.now());
+  }
+
+  // Filter measurements: must be on or before target day key (NEVER forward in time relative to workout)
+  const measurements = (STATE.bodyMeasurements || []).filter(m => {
+    const w = parseFloat(m.weightKg);
+    if (!w || w <= 0) return false;
+    const mDayKey = getMeasurementDayKey(m);
+    if (!mDayKey) return false;
+    // Reject any measurement strictly in the future relative to the workout
+    if (mDayKey > targetDayKey) return false;
+    return true;
+  });
+
+  if (measurements.length > 0) {
+    // Sort descending: closest past or same-day measurement first
+    measurements.sort((a, b) => {
+      const aKey = getMeasurementDayKey(a);
+      const bKey = getMeasurementDayKey(b);
+      if (aKey !== bKey) return bKey.localeCompare(aKey);
+      return (b.timestamp || 0) - (a.timestamp || 0);
+    });
+    const closest = measurements[0];
+    const w = parseFloat(closest.weightKg);
+    if (w > 0) return Math.round(w * 10) / 10;
+  }
+
+  const profileWeight = parseFloat(STATE.userProfile?.weightKg);
+  return (profileWeight > 0) ? Math.round(profileWeight * 10) / 10 : 80.0;
+}
+
+function getSessionWeightKg(session) {
+  return getWeightForWorkout(session);
 }
 
 function recalculateSessionTonnage(session) {
   if (!session || !Array.isArray(session.sets)) return session?.totalVolumeKg || 0;
 
   const sessionWeight = getSessionWeightKg(session);
+  session.userWeightKg = sessionWeight;
   const planExercises = (session.planSnapshot && session.planSnapshot.exercises) || [];
   const currentPlan = STATE.plans.find(p => p.id === session.planId);
   const currentPlanExs = (currentPlan && currentPlan.exercises) || [];
@@ -2937,9 +3000,7 @@ function saveActiveWorkoutStructureChanges() {
 
 // PRD-08 & Request: Biomechanical Bodyweight Volume Calculation
 function getUserCurrentWeightKg() {
-  const latestScale = (STATE.bodyMeasurements || []).find(m => m.weightKg);
-  const w = parseFloat(latestScale && latestScale.weightKg) || parseFloat(STATE.userProfile && STATE.userProfile.weightKg) || 80.0;
-  return w > 0 ? w : 80.0;
+  return getWeightForWorkout(Date.now());
 }
 
 function isIsometricOrTimedExercise(ex) {
@@ -2975,7 +3036,7 @@ function getExerciseBodyweightRatio(ex) {
   return 0.66;
 }
 
-function getEffectiveSetWeight(ex, set) {
+function getEffectiveSetWeight(ex, set, workoutContext = null) {
   const loadType = ex.loadType || 'standard';
   const rawWeight = parseFloat(set?.weight) || 0;
 
@@ -2991,7 +3052,7 @@ function getEffectiveSetWeight(ex, set) {
 
     if (ex.includeBodyweightInTonnage) {
       // Gdy opcja jest zaznaczona: Tonaż = (Masa ciała + Ciężar dodatkowy) * Powtórzenia
-      const userWeight = getUserCurrentWeightKg();
+      const userWeight = getWeightForWorkout(workoutContext || STATE.activeWorkout);
       return Math.round((userWeight + extraWeight) * 10) / 10;
     }
 
@@ -3806,6 +3867,7 @@ async function finishCurrentWorkout() {
   let completedSets = 0;
   let totalVolumeKg = 0;
   const completedSetsList = [];
+  const workoutWeight = getWeightForWorkout(STATE.activeWorkout);
 
   STATE.activeWorkout.exercises.forEach(ex => {
     const isCalisthenics = isCalisthenicsExercise(ex);
@@ -3813,7 +3875,7 @@ async function finishCurrentWorkout() {
       totalSets++;
       if (s.completed) {
         completedSets++;
-        const effectiveWeight = getEffectiveSetWeight(ex, s);
+        const effectiveWeight = getEffectiveSetWeight(ex, s, STATE.activeWorkout);
         totalVolumeKg += (effectiveWeight * s.reps);
         const relStartStr = s.relStartStr || formatRelativeWorkoutTime(s.startedAt || startTime, startTime);
         const relEndStr = s.relEndStr || formatRelativeWorkoutTime(s.completedAt || endTime, startTime);
@@ -3870,6 +3932,7 @@ async function finishCurrentWorkout() {
     epocKcal: epocKcal,
     completedSets: completedSets,
     sets: completedSetsList,
+    userWeightKg: workoutWeight,
     userFeedback: null,
     coachFeedback: null
   };
@@ -7342,7 +7405,8 @@ async function triggerCoachAnalysis(session) {
   reportBox.style.display = 'none';
 
   const { profileSection, plansSection, userWeightKg } = buildCoachProfileAndPlansContext();
-  const currentSessionDetails = formatSessionDetailsForCoach(session, userWeightKg);
+  const sessionWeight = getWeightForWorkout(session);
+  const currentSessionDetails = formatSessionDetailsForCoach(session, sessionWeight || userWeightKg);
 
   let userFeedbackSection = '';
   if (session.userFeedback) {
@@ -7616,8 +7680,9 @@ async function askCoachQuestion() {
   const { profileSection, plansSection, userWeightKg } = buildCoachProfileAndPlansContext();
   const validWorkouts = STATE.history.filter(h => !isWorkoutShortOrTest(h));
   const lastWorkout = validWorkouts[0] || STATE.history[0];
+  const lastWorkoutWeight = lastWorkout ? getWeightForWorkout(lastWorkout) : userWeightKg;
   const lastWorkoutDetails = lastWorkout
-    ? formatSessionDetailsForCoach(lastWorkout, userWeightKg)
+    ? formatSessionDetailsForCoach(lastWorkout, lastWorkoutWeight || userWeightKg)
     : `Brak zarejestrowanych sesji w historii.`;
 
   const windowDays = getCoachContextWindowDays();
