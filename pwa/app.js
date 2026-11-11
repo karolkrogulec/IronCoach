@@ -5839,9 +5839,12 @@ function renderLatestScaleReport() {
 
   container.innerHTML = `
     <div style="background: var(--surface-elevated); border-radius: 12px; padding: 12px; border: 1px solid var(--border);">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 6px;">
         <span style="font-size: 12px; color: var(--text-muted);">📅 Pomiar z dnia: <b style="color: var(--text);">${escapeHtml(dateStr)}</b></span>
-        <span class="badge">${escapeHtml(entry.source || 'Waga / Pomiar')}</span>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <button type="button" class="btn btn-sm btn-primary" style="font-size: 11px; padding: 3px 8px;" onclick="openEditBodyMeasurementModal('${entry.id}')">✏️ Edytuj ten pomiar</button>
+          <span class="badge">${escapeHtml(entry.source || 'Waga / Pomiar')}</span>
+        </div>
       </div>
 
       <!-- Top 3 Hero KPIs like Fitdays Header -->
@@ -6402,9 +6405,10 @@ function renderBodyHistoryList() {
         <div style="font-size: 12px; color: var(--text); margin-bottom: 8px; line-height: 1.5;">
           ${tags.join(' • ') || 'Zapis pomiaru'}
         </div>
-        <div style="display: flex; gap: 6px; justify-content: flex-end;">
-          ${m.bodyFatPct || m.muscleMassKg ? `<button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 8px;" onclick="selectBodyMeasurement('${m.id}')">👁️ Pokaż w tabeli</button>` : ''}
-          <button class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 8px; color: var(--danger);" onclick="deleteBodyMeasurement('${m.id}')">Usuń</button>
+        <div style="display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap;">
+          <button type="button" class="btn btn-sm btn-primary" style="font-size: 11px; padding: 4px 9px;" onclick="openEditBodyMeasurementModal('${m.id}')">✏️ Edytuj</button>
+          ${m.bodyFatPct || m.muscleMassKg ? `<button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 8px;" onclick="selectBodyMeasurement('${m.id}')">👁️ Pokaż w tabeli</button>` : ''}
+          <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 8px; color: var(--danger);" onclick="deleteBodyMeasurement('${m.id}')">Usuń</button>
         </div>
       </div>
     `;
@@ -6426,6 +6430,235 @@ function deleteBodyMeasurement(id) {
     STATE.selectedBodyMeasurementId = null;
   }
   localStorage.setItem('iron_body_measurements', JSON.stringify(STATE.bodyMeasurements));
+  renderBodyMeasurementsView();
+}
+
+// ----------------------------------------------------------------------------
+// FULL MANUAL EDITING / ADDING BODY MEASUREMENTS (ALL METRICS & DATES)
+// ----------------------------------------------------------------------------
+function openEditBodyMeasurementModal(measurementId = null) {
+  const modal = document.getElementById('modal-edit-body-measurement');
+  if (!modal) return;
+
+  const idInput = document.getElementById('edit-meas-id');
+  const titleEl = document.getElementById('edit-meas-modal-title');
+  const deleteBtn = document.getElementById('btn-delete-meas-modal');
+
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = (val !== null && val !== undefined) ? val : '';
+  };
+
+  let entry = null;
+  if (measurementId) {
+    entry = (STATE.bodyMeasurements || []).find(m => m.id === measurementId);
+  }
+
+  if (entry) {
+    if (idInput) idInput.value = entry.id;
+    if (titleEl) titleEl.textContent = '✏️ Edycja Pomiaru Ciała';
+    if (deleteBtn) deleteBtn.style.display = 'block';
+
+    const dayKey = getMeasurementDayKey(entry);
+    let timeStr = '08:00';
+    if (entry.timestamp && !isNaN(entry.timestamp)) {
+      const d = new Date(entry.timestamp);
+      timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    } else if (entry.dateLabel && entry.dateLabel.includes(':')) {
+      const tm = entry.dateLabel.match(/(\d{1,2}):(\d{2})/);
+      if (tm) timeStr = `${tm[1].padStart(2, '0')}:${tm[2]}`;
+    }
+
+    setVal('edit-meas-date', dayKey);
+    setVal('edit-meas-time', timeStr);
+    setVal('edit-meas-source', entry.source || 'Ręczna edycja');
+
+    SCALAR_BODY_KEYS.forEach(k => {
+      setVal(`edit-meas-${k}`, entry[k]);
+    });
+
+    const sf = entry.segmentalFat || {};
+    ['leftArm', 'rightArm', 'trunk', 'leftLeg', 'rightLeg'].forEach(limb => {
+      setVal(`edit-meas-segFat-${limb}-kg`, sf[limb]?.kg);
+      setVal(`edit-meas-segFat-${limb}-pct`, sf[limb]?.pct);
+    });
+
+    const sm = entry.segmentalMuscle || {};
+    ['leftArm', 'rightArm', 'trunk', 'leftLeg', 'rightLeg'].forEach(limb => {
+      setVal(`edit-meas-segMus-${limb}-kg`, sm[limb]?.kg);
+      setVal(`edit-meas-segMus-${limb}-pct`, sm[limb]?.pct);
+    });
+
+    const wc = entry.weightControl || {};
+    setVal('edit-meas-wc-targetWeightKg', wc.targetWeightKg);
+    setVal('edit-meas-wc-weightControlKg', wc.weightControlKg);
+    setVal('edit-meas-wc-fatControlKg', wc.fatControlKg);
+    setVal('edit-meas-wc-muscleControlKg', wc.muscleControlKg);
+  } else {
+    // Brand new manual measurement
+    if (idInput) idInput.value = '';
+    if (titleEl) titleEl.textContent = '➕ Nowy Pomiar Ciała (Ręczny / Archiwalny)';
+    if (deleteBtn) deleteBtn.style.display = 'none';
+
+    const now = new Date();
+    const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const curTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    setVal('edit-meas-date', todayIso);
+    setVal('edit-meas-time', curTime);
+    setVal('edit-meas-source', 'Ręczny wpis');
+
+    SCALAR_BODY_KEYS.forEach(k => setVal(`edit-meas-${k}`, ''));
+    ['leftArm', 'rightArm', 'trunk', 'leftLeg', 'rightLeg'].forEach(limb => {
+      setVal(`edit-meas-segFat-${limb}-kg`, '');
+      setVal(`edit-meas-segFat-${limb}-pct`, '');
+      setVal(`edit-meas-segMus-${limb}-kg`, '');
+      setVal(`edit-meas-segMus-${limb}-pct`, '');
+    });
+    setVal('edit-meas-wc-targetWeightKg', '');
+    setVal('edit-meas-wc-weightControlKg', '');
+    setVal('edit-meas-wc-fatControlKg', '');
+    setVal('edit-meas-wc-muscleControlKg', '');
+  }
+
+  modal.style.display = 'flex';
+}
+
+function closeEditBodyMeasurementModal() {
+  const modal = document.getElementById('modal-edit-body-measurement');
+  if (modal) modal.style.display = 'none';
+}
+
+function saveBodyMeasurementModalChanges() {
+  const idInput = document.getElementById('edit-meas-id');
+  const measId = idInput?.value?.trim() || null;
+
+  const dateVal = document.getElementById('edit-meas-date')?.value?.trim();
+  if (!dateVal || !/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+    return alert('Wybierz poprawną datę pomiaru (format: RRRR-MM-DD)!');
+  }
+  const timeVal = document.getElementById('edit-meas-time')?.value?.trim() || '08:00';
+  const sourceVal = document.getElementById('edit-meas-source')?.value?.trim() || 'Ręczna edycja';
+
+  const ts = new Date(`${dateVal}T${timeVal}:00`).getTime();
+  const validTs = !isNaN(ts) ? ts : Date.now();
+  const dateLabel = `${dateVal} ${timeVal}`;
+
+  let entry = null;
+  if (measId) {
+    entry = (STATE.bodyMeasurements || []).find(m => m.id === measId);
+  }
+
+  const isNew = !entry;
+  if (isNew) {
+    entry = {
+      id: 'meas-' + Date.now() + '-' + Math.floor(Math.random() * 1000)
+    };
+  }
+
+  entry.dayKey = dateVal;
+  entry.timestamp = validTs;
+  entry.isoDate = new Date(validTs).toISOString();
+  entry.dateLabel = dateLabel;
+  entry.source = sourceVal;
+
+  // Read all scalar keys
+  SCALAR_BODY_KEYS.forEach(k => {
+    const el = document.getElementById(`edit-meas-${k}`);
+    if (!el) return;
+    const raw = el.value?.trim();
+    if (raw === '' || raw == null) {
+      entry[k] = null;
+    } else if (k === 'obesityLevel' || k === 'bodyType') {
+      entry[k] = raw;
+    } else {
+      const num = parseFloat(raw.replace(',', '.'));
+      entry[k] = !isNaN(num) ? num : null;
+    }
+  });
+
+  const parseNumOrNull = (id) => {
+    const v = document.getElementById(id)?.value?.trim();
+    if (!v) return null;
+    const n = parseFloat(v.replace(',', '.'));
+    return !isNaN(n) ? n : null;
+  };
+
+  // Read segmental fat
+  const limbs = ['leftArm', 'rightArm', 'trunk', 'leftLeg', 'rightLeg'];
+  let hasAnySegFat = false;
+  const segFat = {};
+  limbs.forEach(limb => {
+    const kg = parseNumOrNull(`edit-meas-segFat-${limb}-kg`);
+    const pct = parseNumOrNull(`edit-meas-segFat-${limb}-pct`);
+    if (kg != null || pct != null) hasAnySegFat = true;
+    segFat[limb] = { kg, pct, status: '' };
+  });
+  entry.segmentalFat = hasAnySegFat ? segFat : (entry.segmentalFat || null);
+
+  // Read segmental muscle
+  let hasAnySegMus = false;
+  const segMus = {};
+  limbs.forEach(limb => {
+    const kg = parseNumOrNull(`edit-meas-segMus-${limb}-kg`);
+    const pct = parseNumOrNull(`edit-meas-segMus-${limb}-pct`);
+    if (kg != null || pct != null) hasAnySegMus = true;
+    segMus[limb] = { kg, pct, status: '' };
+  });
+  entry.segmentalMuscle = hasAnySegMus ? segMus : (entry.segmentalMuscle || null);
+
+  // Read weight control
+  const targetWeightKg = parseNumOrNull('edit-meas-wc-targetWeightKg');
+  const weightControlKg = parseNumOrNull('edit-meas-wc-weightControlKg');
+  const fatControlKg = parseNumOrNull('edit-meas-wc-fatControlKg');
+  const muscleControlKg = parseNumOrNull('edit-meas-wc-muscleControlKg');
+  if (targetWeightKg != null || weightControlKg != null || fatControlKg != null || muscleControlKg != null) {
+    entry.weightControl = { targetWeightKg, weightControlKg, fatControlKg, muscleControlKg };
+  } else {
+    entry.weightControl = null;
+  }
+
+  // Ensure entry exists in array
+  if (isNew) {
+    if (!Array.isArray(STATE.bodyMeasurements)) STATE.bodyMeasurements = [];
+    STATE.bodyMeasurements.unshift(entry);
+  }
+
+  // Sort chronologically descending
+  STATE.bodyMeasurements.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+  // Set selected
+  STATE.selectedBodyMeasurementId = entry.id;
+
+  // Persist
+  localStorage.setItem('iron_body_measurements', JSON.stringify(STATE.bodyMeasurements));
+
+  // If newest measurement with weight exists, update profile weight
+  const newestWithWeight = STATE.bodyMeasurements.find(m => m.weightKg);
+  if (newestWithWeight && newestWithWeight.weightKg) {
+    STATE.userProfile.weightKg = newestWithWeight.weightKg;
+    localStorage.setItem('iron_user_profile', JSON.stringify(STATE.userProfile));
+    loadUserProfile();
+  }
+
+  closeEditBodyMeasurementModal();
+  renderBodyMeasurementsView();
+
+  alert(`✅ Pomyślnie ${isNew ? 'dodano nowy pomiar' : 'zapisano zmiany w pomiarze'} z dnia ${dateVal}!`);
+}
+
+function deleteMeasurementFromModal() {
+  const idInput = document.getElementById('edit-meas-id');
+  const measId = idInput?.value;
+  if (!measId) return;
+  if (!confirm('Czy na pewno chcesz trwale usunąć ten wpis z historii pomiarów?')) return;
+
+  STATE.bodyMeasurements = (STATE.bodyMeasurements || []).filter(m => m.id !== measId);
+  if (STATE.selectedBodyMeasurementId === measId) {
+    STATE.selectedBodyMeasurementId = null;
+  }
+  localStorage.setItem('iron_body_measurements', JSON.stringify(STATE.bodyMeasurements));
+  closeEditBodyMeasurementModal();
   renderBodyMeasurementsView();
 }
 
@@ -9028,7 +9261,10 @@ function buildMeasurementDayModuleHtml(dateKey, measEntry, aiCache, isCompactPan
             <span style="font-size: 11px; color: ${trend.color}; font-weight: 700; margin-left: 4px;">(${escapeHtml(trend.deltaStr)})</span>
           </div>
         </div>
-        ${!isCompactPanel ? `<button type="button" class="btn btn-sm btn-secondary" style="width: auto; padding: 4px 8px; font-size: 10px;" onclick="generateCalendarDayAiSummary('${dateKey}', true)">🤖 Odśwież AI</button>` : ''}
+        <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end;">
+          <button type="button" class="btn btn-sm btn-secondary" style="width: auto; padding: 4px 8px; font-size: 10px; color: var(--accent); border-color: rgba(0,229,255,0.35);" onclick="openEditBodyMeasurementModal('${measEntry.id}')">✏️ Edytuj pomiar</button>
+          ${!isCompactPanel ? `<button type="button" class="btn btn-sm btn-secondary" style="width: auto; padding: 4px 8px; font-size: 10px;" onclick="generateCalendarDayAiSummary('${dateKey}', true)">🤖 Odśwież AI</button>` : ''}
+        </div>
       </div>
       ${topIndicators.length > 0 ? `
         <div style="display: grid; grid-template-columns: repeat(${Math.min(4, topIndicators.length)}, 1fr); gap: 6px;">

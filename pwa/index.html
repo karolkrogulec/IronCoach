@@ -1019,9 +1019,12 @@
             <br>• <b>wykryje i pominie duplikaty</b>, jeśli wrzucisz to samo dwa razy.
           </p>
 
-          <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+          <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
             <button class="btn btn-accent" onclick="document.getElementById('scale-file-input').click()">
               📥 Wgraj 1 lub kilka plików (Zdjęcia / PDF / CSV)
+            </button>
+            <button type="button" class="btn btn-secondary" style="color: var(--text);" onclick="openEditBodyMeasurementModal(null)">
+              ➕ Wpisz pomiar ręcznie
             </button>
             <input type="file" id="scale-file-input" style="display: none;" multiple accept="image/*,.pdf,.csv,.txt,.json" onchange="importScaleReportFile(event)">
           </div>
@@ -1039,9 +1042,12 @@
       <!-- SUB-VIEW 3: MEASUREMENT HISTORY LIST -->
       <div id="body-subview-history" style="display: none;">
         <div class="card">
-          <div class="card-title">
+          <div class="card-title" style="flex-wrap: wrap; gap: 6px;">
             <span>📜 Historia Pomiarów Ciała</span>
-            <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 8px; color: var(--accent);" onclick="manualConsolidateMeasurements()">🧩 Scal dni i usuń duplikaty</button>
+            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+              <button type="button" class="btn btn-sm btn-accent" style="font-size: 11px; padding: 4px 8px;" onclick="openEditBodyMeasurementModal(null)">➕ Dodaj pomiar ręcznie</button>
+              <button type="button" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 8px; color: var(--accent);" onclick="manualConsolidateMeasurements()">🧩 Scal dni i usuń duplikaty</button>
+            </div>
           </div>
           <div id="body-history-list"></div>
         </div>
@@ -1571,6 +1577,309 @@
     </div>
   </div>
 
+  <!-- MODAL: MANUAL EDIT / ADD BODY MEASUREMENT -->
+  <div id="modal-edit-body-measurement" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 10060; align-items: center; justify-content: center; padding: 14px; pointer-events: all; touch-action: auto;" onclick="if(event.target === this) closeEditBodyMeasurementModal()">
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px; max-width: 560px; width: 100%; max-height: 92vh; overflow-y: auto; touch-action: pan-y;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h3 id="edit-meas-modal-title" style="font-size: 17px; font-weight: 800; color: var(--accent); margin: 0;">✏️ Edycja Pomiaru Ciała</h3>
+        <button type="button" style="background: none; border: none; color: var(--text-muted); font-size: 22px; cursor: pointer; padding: 0 4px; line-height: 1;" onclick="closeEditBodyMeasurementModal()">✕</button>
+      </div>
+
+      <input type="hidden" id="edit-meas-id">
+
+      <!-- SECTION 1: DATE, TIME & SOURCE -->
+      <div style="background: var(--surface-elevated); border: 1px solid rgba(0, 229, 255, 0.35); border-radius: 12px; padding: 12px; margin-bottom: 14px;">
+        <div style="font-size: 12px; font-weight: 800; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
+          📅 Data i Czas Pomiaru (Dane Historyczne)
+        </div>
+        <div style="display: grid; grid-template-columns: 1.4fr 1fr; gap: 8px; margin-bottom: 8px;">
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Data pomiaru (RRRR-MM-DD) *</label>
+            <input type="date" id="edit-meas-date" class="input-box" style="font-size: 13px; padding: 7px 8px;">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Godzina</label>
+            <input type="time" id="edit-meas-time" class="input-box" style="font-size: 13px; padding: 7px 8px;">
+          </div>
+        </div>
+        <div>
+          <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Źródło / Etykieta wpisu</label>
+          <input type="text" id="edit-meas-source" class="input-box" style="text-align: left; font-size: 12px; padding: 7px 8px;" placeholder="np. Waga Fitdays, Pomiar obwodów, Zrzut z telefonu...">
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); line-height: 1.4; margin-top: 6px;">
+          💡 <i>Wprowadzasz stare dane z telefonu? Zmień datę powyżej — wpis automatycznie ułoży się na osi czasu wykresów i kalendarza.</i>
+        </div>
+      </div>
+
+      <!-- SECTION 2: WEIGHT & KEY METRICS -->
+      <div style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 14px;">
+        <div style="font-size: 12px; font-weight: 800; color: var(--primary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
+          ⚖️ Waga i Podstawowe Parametry (Fitdays)
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+          <div>
+            <label style="font-size: 11px; color: var(--primary); font-weight: 700; display: block; margin-bottom: 3px;">Waga (kg)</label>
+            <input type="number" step="0.1" id="edit-meas-weightKg" class="input-box" placeholder="np. 88.5">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--accent); font-weight: 700; display: block; margin-bottom: 3px;">Tłuszcz (%)</label>
+            <input type="number" step="0.1" id="edit-meas-bodyFatPct" class="input-box" placeholder="np. 18.5">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--success); font-weight: 700; display: block; margin-bottom: 3px;">Mięśnie (kg)</label>
+            <input type="number" step="0.1" id="edit-meas-muscleMassKg" class="input-box" placeholder="np. 68.2">
+          </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">BMI</label>
+            <input type="number" step="0.1" id="edit-meas-bmi" class="input-box" placeholder="np. 25.8">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Mięśnie szkielet. (%)</label>
+            <input type="number" step="0.1" id="edit-meas-skeletalMusclePct" class="input-box" placeholder="np. 52.0">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">FFM bez tłuszczu (kg)</label>
+            <input type="number" step="0.1" id="edit-meas-ffmKg" class="input-box" placeholder="np. 72.1">
+          </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Woda (%)</label>
+            <input type="number" step="0.1" id="edit-meas-bodyWaterPct" class="input-box" placeholder="np. 59.5">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Tłuszcz trzewny (poz.)</label>
+            <input type="number" step="1" id="edit-meas-visceralFat" class="input-box" placeholder="np. 7">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">BMR (kcal)</label>
+            <input type="number" step="1" id="edit-meas-bmrKcal" class="input-box" placeholder="np. 1850">
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION 3: CIRCUMFERENCES (cm) -->
+      <div style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 14px;">
+        <div style="font-size: 12px; font-weight: 800; color: #ff9100; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
+          📏 Obwody Ciała (cm)
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Talia (cm)</label>
+            <input type="number" step="0.5" id="edit-meas-waistCm" class="input-box" placeholder="np. 84">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Pas (cm)</label>
+            <input type="number" step="0.5" id="edit-meas-beltCm" class="input-box" placeholder="np. 88">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Klatka (cm)</label>
+            <input type="number" step="0.5" id="edit-meas-chestCm" class="input-box" placeholder="np. 108">
+          </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Barki (cm)</label>
+            <input type="number" step="0.5" id="edit-meas-shouldersCm" class="input-box" placeholder="np. 126">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Biceps (cm)</label>
+            <input type="number" step="0.5" id="edit-meas-bicepsCm" class="input-box" placeholder="np. 40.5">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Udo (cm)</label>
+            <input type="number" step="0.5" id="edit-meas-thighCm" class="input-box" placeholder="np. 61">
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION 4: DETAILED BODY COMPOSITION (COLLAPSIBLE) -->
+      <details style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; margin-bottom: 14px;">
+        <summary style="font-size: 12px; font-weight: 800; color: var(--accent); cursor: pointer; user-select: none;">
+          🔬 Pozostałe Parametry Składu Ciała (Białko, Kości, WHR, Typ, itp.)
+        </summary>
+        <div style="margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Masa tłuszczowa (kg)</label>
+            <input type="number" step="0.1" id="edit-meas-fatMassKg" class="input-box">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Wskaźnik mięśniowy (%)</label>
+            <input type="number" step="0.1" id="edit-meas-muscleRatePct" class="input-box">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Masa kostna (kg)</label>
+            <input type="number" step="0.1" id="edit-meas-boneMassKg" class="input-box">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Masa białkowa (kg)</label>
+            <input type="number" step="0.1" id="edit-meas-proteinMassKg" class="input-box">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Białko (%)</label>
+            <input type="number" step="0.1" id="edit-meas-proteinPct" class="input-box">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Masa wody (kg)</label>
+            <input type="number" step="0.1" id="edit-meas-waterMassKg" class="input-box">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Tłuszcz podskórny (%)</label>
+            <input type="number" step="0.1" id="edit-meas-subcutaneousFatPct" class="input-box">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Wiek ciała (lat)</label>
+            <input type="number" step="1" id="edit-meas-bodyAge" class="input-box">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">WHR (Talia/Biodra)</label>
+            <input type="number" step="0.01" id="edit-meas-whr" class="input-box">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Idealna waga (kg)</label>
+            <input type="number" step="0.1" id="edit-meas-idealWeightKg" class="input-box">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Typ ciała</label>
+            <input type="text" id="edit-meas-bodyType" class="input-box" style="text-align: left;" placeholder="np. Standard, Muskularny">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Poziom otyłości</label>
+            <input type="text" id="edit-meas-obesityLevel" class="input-box" style="text-align: left;" placeholder="np. W normie, Nadwaga">
+          </div>
+        </div>
+      </details>
+
+      <!-- SECTION 5: SEGMENTAL ANALYSIS (COLLAPSIBLE) -->
+      <details style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; margin-bottom: 14px;">
+        <summary style="font-size: 12px; font-weight: 800; color: var(--primary); cursor: pointer; user-select: none;">
+          🦵 Analiza Segmentowa Kończyn i Tułowia (Tłuszcz & Mięśnie)
+        </summary>
+        <div style="margin-top: 10px;">
+          <div style="font-size: 11px; font-weight: 700; color: var(--primary); margin-bottom: 6px;">Tłuszcz segmentowy:</div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px;">
+            <div>
+              <label style="font-size: 10px; color: var(--text-muted);">Lewa ręka (kg / %)</label>
+              <div style="display: flex; gap: 4px;">
+                <input type="number" step="0.01" id="edit-meas-segFat-leftArm-kg" class="input-box" placeholder="kg">
+                <input type="number" step="0.1" id="edit-meas-segFat-leftArm-pct" class="input-box" placeholder="%">
+              </div>
+            </div>
+            <div>
+              <label style="font-size: 10px; color: var(--text-muted);">Prawa ręka (kg / %)</label>
+              <div style="display: flex; gap: 4px;">
+                <input type="number" step="0.01" id="edit-meas-segFat-rightArm-kg" class="input-box" placeholder="kg">
+                <input type="number" step="0.1" id="edit-meas-segFat-rightArm-pct" class="input-box" placeholder="%">
+              </div>
+            </div>
+            <div>
+              <label style="font-size: 10px; color: var(--text-muted);">Tułów (kg / %)</label>
+              <div style="display: flex; gap: 4px;">
+                <input type="number" step="0.01" id="edit-meas-segFat-trunk-kg" class="input-box" placeholder="kg">
+                <input type="number" step="0.1" id="edit-meas-segFat-trunk-pct" class="input-box" placeholder="%">
+              </div>
+            </div>
+            <div>
+              <label style="font-size: 10px; color: var(--text-muted);">Lewa noga (kg / %)</label>
+              <div style="display: flex; gap: 4px;">
+                <input type="number" step="0.01" id="edit-meas-segFat-leftLeg-kg" class="input-box" placeholder="kg">
+                <input type="number" step="0.1" id="edit-meas-segFat-leftLeg-pct" class="input-box" placeholder="%">
+              </div>
+            </div>
+            <div style="grid-column: 1 / -1;">
+              <label style="font-size: 10px; color: var(--text-muted);">Prawa noga (kg / %)</label>
+              <div style="display: flex; gap: 4px; max-width: 50%;">
+                <input type="number" step="0.01" id="edit-meas-segFat-rightLeg-kg" class="input-box" placeholder="kg">
+                <input type="number" step="0.1" id="edit-meas-segFat-rightLeg-pct" class="input-box" placeholder="%">
+              </div>
+            </div>
+          </div>
+
+          <div style="font-size: 11px; font-weight: 700; color: var(--accent); margin-bottom: 6px; border-top: 1px solid var(--border); padding-top: 8px;">Mięśnie segmentowe:</div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+            <div>
+              <label style="font-size: 10px; color: var(--text-muted);">Lewa ręka (kg / %)</label>
+              <div style="display: flex; gap: 4px;">
+                <input type="number" step="0.01" id="edit-meas-segMus-leftArm-kg" class="input-box" placeholder="kg">
+                <input type="number" step="0.1" id="edit-meas-segMus-leftArm-pct" class="input-box" placeholder="%">
+              </div>
+            </div>
+            <div>
+              <label style="font-size: 10px; color: var(--text-muted);">Prawa ręka (kg / %)</label>
+              <div style="display: flex; gap: 4px;">
+                <input type="number" step="0.01" id="edit-meas-segMus-rightArm-kg" class="input-box" placeholder="kg">
+                <input type="number" step="0.1" id="edit-meas-segMus-rightArm-pct" class="input-box" placeholder="%">
+              </div>
+            </div>
+            <div>
+              <label style="font-size: 10px; color: var(--text-muted);">Tułów (kg / %)</label>
+              <div style="display: flex; gap: 4px;">
+                <input type="number" step="0.01" id="edit-meas-segMus-trunk-kg" class="input-box" placeholder="kg">
+                <input type="number" step="0.1" id="edit-meas-segMus-trunk-pct" class="input-box" placeholder="%">
+              </div>
+            </div>
+            <div>
+              <label style="font-size: 10px; color: var(--text-muted);">Lewa noga (kg / %)</label>
+              <div style="display: flex; gap: 4px;">
+                <input type="number" step="0.01" id="edit-meas-segMus-leftLeg-kg" class="input-box" placeholder="kg">
+                <input type="number" step="0.1" id="edit-meas-segMus-leftLeg-pct" class="input-box" placeholder="%">
+              </div>
+            </div>
+            <div style="grid-column: 1 / -1;">
+              <label style="font-size: 10px; color: var(--text-muted);">Prawa noga (kg / %)</label>
+              <div style="display: flex; gap: 4px; max-width: 50%;">
+                <input type="number" step="0.01" id="edit-meas-segMus-rightLeg-kg" class="input-box" placeholder="kg">
+                <input type="number" step="0.1" id="edit-meas-segMus-rightLeg-pct" class="input-box" placeholder="%">
+              </div>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- SECTION 6: WEIGHT CONTROL TARGETS (COLLAPSIBLE) -->
+      <details style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; margin-bottom: 16px;">
+        <summary style="font-size: 12px; font-weight: 800; color: var(--success); cursor: pointer; user-select: none;">
+          🎯 Kontrola Wagi i Cele (Fitdays)
+        </summary>
+        <div style="margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Waga docelowa (kg)</label>
+            <input type="number" step="0.1" id="edit-meas-wc-targetWeightKg" class="input-box">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Kontrola wagi (kg)</label>
+            <input type="number" step="0.1" id="edit-meas-wc-weightControlKg" class="input-box">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Kontrola tłuszczu (kg)</label>
+            <input type="number" step="0.1" id="edit-meas-wc-fatControlKg" class="input-box">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 3px;">Kontrola mięśni (kg)</label>
+            <input type="number" step="0.1" id="edit-meas-wc-muscleControlKg" class="input-box">
+          </div>
+        </div>
+      </details>
+
+      <!-- MODAL ACTION BUTTONS -->
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <button type="button" class="btn btn-primary" style="padding: 12px; font-size: 14px; font-weight: 900;" onclick="saveBodyMeasurementModalChanges()">
+          💾 Zapisz zmiany w pomiarze
+        </button>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="btn btn-secondary" style="flex: 1;" onclick="closeEditBodyMeasurementModal()">
+            Anuluj
+          </button>
+          <button type="button" id="btn-delete-meas-modal" class="btn btn-secondary" style="color: var(--danger); border-color: rgba(255,82,82,0.4);" onclick="deleteMeasurementFromModal()">
+            🗑️ Usuń pomiar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL: GIF TECHNIQUE PREVIEW -->
   <div id="gif-preview-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 210; align-items: center; justify-content: center; padding: 16px;">
     <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; max-width: 440px; width: 100%; max-height: 90vh; overflow-y: auto; text-align: center;">
@@ -1624,6 +1933,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=62"></script>
+  <script src="app.js?v=63"></script>
 </body>
 </html>
