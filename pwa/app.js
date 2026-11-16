@@ -34,7 +34,18 @@ const STATE = {
   modelQuotaCooldowns: (() => {
     try {
       const saved = JSON.parse(localStorage.getItem('iron_gemini_model_cooldowns') || '{}');
-      return (typeof saved === 'object' && saved !== null) ? saved : {};
+      if (typeof saved === 'object' && saved !== null) {
+        const now = Date.now();
+        // Clean out stale or legacy 24-hour cooldowns (> 60s in future)
+        const cleaned = {};
+        for (const [k, v] of Object.entries(saved)) {
+          if (typeof v === 'number' && v > now && v <= now + 60000) {
+            cleaned[k] = v;
+          }
+        }
+        return cleaned;
+      }
+      return {};
     } catch (_) {
       return {};
     }
@@ -89,6 +100,22 @@ const STATE = {
   activeSelectedMealCategory: null,
   aiLatencyLogs: JSON.parse(localStorage.getItem('iron_ai_latency_logs')) || [],
   nutritionDiary: JSON.parse(localStorage.getItem('iron_nutrition_diary')) || [],
+  waterLogs: (() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('iron_water_logs') || '[]');
+      return Array.isArray(saved) ? saved : [];
+    } catch (_) {
+      return [];
+    }
+  })(),
+  waterGoalMl: (() => {
+    try {
+      const saved = parseInt(localStorage.getItem('iron_water_goal_ml'));
+      return (Number.isFinite(saved) && saved > 0) ? saved : 2500;
+    } catch (_) {
+      return 2500;
+    }
+  })(),
   selectedNutritionDate: new Date().toISOString().slice(0, 10),
   pendingMealPhotos: [],
   editingMealId: null,
@@ -128,6 +155,7 @@ function saveModelQuotaCooldowns() {
     localStorage.setItem('iron_gemini_model_cooldowns', JSON.stringify(STATE.modelQuotaCooldowns || {}));
   } catch (_) {}
 }
+saveModelQuotaCooldowns();
 
 function getNextPacificMidnightMs() {
   const now = new Date();
@@ -4651,7 +4679,7 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
   const ACTIVE_TIER_LITE = [
     'gemini-2.0-flash-lite',
     'gemini-1.5-flash-8b',
-    'gemini-2.5-flash-lite'
+    'gemini-2.0-flash'
   ];
 
   const ACTIVE_TIER_PRO = [
@@ -4721,6 +4749,24 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
         data: inlineData.data
       }
     });
+  }
+
+  // Safety guard: if ALL candidate keys and models are on cooldown, reset cooldowns to avoid deadlock
+  const candidateKeysAndModels = [];
+  orderedTiers.forEach(t => {
+    (t.models || []).forEach(m => {
+      if (!STATE.unavailableModels.has(m)) {
+        keysToTry.forEach(k => {
+          candidateKeysAndModels.push(`${k.key}:${m}`);
+        });
+      }
+    });
+  });
+  const hasAnyAvailableCandidate = candidateKeysAndModels.some(qk => (STATE.modelQuotaCooldowns?.[qk] || 0) <= now);
+  if (!hasAnyAvailableCandidate && candidateKeysAndModels.length > 0) {
+    console.warn('[Gemini Quota] Wszystkie modele były na cooldownie. Resetuję cooldowny i wykonuję próbę live.');
+    STATE.modelQuotaCooldowns = {};
+    saveModelQuotaCooldowns();
   }
 
   const allAttempts = [];
@@ -4943,7 +4989,8 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
           if (status === 429 || rawMsg.toLowerCase().includes('quota') || rawMsg.toLowerCase().includes('resource_exhausted')) {
             reason = 'Wyczerpany limit (Quota / 429)';
             STATE.modelQuotaCooldowns = STATE.modelQuotaCooldowns || {};
-            STATE.modelQuotaCooldowns[quotaKey] = Math.max(Date.now() + (2 * 60 * 60 * 1000), getNextPacificMidnightMs());
+            // Free tier rate limits (15 RPM) reset in 20-25 seconds. Never lock for 24 hours!
+            STATE.modelQuotaCooldowns[quotaKey] = Date.now() + 25000;
             saveModelQuotaCooldowns();
           } else if (status === 404) {
             reason = 'Model niedostępny (404)';
@@ -4978,7 +5025,7 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
   const keyDiagnostics = keysToTry.map((kObj) => {
     const kAttempts = allAttempts.filter(a => a.keyLabel === kObj.label);
     if (kAttempts.length === 0) {
-      return `• ${kObj.label}: nie sprawdzono`;
+      return `• ${kObj.label}: chwilowy limit zapytań (odczekaj 20 sekund)`;
     }
 
     const authFailure = kAttempts.find(a => a.status === 400 || a.status === 403 || (a.details && (a.details.toLowerCase().includes('api_key') || a.details.toLowerCase().includes('permission'))));
@@ -7758,6 +7805,115 @@ window.undoLastCoffee = undoLastCoffee;
 window.getCoffeeDayStats = getCoffeeDayStats;
 
 // ============================================================================
+// WATER TRACKER (Licznik Wypitej Wody)
+// ============================================================================
+function polishPortionWord(count, singular, pluralFew, pluralMany) {
+  if (count === 1) return `${count} ${singular}`;
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) {
+    return `${count} ${pluralFew}`;
+  }
+  return `${count} ${pluralMany}`;
+}
+
+function getWaterDayStats(dateKey) {
+  const targetDate = dateKey || STATE.selectedNutritionDate || getTodayIsoDate();
+  const logs = (STATE.waterLogs || []).filter(item => (item.dateKey === targetDate || (!item.dateKey && targetDate === getTodayIsoDate())));
+
+  let totalMl = 0;
+  let glassCount = 0;   // 250ml
+  let bottleCount = 0;  // 500ml
+  let sportsCount = 0;  // 750ml
+  let otherCount = 0;
+
+  logs.forEach(l => {
+    const ml = parseInt(l.amountMl) || 0;
+    totalMl += ml;
+    if (ml === 250) glassCount++;
+    else if (ml === 500) bottleCount++;
+    else if (ml === 750) sportsCount++;
+    else otherCount++;
+  });
+
+  return {
+    totalMl,
+    glassCount,
+    bottleCount,
+    sportsCount,
+    otherCount,
+    count: logs.length
+  };
+}
+
+function logQuickWater(amountMl = 250) {
+  const dateKey = STATE.selectedNutritionDate || getTodayIsoDate();
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+
+  const entry = {
+    id: 'water-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+    dateKey: dateKey,
+    timeLabel: timeStr,
+    timestamp: Date.now(),
+    amountMl: parseInt(amountMl) || 250
+  };
+
+  STATE.waterLogs = STATE.waterLogs || [];
+  STATE.waterLogs.unshift(entry);
+  safeLocalStorageSet('iron_water_logs', JSON.stringify(STATE.waterLogs));
+
+  renderNutritionView();
+  if (navigator.vibrate) navigator.vibrate(35);
+}
+
+function undoLastWater() {
+  const dateKey = STATE.selectedNutritionDate || getTodayIsoDate();
+  STATE.waterLogs = STATE.waterLogs || [];
+  const idx = STATE.waterLogs.findIndex(item => item.dateKey === dateKey || (!item.dateKey && dateKey === getTodayIsoDate()));
+
+  if (idx === -1) {
+    return alert('Brak wpisów wody do cofnięcia w wybranym dniu!');
+  }
+
+  STATE.waterLogs.splice(idx, 1);
+  safeLocalStorageSet('iron_water_logs', JSON.stringify(STATE.waterLogs));
+  renderNutritionView();
+  if (navigator.vibrate) navigator.vibrate(25);
+}
+
+function promptCustomWater() {
+  const input = prompt('Podaj ilość wypitej wody w mililitrach (ml):', '300');
+  if (!input) return;
+  const val = parseInt(input);
+  if (Number.isFinite(val) && val > 0 && val <= 5000) {
+    logQuickWater(val);
+  } else {
+    alert('Podaj poprawną wartość w ml (od 1 do 5000 ml).');
+  }
+}
+
+function promptChangeWaterGoal() {
+  const current = STATE.waterGoalMl || 2500;
+  const input = prompt('Podaj dzienny cel wypijanej wody w mililitrach (ml):', current);
+  if (!input) return;
+  const val = parseInt(input);
+  if (Number.isFinite(val) && val >= 500 && val <= 10000) {
+    STATE.waterGoalMl = val;
+    safeLocalStorageSet('iron_water_goal_ml', String(val));
+    renderNutritionView();
+  } else {
+    alert('Podaj poprawną wartość w ml (od 500 do 10000 ml).');
+  }
+}
+
+window.logQuickWater = logQuickWater;
+window.undoLastWater = undoLastWater;
+window.getWaterDayStats = getWaterDayStats;
+window.promptCustomWater = promptCustomWater;
+window.promptChangeWaterGoal = promptChangeWaterGoal;
+
+// ============================================================================
 // WHOLE MEAL BLOCK TRANSFER & COPY
 // ============================================================================
 function openMealBlockTransfer(sourceCategory) {
@@ -8232,6 +8388,50 @@ function renderNutritionView() {
     coffeeMacrosEl.textContent = `Kcal: ${Math.round(coffeeStats.kcal)} kcal • B: ${coffeeStats.proteinG.toFixed(1)}g • W: ${coffeeStats.carbsG.toFixed(1)}g • T: ${coffeeStats.fatG.toFixed(1)}g`;
   }
 
+  // 1b. Update Water Tracker Stats
+  const waterStats = getWaterDayStats(dateKey);
+  const waterTotalEl = document.getElementById('water-counter-total');
+  const waterDetailsEl = document.getElementById('water-counter-details');
+  const waterGoalLabelEl = document.getElementById('water-counter-goal-label');
+  const waterProgressLabelEl = document.getElementById('water-counter-progress-label');
+  const waterProgressBarEl = document.getElementById('water-counter-progress-bar');
+
+  const goalMl = STATE.waterGoalMl || 2500;
+  const waterPct = Math.min(100, Math.round((waterStats.totalMl / (goalMl || 1)) * 100));
+
+  if (waterTotalEl) {
+    if (waterStats.totalMl >= 1000) {
+      const lVal = (waterStats.totalMl / 1000).toFixed(2).replace(/\.?0+$/, '');
+      waterTotalEl.textContent = `${waterStats.totalMl} ml (${lVal} L)`;
+    } else {
+      waterTotalEl.textContent = `${waterStats.totalMl} ml`;
+    }
+  }
+
+  if (waterDetailsEl) {
+    const parts = [];
+    if (waterStats.glassCount > 0) parts.push(polishPortionWord(waterStats.glassCount, 'szklanka', 'szklanki', 'szklanek'));
+    if (waterStats.bottleCount > 0) parts.push(polishPortionWord(waterStats.bottleCount, 'butelka', 'butelki', 'butelek'));
+    if (waterStats.sportsCount > 0) parts.push(polishPortionWord(waterStats.sportsCount, 'bidon', 'bidony', 'bidonów'));
+    if (waterStats.otherCount > 0) parts.push(`${waterStats.otherCount} inne`);
+    waterDetailsEl.textContent = parts.length > 0 ? parts.join(' • ') : '0 szklanek • 0 butelek';
+  }
+
+  if (waterGoalLabelEl) {
+    waterGoalLabelEl.textContent = `${goalMl} ml`;
+  }
+  if (waterProgressLabelEl) {
+    waterProgressLabelEl.textContent = `${waterStats.totalMl} / ${goalMl} ml (${waterPct}%)`;
+  }
+  if (waterProgressBarEl) {
+    waterProgressBarEl.style.width = `${waterPct}%`;
+    if (waterPct >= 100) {
+      waterProgressBarEl.style.background = 'linear-gradient(90deg, #00e676, #00e5ff)';
+    } else {
+      waterProgressBarEl.style.background = 'linear-gradient(90deg, #00b0ff, #00e5ff)';
+    }
+  }
+
   // 2. Render Daily Goal Progress Bars
   const progContainer = document.getElementById('nutrition-daily-progress');
   if (progContainer) {
@@ -8671,9 +8871,12 @@ function buildCoachProfileAndPlansContext() {
     }).join('\n');
 
   const dietPeriodLabel = windowDays === 99999 ? 'pełna historia' : `ostatnie ${windowDays} dni`;
+  const todayWater = typeof getWaterDayStats === 'function' ? getWaterDayStats(todayKey) : { totalMl: 0 };
+  const waterGoal = STATE.waterGoalMl || 2500;
   const nutritionContext = [
     `• Dzienny cel kaloryczny i makro: ${ng.kcal} kcal | Białko: ${ng.proteinG}g | Węglowodany: ${ng.carbsG}g | Tłuszcze: ${ng.fatG}g`,
     `• Dzisiejsze spożycie (${todayKey}): ${Math.round(todayTotals.kcal)} kcal (B: ${Math.round(todayTotals.proteinG)}g, W: ${Math.round(todayTotals.carbsG)}g, T: ${Math.round(todayTotals.fatG)}g w ${todayTotals.count} posiłkach)`,
+    `• Wypita woda dzisiaj (${todayKey}): ${todayWater.totalMl} ml / ${waterGoal} ml (cel dobowy)`,
     recentDietDays ? `• Dziennik żywieniowy (${dietPeriodLabel}):\n${recentDietDays}` : null
   ].filter(Boolean).join('\n');
 
@@ -9267,6 +9470,12 @@ async function retryLastCoachMessage() {
     alert('Brak połączenia z internetem w telefonie (offline). Sprawdź połączenie komórkowe lub Wi-Fi i ponów próbę.');
     return;
   }
+  // Reset any quota cooldowns to guarantee this retry sends real network requests
+  STATE.modelQuotaCooldowns = {};
+  STATE.keyCooldowns = {};
+  STATE.unavailableModels = new Set();
+  saveModelQuotaCooldowns();
+
   const activeThread = getActiveCoachThread();
   if (!activeThread) return;
   const msgs = activeThread.messages || [];
@@ -9451,6 +9660,15 @@ async function testApiKeysConnection() {
   const testSingleKey = async (key, label) => {
     if (!key) return { label, ok: false, empty: true, text: `• <b>${label}</b>: <span style="color: var(--text-muted);">⚪ Brak wpisanego klucza</span>` };
 
+    // Clear cooldowns for this key so test is always live
+    if (STATE.modelQuotaCooldowns) {
+      Object.keys(STATE.modelQuotaCooldowns).forEach(qk => {
+        if (qk.startsWith(key + ':')) delete STATE.modelQuotaCooldowns[qk];
+      });
+      saveModelQuotaCooldowns();
+    }
+    delete (STATE.keyCooldowns || {})[key];
+
     const modelsToTry = [
       { name: 'gemini-2.5-flash', desc: 'Flash (główny model do analiz i czatu)' },
       { name: 'gemini-2.0-flash-lite', desc: 'Flash-Lite (wysoki limit zapytań/dzień)' },
@@ -9497,10 +9715,11 @@ async function testApiKeysConnection() {
         if (status === 429 || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource_exhausted')) {
           quotaHit = true;
           STATE.modelQuotaCooldowns = STATE.modelQuotaCooldowns || {};
-          STATE.modelQuotaCooldowns[`${key}:${item.name}`] = Math.max(Date.now() + (2 * 60 * 60 * 1000), getNextPacificMidnightMs());
+          // Short cooldown (25s) for rate limit spikes
+          STATE.modelQuotaCooldowns[`${key}:${item.name}`] = Date.now() + 25000;
           saveModelQuotaCooldowns();
-          lastError = { status: 429, msg: 'Limit dobowy wyczerpany (Quota 429)' };
-          // Try Flash-Lite next because it has a separate 500 RPD pool!
+          lastError = { status: 429, msg: 'Limit chwilowo wyczerpany (Quota 429)' };
+          // Try next model
           continue;
         }
 
@@ -9522,12 +9741,12 @@ async function testApiKeysConnection() {
     }
 
     if (quotaHit) {
-      (STATE.keyCooldowns = STATE.keyCooldowns || {})[key] = Date.now() + (30 * 60 * 1000);
+      (STATE.keyCooldowns = STATE.keyCooldowns || {})[key] = Date.now() + 25000;
       return {
         label,
         ok: false,
         isQuota: true,
-        text: `• <b>${label}</b>: <span style="color: #ffb74d; font-weight: 700;">⏳ Limit zapytań wyczerpany na dziś (Quota 429)</span>`
+        text: `• <b>${label}</b>: <span style="color: #ffb74d; font-weight: 700;">⏳ Limit zapytań chwilowo wyczerpany (Quota 429)</span> — odczekaj kilkanaście sekund lub dodaj klucz zapasowy z innego projektu.`
       };
     }
 
@@ -9582,6 +9801,8 @@ function buildFullBackupObject() {
     bodyMeasurements: STATE.bodyMeasurements,
     nutritionGoals: STATE.nutritionGoals,
     nutritionDiary: STATE.nutritionDiary,
+    waterLogs: STATE.waterLogs || [],
+    waterGoalMl: STATE.waterGoalMl || 2500,
     plans: enrichedPlans,
     history: STATE.history,
     calendarAiSummaries: STATE.calendarAiSummaries || {},
@@ -9659,6 +9880,26 @@ function importDataJson(event) {
         mergedDiary.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         STATE.nutritionDiary = mergedDiary;
         localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
+        renderNutritionView();
+      }
+
+      if (Array.isArray(data.waterLogs)) {
+        const mergedWater = [...(STATE.waterLogs || [])];
+        data.waterLogs.forEach(w => {
+          if (!w || !w.id) return;
+          const idx = mergedWater.findIndex(x => x.id === w.id);
+          if (idx !== -1) mergedWater[idx] = w;
+          else mergedWater.push(w);
+        });
+        mergedWater.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        STATE.waterLogs = mergedWater;
+        safeLocalStorageSet('iron_water_logs', JSON.stringify(STATE.waterLogs));
+        renderNutritionView();
+      }
+
+      if (data.waterGoalMl) {
+        STATE.waterGoalMl = parseInt(data.waterGoalMl) || 2500;
+        safeLocalStorageSet('iron_water_goal_ml', String(STATE.waterGoalMl));
         renderNutritionView();
       }
 

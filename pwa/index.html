@@ -1186,6 +1186,44 @@
             </button>
           </div>
         </div>
+
+        <!-- Water Counter (Licznik Wody w Dniu) -->
+        <div id="nutrition-water-counter" style="margin-top: 10px; background: rgba(0,0,0,0.3); border: 1px solid rgba(0, 229, 255, 0.35); border-radius: 12px; padding: 10px 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; flex-wrap: wrap; gap: 6px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 18px;">💧</span>
+              <span style="font-size: 13px; font-weight: 800; color: var(--accent);">Licznik Wody:</span>
+              <span id="water-counter-total" style="font-size: 14px; font-weight: 900; color: #ffffff; background: rgba(0,229,255,0.22); border: 1px solid rgba(0,229,255,0.45); padding: 2px 8px; border-radius: 6px;">0 ml</span>
+            </div>
+            <div id="water-counter-details" style="font-size: 11.5px; color: var(--text-muted); font-weight: 600;">
+              0 szklanek • 0 butelek
+            </div>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">
+            <span>Cel dobowy: <button type="button" onclick="promptChangeWaterGoal()" style="background: none; border: none; color: var(--accent); font-weight: 700; cursor: pointer; text-decoration: underline; padding: 0;" title="Kliknij, aby zmienić cel dobowy"><span id="water-counter-goal-label">2500 ml</span> ✏️</button></span>
+            <span id="water-counter-progress-label" style="font-weight: 700; color: #ffffff;">0 / 2500 ml (0%)</span>
+          </div>
+          <div style="height: 6px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+            <div id="water-counter-progress-bar" style="height: 100%; width: 0%; background: linear-gradient(90deg, #00b0ff, #00e5ff); border-radius: 4px; transition: width 0.3s ease;"></div>
+          </div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <button type="button" class="btn btn-sm btn-secondary" style="flex: 1; min-width: 105px; font-size: 11px; padding: 7px 8px; color: var(--accent); border-color: rgba(0,229,255,0.35);" onclick="logQuickWater(250)">
+              + 💧 Szklanka (250ml)
+            </button>
+            <button type="button" class="btn btn-sm btn-secondary" style="flex: 1.1; min-width: 110px; font-size: 11px; padding: 7px 8px; color: var(--accent); border-color: rgba(0,229,255,0.35);" onclick="logQuickWater(500)">
+              + 💧 Butelka (500ml)
+            </button>
+            <button type="button" class="btn btn-sm btn-secondary" style="flex: 1.1; min-width: 110px; font-size: 11px; padding: 7px 8px; color: var(--accent); border-color: rgba(0,229,255,0.35);" onclick="logQuickWater(750)">
+              + 💧 Bidon (750ml)
+            </button>
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 7px 9px; font-size: 11px; color: var(--text-muted);" onclick="promptCustomWater()" title="Wpisz dowolną ilość ml">
+              + Inna
+            </button>
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 7px 10px; font-size: 11px; color: var(--text-muted);" onclick="undoLastWater()" title="Cofnij ostatnią porcję wody">
+              ↩️ Cofnij
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- 2. AI Photo Camera & High-Model Meal Estimator -->
@@ -2033,6 +2071,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=65"></script>
+  <script src="app.js?v=66"></script>
 </body>
 </html>
