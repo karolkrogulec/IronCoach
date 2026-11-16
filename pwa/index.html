@@ -1161,24 +1161,27 @@
 
         <!-- Coffee Counter (Licznik Kaw w Dniu) -->
         <div id="nutrition-coffee-counter" style="margin-top: 12px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255, 179, 0, 0.35); border-radius: 12px; padding: 10px 12px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; flex-wrap: wrap; gap: 6px;">
             <div style="display: flex; align-items: center; gap: 6px;">
-              <span style="font-size: 16px;">☕</span>
-              <span style="font-size: 13px; font-weight: 800; color: var(--primary);">Licznik Kaw Dzisiaj:</span>
-              <span id="coffee-counter-total" style="font-size: 14px; font-weight: 900; color: var(--text); background: rgba(255,179,0,0.18); padding: 2px 8px; border-radius: 6px;">0</span>
+              <span style="font-size: 18px;">☕</span>
+              <span style="font-size: 13px; font-weight: 800; color: var(--primary);">Licznik Kaw:</span>
+              <span id="coffee-counter-total" style="font-size: 14px; font-weight: 900; color: #ffffff; background: rgba(255,179,0,0.22); border: 1px solid rgba(255,179,0,0.45); padding: 2px 8px; border-radius: 6px;">0 kaw</span>
             </div>
-            <div id="coffee-counter-details" style="font-size: 11px; color: var(--text-muted);">
-              0 czarnych • 0 z mlekiem (50ml 2%)
+            <div id="coffee-counter-details" style="font-size: 11.5px; color: var(--text-muted); font-weight: 600;">
+              0 czarnych • 0 z mlekiem
             </div>
           </div>
+          <div id="coffee-counter-macros" style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
+            Kcal: 0 kcal • B: 0g • W: 0g • T: 0g
+          </div>
           <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-            <button type="button" class="btn btn-sm btn-secondary" style="flex: 1; min-width: 130px; font-size: 11px; padding: 6px 8px; border-color: rgba(255,255,255,0.25);" onclick="logQuickCoffee('black')">
+            <button type="button" class="btn btn-sm btn-secondary" style="flex: 1; min-width: 130px; font-size: 11px; padding: 7px 8px; border-color: rgba(255,255,255,0.25);" onclick="logQuickCoffee('black')">
               + ☕ Czarna (bez mleka)
             </button>
-            <button type="button" class="btn btn-sm btn-secondary" style="flex: 1.2; min-width: 160px; font-size: 11px; padding: 6px 8px; color: var(--primary); border-color: rgba(255,179,0,0.4);" onclick="logQuickCoffee('milk')">
+            <button type="button" class="btn btn-sm btn-secondary" style="flex: 1.2; min-width: 160px; font-size: 11px; padding: 7px 8px; color: var(--primary); border-color: rgba(255,179,0,0.4);" onclick="logQuickCoffee('milk')">
               + ☕🥛 Z mlekiem (50ml 2%)
             </button>
-            <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 8px; font-size: 11px; color: var(--text-muted);" onclick="undoLastCoffee()" title="Cofnij ostatnią kawę">
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 7px 10px; font-size: 11px; color: var(--text-muted);" onclick="undoLastCoffee()" title="Cofnij ostatnią kawę">
               ↩️ Cofnij
             </button>
           </div>
@@ -2030,6 +2033,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=64"></script>
+  <script src="app.js?v=65"></script>
 </body>
 </html>

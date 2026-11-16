@@ -7633,7 +7633,8 @@ function openAddMealToCategory(categoryName) {
 // COFFEE TRACKER (Czarna vs Z mlekiem 50ml 2%)
 // ============================================================================
 function getCoffeeDayStats(dateKey) {
-  const meals = (STATE.nutritionDiary || []).filter(m => m.dateKey === dateKey);
+  const targetDate = dateKey || STATE.selectedNutritionDate || getTodayIsoDate();
+  const meals = (STATE.nutritionDiary || []).filter(m => (m.dateKey || targetDate) === targetDate);
   let totalCount = 0;
   let blackCount = 0;
   let milkCount = 0;
@@ -7643,10 +7644,18 @@ function getCoffeeDayStats(dateKey) {
   let totalF = 0;
 
   meals.forEach(m => {
-    const isCof = Boolean(m.isCoffee || m.coffeeType || (m.name && m.name.toLowerCase().startsWith('kawa')));
+    const nameLower = (m.name || m.meal_name || '').toLowerCase();
+    const isCof = Boolean(
+      m.isCoffee === true ||
+      m.coffeeType ||
+      nameLower.startsWith('kawa') ||
+      nameLower.includes('kawa ') ||
+      nameLower.includes('kawa(') ||
+      nameLower.includes('espresso')
+    );
     if (isCof) {
       totalCount += 1;
-      const isMilk = m.coffeeType === 'milk' || (m.name && m.name.toLowerCase().includes('mlek'));
+      const isMilk = m.coffeeType === 'milk' || nameLower.includes('mlek');
       if (isMilk) {
         milkCount += 1;
       } else {
@@ -7721,19 +7730,32 @@ function logQuickCoffee(type = 'black') {
 
 function undoLastCoffee() {
   const dateKey = STATE.selectedNutritionDate || getTodayIsoDate();
-  const coffeeIdx = (STATE.nutritionDiary || []).findIndex(m =>
-    m.dateKey === dateKey && (m.isCoffee || m.coffeeType || (m.name && m.name.toLowerCase().startsWith('kawa')))
-  );
+  const coffeeIdx = (STATE.nutritionDiary || []).findIndex(m => {
+    const nameLower = (m.name || m.meal_name || '').toLowerCase();
+    const isCof = Boolean(
+      m.isCoffee === true ||
+      m.coffeeType ||
+      nameLower.startsWith('kawa') ||
+      nameLower.includes('kawa ') ||
+      nameLower.includes('kawa(') ||
+      nameLower.includes('espresso')
+    );
+    return (m.dateKey === dateKey || !m.dateKey) && isCof;
+  });
 
   if (coffeeIdx === -1) {
     return alert('Brak kawy do cofnięcia w wybranym dniu!');
   }
 
-  const removed = STATE.nutritionDiary.splice(coffeeIdx, 1)[0];
+  STATE.nutritionDiary.splice(coffeeIdx, 1);
   localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
   renderNutritionView();
   renderHomeKpis();
 }
+
+window.logQuickCoffee = logQuickCoffee;
+window.undoLastCoffee = undoLastCoffee;
+window.getCoffeeDayStats = getCoffeeDayStats;
 
 // ============================================================================
 // WHOLE MEAL BLOCK TRANSFER & COPY
@@ -8188,15 +8210,26 @@ function renderNutritionView() {
 
   // 1. Update Coffee Tracker Stats
   const coffeeStats = getCoffeeDayStats(dateKey);
-  const coffeeCountEl = document.getElementById('coffee-counter-total-count');
-  const coffeeBreakdownEl = document.getElementById('coffee-counter-breakdown');
+  const coffeeCountEl = document.getElementById('coffee-counter-total') || document.getElementById('coffee-counter-total-count');
+  const coffeeBreakdownEl = document.getElementById('coffee-counter-details') || document.getElementById('coffee-counter-breakdown');
   const coffeeMacrosEl = document.getElementById('coffee-counter-macros');
-  if (coffeeCountEl) coffeeCountEl.textContent = coffeeStats.count;
+
+  const polishCoffeeWord = (n) => {
+    if (n === 1) return 'kawa';
+    const mod10 = n % 10;
+    const mod100 = n % 100;
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'kawy';
+    return 'kaw';
+  };
+
+  if (coffeeCountEl) {
+    coffeeCountEl.textContent = `${coffeeStats.count} ${polishCoffeeWord(coffeeStats.count)}`;
+  }
   if (coffeeBreakdownEl) {
-    coffeeBreakdownEl.textContent = `(czarnych: ${coffeeStats.blackCount} • z mlekiem: ${coffeeStats.milkCount})`;
+    coffeeBreakdownEl.textContent = `${coffeeStats.blackCount} czarnych • ${coffeeStats.milkCount} z mlekiem`;
   }
   if (coffeeMacrosEl) {
-    coffeeMacrosEl.textContent = `Kcal: ${Math.round(coffeeStats.kcal)} kcal | B: ${coffeeStats.proteinG.toFixed(1)}g | W: ${coffeeStats.carbsG.toFixed(1)}g | T: ${coffeeStats.fatG.toFixed(1)}g`;
+    coffeeMacrosEl.textContent = `Kcal: ${Math.round(coffeeStats.kcal)} kcal • B: ${coffeeStats.proteinG.toFixed(1)}g • W: ${coffeeStats.carbsG.toFixed(1)}g • T: ${coffeeStats.fatG.toFixed(1)}g`;
   }
 
   // 2. Render Daily Goal Progress Bars
