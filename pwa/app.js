@@ -31,25 +31,7 @@ const STATE = {
     return saved;
   })(),
   keyCooldowns: {},
-  modelQuotaCooldowns: (() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('iron_gemini_model_cooldowns') || '{}');
-      if (typeof saved === 'object' && saved !== null) {
-        const now = Date.now();
-        // Clean out stale or legacy 24-hour cooldowns (> 60s in future)
-        const cleaned = {};
-        for (const [k, v] of Object.entries(saved)) {
-          if (typeof v === 'number' && v > now && v <= now + 60000) {
-            cleaned[k] = v;
-          }
-        }
-        return cleaned;
-      }
-      return {};
-    } catch (_) {
-      return {};
-    }
-  })(),
+  modelQuotaCooldowns: {},
   unavailableModels: new Set(),
   lastWorkingKey: null,
   lastUsedGeminiModel: null,
@@ -155,7 +137,7 @@ function saveModelQuotaCooldowns() {
     localStorage.setItem('iron_gemini_model_cooldowns', JSON.stringify(STATE.modelQuotaCooldowns || {}));
   } catch (_) {}
 }
-saveModelQuotaCooldowns();
+try { localStorage.removeItem('iron_gemini_model_cooldowns'); } catch (_) {}
 
 function getNextPacificMidnightMs() {
   const now = new Date();
@@ -4671,12 +4653,14 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
 
   // Active models confirmed from Google AI Studio official API
   const ACTIVE_TIER_FLASH = [
-    'gemini-2.5-flash',
+    'gemini-3.5-flash-lite',
     'gemini-2.0-flash',
+    'gemini-2.5-flash',
     'gemini-1.5-flash'
   ];
 
   const ACTIVE_TIER_LITE = [
+    'gemini-3.5-flash-lite',
     'gemini-2.0-flash-lite',
     'gemini-1.5-flash-8b',
     'gemini-2.0-flash'
@@ -4803,19 +4787,16 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
 
         attemptCount++;
 
-        let response = null;
-        let networkErr = null;
-
         const useStreaming = (typeof onChunk === 'function' && !inlineData);
 
-        // 1. Try Live SSE Streaming First (TTFT < 1.5s) if supported
+        // 1. Try Live SSE Streaming First if requested
         if (useStreaming) {
           const streamUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:streamGenerateContent?alt=sse&key=${key}`;
           const streamController = new AbortController();
           const streamTimeoutId = setTimeout(() => streamController.abort(), 12000); // 12s connection timeout
 
           try {
-            response = await fetch(streamUrl, {
+            const sRes = await fetch(streamUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ contents: [{ parts: parts }] }),
@@ -4823,42 +4804,46 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
             });
             clearTimeout(streamTimeoutId);
 
-            if (response.ok && response.body) {
-              const reader = response.body.getReader();
+            if (sRes.ok && sRes.body) {
+              const reader = sRes.body.getReader();
               const decoder = new TextDecoder();
               let buffer = '';
               let accumulatedText = '';
 
-              // Streaming activity watchdog helper (stalls longer than 10s abort stream and fallback)
-              const readWithWatchdog = (streamReader, timeoutMs = 10000) => {
+              const readWithWatchdog = (streamReader, timeoutMs = 8000) => {
                 return Promise.race([
                   streamReader.read(),
-                  new Promise((_, reject) => setTimeout(() => reject(new Error('Stall: brak danych przez 10s')), timeoutMs))
+                  new Promise((_, reject) => setTimeout(() => reject(new Error('Stall')), timeoutMs))
                 ]);
               };
 
-              while (true) {
-                const { done, value } = await readWithWatchdog(reader, 10000);
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop(); // keep trailing partial line
-                for (let li = 0; li < lines.length; li++) {
-                  const line = lines[li].trim();
-                  if (line.startsWith('data: ')) {
-                    const jsonStr = line.slice(6).trim();
-                    if (jsonStr === '[DONE]') continue;
-                    try {
-                      const chunkObj = JSON.parse(jsonStr);
-                      const chunkText = chunkObj.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                      if (chunkText) {
-                        accumulatedText += chunkText;
-                        onChunk(accumulatedText, chunkText);
-                      }
-                    } catch (_) {}
+              try {
+                while (true) {
+                  const { done, value } = await readWithWatchdog(reader, 8000);
+                  if (done) break;
+                  buffer += decoder.decode(value, { stream: true });
+                  const lines = buffer.split('\n');
+                  buffer = lines.pop();
+                  for (let li = 0; li < lines.length; li++) {
+                    const line = lines[li].trim();
+                    if (line.startsWith('data: ')) {
+                      const jsonStr = line.slice(6).trim();
+                      if (jsonStr === '[DONE]') continue;
+                      try {
+                        const chunkObj = JSON.parse(jsonStr);
+                        const chunkText = chunkObj.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                        if (chunkText) {
+                          accumulatedText += chunkText;
+                          onChunk(accumulatedText, chunkText);
+                        }
+                      } catch (_) {}
+                    }
                   }
                 }
+              } catch (readErr) {
+                console.warn(`[Gemini Streaming Reader] Przerwano strumień ${modelName}:`, readErr.message);
               }
+
               const finalText = accumulatedText.trim();
               if (finalText) {
                 delete (STATE.keyCooldowns || {})[key];
@@ -4885,60 +4870,59 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
                 });
 
                 return finalText;
+              } else {
+                console.warn(`[Gemini Streaming] Brak tekstu w strumieniu dla ${modelName}, przełączam na zapytanie standardowe.`);
               }
-            } else if (response.status === 429 || response.status === 404) {
-              // Known quota or missing model -> don't retry streaming, handle status directly below
-            } else {
-              // Non-OK status or empty body -> try standard non-streaming
-              response = null;
+            } else if (sRes.status === 429) {
+              STATE.modelQuotaCooldowns = STATE.modelQuotaCooldowns || {};
+              STATE.modelQuotaCooldowns[quotaKey] = Date.now() + 25000;
+              saveModelQuotaCooldowns();
+              allAttempts.push({ keyLabel: label, model: modelName, status: 429, reason: 'Wyczerpany limit (Quota / 429)', details: 'HTTP 429' });
+              continue;
+            } else if (sRes.status === 404) {
+              STATE.unavailableModels.add(modelName);
+              allAttempts.push({ keyLabel: label, model: modelName, status: 404, reason: 'Model niedostępny (404)', details: 'HTTP 404' });
+              continue;
             }
           } catch (streamErr) {
             clearTimeout(streamTimeoutId);
-            console.warn(`[Gemini Streaming] Połączenie SSE przerwane lub stall dla ${modelName} [${label}]. Przełączam na szybkie zapytanie standardowe:`, streamErr.message);
-            response = null;
+            console.warn(`[Gemini Streaming] Fallback do zapytania standardowego dla ${modelName}:`, streamErr.message);
           }
         }
 
         // 2. Standard Non-Streaming HTTP POST fallback (resilient on mobile/cellular and proxies)
-        if (!response) {
-          const standardUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`;
-          const retries = 1; // Exactly 1 quick attempt per model to prevent multi-minute stalls
+        const standardUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 18000); // 18s generation timeout
+        let postRes = null;
+        let postErr = null;
 
-          for (let retry = 0; retry < retries; retry++) {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 16000); // 16s generation timeout
-
-            try {
-              response = await fetch(standardUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: [{ parts: parts }] }),
-                signal: controller.signal
-              });
-              clearTimeout(timeoutId);
-              networkErr = null;
-              break;
-            } catch (err) {
-              clearTimeout(timeoutId);
-              networkErr = err;
-            }
-          }
+        try {
+          postRes = await fetch(standardUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: parts }] }),
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+        } catch (err) {
+          clearTimeout(timeoutId);
+          postErr = err;
         }
 
-        if (networkErr && !response) {
-          const isTimeout = networkErr.name === 'AbortError' || (networkErr.message && networkErr.message.includes('timeout'));
-          const reason = isTimeout ? 'Timeout połączenia (16s)' : 'Błąd sieci';
-          allAttempts.push({ keyLabel: label, model: modelName, status: 0, reason, details: networkErr.message });
-          console.warn(`[Gemini Auto-Fallback] ${reason} dla modelu ${modelName} [${label}]:`, networkErr);
+        if (postErr || !postRes) {
+          const isTimeout = postErr?.name === 'AbortError' || postErr?.message?.includes('timeout');
+          const reason = isTimeout ? 'Timeout połączenia (18s)' : 'Błąd sieci';
+          allAttempts.push({ keyLabel: label, model: modelName, status: 0, reason, details: postErr?.message || 'Brak odpowiedzi' });
+          console.warn(`[Gemini Auto-Fallback] ${reason} dla modelu ${modelName} [${label}]:`, postErr);
           continue;
         }
 
-        if (response && response.ok) {
-          const data = await response.json();
+        if (postRes.ok) {
+          const data = await postRes.json().catch(() => ({}));
           const resParts = data.candidates?.[0]?.content?.parts || [];
           const text = resParts.map(p => p.text || '').join('').trim();
           if (text) {
-            // Mark this key and model as healthy and working
             delete (STATE.keyCooldowns || {})[key];
             if (STATE.modelQuotaCooldowns) {
               delete STATE.modelQuotaCooldowns[quotaKey];
@@ -4961,6 +4945,9 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
             }
 
             updateGeminiModelBadges(modelName, isFallback, label);
+            if (typeof onChunk === 'function') {
+              onChunk(text, text);
+            }
 
             const latencyMs = Date.now() - callStartTime;
             recordAiLatencyLog({
@@ -4980,9 +4967,9 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
           } else {
             allAttempts.push({ keyLabel: label, model: modelName, status: 200, reason: 'Pusta odpowiedź (brak treści)' });
           }
-        } else if (response) {
-          const errJson = await response.json().catch(() => ({}));
-          const status = response.status;
+        } else {
+          const errJson = await postRes.json().catch(() => ({}));
+          const status = postRes.status;
           const rawMsg = errJson.error?.message || `HTTP ${status}`;
 
           let reason = `HTTP ${status}`;
@@ -9405,10 +9392,10 @@ function renderCoachChat() {
                 <span>✏️</span> <b>Edytuj treść</b>
               </button>
             </div>
-            <details style="margin-top: 10px; border-top: 1px solid rgba(255, 82, 82, 0.2); padding-top: 6px;">
-              <summary style="font-size: 11px; color: var(--text-muted); cursor: pointer; user-select: none;">ℹ️ Szczegóły techniczne błędu</summary>
-              <div style="font-size: 11px; color: var(--text-muted); margin-top: 6px; font-family: monospace; white-space: pre-wrap; word-break: break-word; line-height: 1.4; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px;">${escapeHtml(textToDisplay)}</div>
-            </details>
+            <div style="margin-top: 10px; padding: 10px 12px; background: rgba(0,0,0,0.45); border-radius: 8px; border-left: 3px solid #ff5252; text-align: left;">
+              <div style="font-size: 11px; font-weight: 700; color: #ff8a80; margin-bottom: 4px;">ℹ️ Szczegóły techniczne błędu:</div>
+              <div style="font-size: 11.5px; color: #ffffff; font-family: monospace; white-space: pre-wrap; word-break: break-word; line-height: 1.45;">${escapeHtml(textToDisplay)}</div>
+            </div>
           </div>
         </div>
       `;
@@ -9670,8 +9657,10 @@ async function testApiKeysConnection() {
     delete (STATE.keyCooldowns || {})[key];
 
     const modelsToTry = [
-      { name: 'gemini-2.5-flash', desc: 'Flash (główny model do analiz i czatu)' },
-      { name: 'gemini-2.0-flash-lite', desc: 'Flash-Lite (wysoki limit zapytań/dzień)' },
+      { name: 'gemini-3.5-flash-lite', desc: 'Flash-Lite 3.5 (najnowszy model rekomendowany przez Google)' },
+      { name: 'gemini-2.0-flash', desc: 'Flash 2.0 (szybki model ogólny)' },
+      { name: 'gemini-2.5-flash', desc: 'Flash 2.5 (główny model do analiz i czatu)' },
+      { name: 'gemini-2.0-flash-lite', desc: 'Flash-Lite 2.0 (wysoki limit zapytań/dzień)' },
       { name: 'gemini-1.5-flash', desc: 'Flash 1.5 (stabilny fallback)' }
     ];
 
