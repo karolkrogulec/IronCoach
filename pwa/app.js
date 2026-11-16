@@ -78,6 +78,16 @@ const STATE = {
     carbsG: 260,
     fatG: 75
   },
+  mealCategories: JSON.parse(localStorage.getItem('iron_meal_categories')) || [
+    '1 śniadanie',
+    '2 śniadanie',
+    'Lunch',
+    'Obiad',
+    'Kolacja',
+    'Przekąski'
+  ],
+  activeSelectedMealCategory: null,
+  aiLatencyLogs: JSON.parse(localStorage.getItem('iron_ai_latency_logs')) || [],
   nutritionDiary: JSON.parse(localStorage.getItem('iron_nutrition_diary')) || [],
   selectedNutritionDate: new Date().toISOString().slice(0, 10),
   pendingMealPhotos: [],
@@ -2197,6 +2207,14 @@ function startWorkout(planId) {
   const firstBlock = getNextWorkoutBlockInfo(-1, null);
   const firstBlockName = firstBlock ? firstBlock.name : (exercises[0] ? exercises[0].name : 'Pierwsze ćwiczenie');
   const firstExName = firstBlock ? firstBlock.firstExerciseName : (exercises[0] ? exercises[0].name : 'Pierwsze ćwiczenie');
+  const explicitNext = firstBlock ? {
+    ex: firstBlock.exercise,
+    set: firstBlock.exercise.sets?.[0] || { num: 1, reps: 10, weight: 0 },
+    blockExercises: firstBlock.blockExercises,
+    blockTitle: firstBlockName,
+    firstExerciseName: firstExName,
+    isTechnical: true
+  } : null;
 
   startRestTimer(
     0,
@@ -2205,7 +2223,8 @@ function startWorkout(planId) {
     0,
     'technical-prep',
     `Przygotuj sprzęt i obciążenia pod: ${firstBlockName}`,
-    `✅ Stanowisko gotowe – Rozpocznij: ${firstExName}`
+    `✅ Stanowisko gotowe – Rozpocznij: ${firstExName}`,
+    explicitNext
   );
 }
 
@@ -3393,6 +3412,175 @@ function getNextWorkoutBlockInfo(currentExIdx, currentSsGroup) {
   return null; // All sets in all exercises of the workout are complete!
 }
 
+// PRD-05 & Bugfix: Reliably resolve the exact next exercise and set
+// according to true superset interleaved execution sequence and technical break lookahead.
+function resolveNextWorkoutStep(explicitUpcoming = null, restType = 'standard', afterExercise = '', afterSet = 1) {
+  if (!STATE.activeWorkout || !Array.isArray(STATE.activeWorkout.exercises) || STATE.activeWorkout.exercises.length === 0) {
+    return null;
+  }
+
+  // If explicit upcoming was passed with valid exercise object, prioritize it
+  if (explicitUpcoming && explicitUpcoming.ex) {
+    return explicitUpcoming;
+  }
+
+  const exercises = STATE.activeWorkout.exercises;
+  const isTechnical = (restType === 'technical-prep' || restType === 'technical-break' || afterExercise === 'Start treningu');
+
+  // Case A: Technical break (preparing station for the upcoming block)
+  if (isTechnical) {
+    let targetBlock = null;
+
+    if (afterExercise === 'Start treningu') {
+      targetBlock = getNextWorkoutBlockInfo(-1, null);
+      if (!targetBlock && exercises.length > 0) {
+        const first = exercises[0];
+        const ss = (first.supersetGroup || '').trim();
+        const blockExs = ss ? exercises.filter(e => (e.supersetGroup || '').trim() === ss) : [first];
+        targetBlock = {
+          name: ss ? `Superseria ${ss}` : first.name,
+          firstExerciseName: first.name,
+          blockExercises: blockExs,
+          exercise: first
+        };
+      }
+    } else {
+      let afterExIdx = -1;
+      let afterSsGroup = null;
+      if (afterExercise) {
+        afterExIdx = exercises.findIndex(e => e.name === afterExercise);
+        if (afterExIdx >= 0) {
+          afterSsGroup = (exercises[afterExIdx].supersetGroup || '').trim() || null;
+        }
+      }
+
+      if (afterExIdx >= 0) {
+        targetBlock = getNextWorkoutBlockInfo(afterExIdx, afterSsGroup);
+      }
+      if (!targetBlock) {
+        targetBlock = getNextWorkoutBlockInfo(-1, null);
+      }
+    }
+
+    if (targetBlock && targetBlock.exercise) {
+      const ex = targetBlock.exercise;
+      const firstIncompleteSet = (ex.sets || []).find(s => !s.completed) || ex.sets?.[0] || { num: 1, reps: 10, weight: 0 };
+      const sIdx = (ex.sets || []).indexOf(firstIncompleteSet);
+      return {
+        ex: ex,
+        set: firstIncompleteSet,
+        eIdx: exercises.indexOf(ex),
+        sIdx: sIdx >= 0 ? sIdx : 0,
+        isTechnical: true,
+        blockExercises: targetBlock.blockExercises || (ex.supersetGroup ? exercises.filter(e => (e.supersetGroup || '').trim() === ex.supersetGroup.trim()) : [ex]),
+        blockTitle: targetBlock.name || ex.name,
+        firstExerciseName: targetBlock.firstExerciseName || ex.name
+      };
+    }
+  }
+
+  // Case B: Regular rest between sets / superset rounds
+  if (afterExercise) {
+    const curExIdx = exercises.findIndex(e => e.name === afterExercise);
+    if (curExIdx >= 0) {
+      const curEx = exercises[curExIdx];
+      const curSs = (curEx.supersetGroup || '').trim();
+      const currentSetIdx = Math.max(0, (parseInt(afterSet, 10) || 1) - 1);
+
+      if (curSs) {
+        const groupMembers = exercises
+          .map((item, idx) => ({ item, idx }))
+          .filter(entry => (entry.item.supersetGroup || '').trim() === curSs);
+
+        // 1. Check if another exercise in the SAME superset round is incomplete
+        let nextInRound = groupMembers.find(m => m.idx > curExIdx && m.item.sets[currentSetIdx] && !m.item.sets[currentSetIdx].completed);
+        if (!nextInRound) {
+          nextInRound = groupMembers.find(m => m.idx < curExIdx && m.item.sets[currentSetIdx] && !m.item.sets[currentSetIdx].completed);
+        }
+
+        if (nextInRound) {
+          return {
+            ex: nextInRound.item,
+            set: nextInRound.item.sets[currentSetIdx],
+            eIdx: nextInRound.idx,
+            sIdx: currentSetIdx,
+            isTechnical: false
+          };
+        }
+
+        // 2. All exercises in current round done -> next round first exercise
+        const maxSets = Math.max(...groupMembers.map(m => (m.item.sets || []).length));
+        if (currentSetIdx + 1 < maxSets) {
+          const firstExOfSs = groupMembers[0];
+          const nextSet = firstExOfSs.item.sets[currentSetIdx + 1] || firstExOfSs.item.sets[0];
+          return {
+            ex: firstExOfSs.item,
+            set: nextSet,
+            eIdx: firstExOfSs.idx,
+            sIdx: currentSetIdx + 1,
+            isTechnical: false
+          };
+        }
+      } else {
+        // Isolated exercise: next set of same exercise
+        if (currentSetIdx + 1 < (curEx.sets || []).length) {
+          return {
+            ex: curEx,
+            set: curEx.sets[currentSetIdx + 1],
+            eIdx: curExIdx,
+            sIdx: currentSetIdx + 1,
+            isTechnical: false
+          };
+        }
+      }
+    }
+  }
+
+  // Case C: General execution order sequence scan
+  const blocks = [];
+  const visitedIndices = new Set();
+  for (let i = 0; i < exercises.length; i++) {
+    if (visitedIndices.has(i)) continue;
+    const ex = exercises[i];
+    const ss = (ex.supersetGroup || '').trim();
+    if (ss) {
+      const ssMembers = [];
+      for (let j = 0; j < exercises.length; j++) {
+        if ((exercises[j].supersetGroup || '').trim() === ss) {
+          ssMembers.push({ item: exercises[j], idx: j });
+          visitedIndices.add(j);
+        }
+      }
+      blocks.push({ type: 'superset', ss, members: ssMembers });
+    } else {
+      visitedIndices.add(i);
+      blocks.push({ type: 'single', members: [{ item: ex, idx: i }] });
+    }
+  }
+
+  for (const block of blocks) {
+    if (block.type === 'single') {
+      const m = block.members[0];
+      for (let sIdx = 0; sIdx < (m.item.sets || []).length; sIdx++) {
+        if (!m.item.sets[sIdx].completed) {
+          return { ex: m.item, set: m.item.sets[sIdx], eIdx: m.idx, sIdx, isTechnical: false };
+        }
+      }
+    } else {
+      const maxSets = Math.max(...block.members.map(m => (m.item.sets || []).length));
+      for (let round = 0; round < maxSets; round++) {
+        for (const m of block.members) {
+          if (m.item.sets[round] && !m.item.sets[round].completed) {
+            return { ex: m.item, set: m.item.sets[round], eIdx: m.idx, sIdx: round, isTechnical: false };
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 function toggleSetComplete(exIdx, sIdx) {
   if (!STATE.activeWorkout) return;
   const ex = STATE.activeWorkout.exercises[exIdx];
@@ -3466,6 +3654,13 @@ function toggleSetComplete(exIdx, sIdx) {
         // Exercise finished, but round NOT finished yet:
         // Stations are already prepared! This is a SHORT REST BREAK between exercises in superset (count DOWN)
         const nextExName = incompleteInSameRound.item.name;
+        const explicitNext = {
+          ex: incompleteInSameRound.item,
+          set: incompleteInSameRound.item.sets[sIdx],
+          eIdx: incompleteInSameRound.idx,
+          sIdx: sIdx,
+          isTechnical: false
+        };
         startRestTimer(
           shortRest,
           `⏱️ ODPOCZYNEK W SUPERSERII • KOLEJNE: ${nextExName}`,
@@ -3473,7 +3668,8 @@ function toggleSetComplete(exIdx, sIdx) {
           set.num,
           'superset-short',
           `⏱️ Krótki odpoczynek w superserii przed: ${nextExName} • Cel: ${shortRest}s (odliczanie w dół)`,
-          `Zakończ przerwę – ${nextExName}`
+          `Zakończ przerwę – ${nextExName}`,
+          explicitNext
         );
       } else {
         // Round sIdx is fully complete!
@@ -3483,6 +3679,13 @@ function toggleSetComplete(exIdx, sIdx) {
         if (hasNextRound) {
           // Long rest between rounds of superset (odliczanie w dół z czasem zdefiniowanym w treningu)
           const nextRoundFirstEx = groupMembers[0].item.name;
+          const explicitNext = {
+            ex: groupMembers[0].item,
+            set: groupMembers[0].item.sets[sIdx + 1] || groupMembers[0].item.sets[0],
+            eIdx: groupMembers[0].idx,
+            sIdx: sIdx + 1,
+            isTechnical: false
+          };
           startRestTimer(
             mainRest,
             `🟢 ODPOCZYNEK PO OBWODZIE ${sIdx + 1}/${maxSets} (SUPERSERIA ${ssGroup})`,
@@ -3490,13 +3693,22 @@ function toggleSetComplete(exIdx, sIdx) {
             set.num,
             'superset-round',
             `⏱️ Dłuższy odpoczynek po całym obwodzie • Cel: ${mainRest}s (odliczanie w dół)`,
-            `Zakończ przerwę – ${nextRoundFirstEx}`
+            `Zakończ przerwę – ${nextRoundFirstEx}`,
+            explicitNext
           );
         } else {
           // Entire Superset is fully completed (all rounds done)!
           // NOW is the time for a TECHNICAL BREAK to prepare gym stations for the next workout block!
           const nextBlock = getNextWorkoutBlockInfo(exIdx, ssGroup);
           if (nextBlock) {
+            const explicitNext = {
+              ex: nextBlock.exercise,
+              set: (nextBlock.exercise.sets || []).find(s => !s.completed) || nextBlock.exercise.sets?.[0] || { num: 1, reps: 10, weight: 0 },
+              blockExercises: nextBlock.blockExercises,
+              blockTitle: nextBlock.name,
+              firstExerciseName: nextBlock.firstExerciseName,
+              isTechnical: true
+            };
             startRestTimer(
               0,
               `⚡ PRZERWA TECHNICZNA • PRZYGOTUJ STANOWISKO`,
@@ -3504,7 +3716,8 @@ function toggleSetComplete(exIdx, sIdx) {
               set.num,
               'technical-prep',
               `🔧 Przygotowanie sprzętu pod kolejny blok: ${nextBlock.name} • Brak limitu czasu`,
-              `Zakończ przerwę – ${nextBlock.firstExerciseName}`
+              `Zakończ przerwę – ${nextBlock.firstExerciseName}`,
+              explicitNext
             );
           } else {
             // Whole workout completed!
@@ -3515,7 +3728,8 @@ function toggleSetComplete(exIdx, sIdx) {
               set.num,
               'workout-done',
               `🏆 Wykonałeś cały zaplanowany trening! Kliknij aby zakończyć sesję.`,
-              `🏁 Zakończ i podsumuj trening`
+              `🏁 Zakończ i podsumuj trening`,
+              null
             );
           }
         }
@@ -3525,6 +3739,13 @@ function toggleSetComplete(exIdx, sIdx) {
       const isLastSet = sIdx >= ex.sets.length - 1;
       if (!isLastSet) {
         // Rest between sets of isolated exercise (odliczanie w dół z czasem zdefiniowanym w treningu)
+        const explicitNext = {
+          ex: ex,
+          set: ex.sets[sIdx + 1],
+          eIdx: exIdx,
+          sIdx: sIdx + 1,
+          isTechnical: false
+        };
         startRestTimer(
           mainRest,
           `⏱️ ODPOCZYNEK MIĘDZY SERIAMI (SERIA ${set.num}/${ex.sets.length})`,
@@ -3532,13 +3753,22 @@ function toggleSetComplete(exIdx, sIdx) {
           set.num,
           'standard',
           `⏱️ Planowany odpoczynek przed Serią ${set.num + 1}/${ex.sets.length}: ${mainRest}s (odliczanie w dół)`,
-          `Zakończ przerwę – ${ex.name}`
+          `Zakończ przerwę – ${ex.name}`,
+          explicitNext
         );
       } else {
         // Entire single exercise is complete!
         // NOW is the time for a TECHNICAL BREAK to prepare gym stations for the next workout block!
         const nextBlock = getNextWorkoutBlockInfo(exIdx, null);
         if (nextBlock) {
+          const explicitNext = {
+            ex: nextBlock.exercise,
+            set: (nextBlock.exercise.sets || []).find(s => !s.completed) || nextBlock.exercise.sets?.[0] || { num: 1, reps: 10, weight: 0 },
+            blockExercises: nextBlock.blockExercises,
+            blockTitle: nextBlock.name,
+            firstExerciseName: nextBlock.firstExerciseName,
+            isTechnical: true
+          };
           startRestTimer(
             0,
             `⚡ PRZERWA TECHNICZNA • PRZYGOTUJ STANOWISKO`,
@@ -3546,7 +3776,8 @@ function toggleSetComplete(exIdx, sIdx) {
             set.num,
             'technical-prep',
             `🔧 Przygotowanie sprzętu pod kolejny blok: ${nextBlock.name} • Brak limitu czasu`,
-            `Zakończ przerwę – ${nextBlock.firstExerciseName}`
+            `Zakończ przerwę – ${nextBlock.firstExerciseName}`,
+            explicitNext
           );
         } else {
           // Whole workout completed!
@@ -3557,7 +3788,8 @@ function toggleSetComplete(exIdx, sIdx) {
             set.num,
             'workout-done',
             `🏆 Wykonałeś cały zaplanowany trening! Kliknij aby zakończyć sesję.`,
-            `🏁 Zakończ i podsumuj trening`
+            `🏁 Zakończ i podsumuj trening`,
+            null
           );
         }
       }
@@ -3790,35 +4022,22 @@ function refreshTechnicalBreakOverlayUI() {
 
   if (reorderBtn) reorderBtn.style.display = 'block';
 
-  let nextUpcoming = null;
-  if (STATE.activeWorkout && Array.isArray(STATE.activeWorkout.exercises)) {
-    for (let eIdx = 0; eIdx < STATE.activeWorkout.exercises.length; eIdx++) {
-      const exItem = STATE.activeWorkout.exercises[eIdx];
-      for (let sIdx = 0; sIdx < (exItem.sets || []).length; sIdx++) {
-        const sItem = exItem.sets[sIdx];
-        if (!sItem.completed) {
-          nextUpcoming = { ex: exItem, set: sItem, eIdx, sIdx };
-          break;
-        }
-      }
-      if (nextUpcoming) break;
-    }
-  }
+  const isInitialPrep = Boolean(STATE.currentRestInfo && STATE.currentRestInfo.afterExercise === 'Start treningu');
+  const afterEx = STATE.currentRestInfo ? STATE.currentRestInfo.afterExercise : (isInitialPrep ? 'Start treningu' : '');
+  const afterSet = STATE.currentRestInfo ? STATE.currentRestInfo.afterSet : 1;
+
+  const nextUpcoming = resolveNextWorkoutStep(null, 'technical-prep', afterEx, afterSet);
+  STATE.currentRestUpcoming = nextUpcoming;
 
   if (!nextUpcoming || !nextUpCard) {
     if (nextUpCard) nextUpCard.style.display = 'none';
     return;
   }
 
-  const curSs = nextUpcoming.ex.supersetGroup;
-  let blockExercises = [];
-  if (curSs) {
-    blockExercises = STATE.activeWorkout.exercises.filter(e => (e.supersetGroup || '').trim() === curSs);
-  } else {
-    blockExercises = [nextUpcoming.ex];
-  }
-
-  const isInitialPrep = Boolean(STATE.currentRestInfo && STATE.currentRestInfo.afterExercise === 'Start treningu');
+  const blockExercises = nextUpcoming.blockExercises || (nextUpcoming.ex?.supersetGroup
+    ? STATE.activeWorkout.exercises.filter(e => (e.supersetGroup || '').trim() === nextUpcoming.ex.supersetGroup.trim())
+    : [nextUpcoming.ex]);
+  const curSs = nextUpcoming.ex?.supersetGroup || null;
 
   if (nextUpHeader) {
     nextUpHeader.textContent = curSs
@@ -3831,7 +4050,9 @@ function refreshTechnicalBreakOverlayUI() {
   }
 
   if (confirmBtn) {
-    const firstExName = (nextUpcoming && nextUpcoming.ex) ? nextUpcoming.ex.name : 'Pierwsze ćwiczenie';
+    const firstExName = (nextUpcoming && nextUpcoming.firstExerciseName)
+      ? nextUpcoming.firstExerciseName
+      : ((nextUpcoming && nextUpcoming.ex) ? nextUpcoming.ex.name : 'Pierwsze ćwiczenie');
     confirmBtn.textContent = isInitialPrep
       ? `✅ Stanowisko gotowe – Rozpocznij: ${firstExName}`
       : `Zakończ przerwę – ${firstExName}`;
@@ -3847,7 +4068,8 @@ function startRestTimer(
   afterSet = 1,
   restType = 'standard',
   refText = null,
-  btnText = null
+  btnText = null,
+  explicitUpcoming = null
 ) {
   clearInterval(STATE.timerInterval);
 
@@ -3901,7 +4123,7 @@ function startRestTimer(
 
   if (modeLabel) modeLabel.textContent = labelText;
 
-  // PRD-05 & Request: Clean separation of Rest Overlay vs Technical Station Break
+  // PRD-05 & Bugfix: Reliably resolve upcoming exercise/block
   const nextUpCard = document.getElementById('timer-next-up-card');
   const nextUpHeader = document.getElementById('timer-next-up-header');
   const nextUpContent = document.getElementById('timer-next-up-content');
@@ -3909,20 +4131,8 @@ function startRestTimer(
   const nextUpDetails = document.getElementById('timer-next-up-details');
   const nextUpZipro = document.getElementById('timer-next-up-zipro');
 
-  let nextUpcoming = null;
-  if (STATE.activeWorkout && Array.isArray(STATE.activeWorkout.exercises)) {
-    for (let eIdx = 0; eIdx < STATE.activeWorkout.exercises.length; eIdx++) {
-      const exItem = STATE.activeWorkout.exercises[eIdx];
-      for (let sIdx = 0; sIdx < (exItem.sets || []).length; sIdx++) {
-        const sItem = exItem.sets[sIdx];
-        if (!sItem.completed) {
-          nextUpcoming = { ex: exItem, set: sItem, eIdx, sIdx };
-          break;
-        }
-      }
-      if (nextUpcoming) break;
-    }
-  }
+  const nextUpcoming = resolveNextWorkoutStep(explicitUpcoming, restType, afterExercise, afterSet);
+  STATE.currentRestUpcoming = nextUpcoming;
 
   // Determine button label according to user specification:
   // - Zwykła przerwa: "Zakończ przerwę – [Kolejne ćwiczenie]"
@@ -3931,7 +4141,9 @@ function startRestTimer(
     if (btnText) {
       confirmBtn.textContent = btnText;
     } else if (isTechnical) {
-      const firstExName = (nextUpcoming && nextUpcoming.ex) ? nextUpcoming.ex.name : 'Pierwsze ćwiczenie';
+      const firstExName = (nextUpcoming && nextUpcoming.firstExerciseName)
+        ? nextUpcoming.firstExerciseName
+        : ((nextUpcoming && nextUpcoming.ex) ? nextUpcoming.ex.name : 'Pierwsze ćwiczenie');
       confirmBtn.textContent = (afterExercise === 'Start treningu')
         ? `✅ Stanowisko gotowe – Rozpocznij: ${firstExName}`
         : `Zakończ przerwę – ${firstExName}`;
@@ -3945,14 +4157,10 @@ function startRestTimer(
     if (isTechnical) {
       // PRZERWA TECHNICZNA (między seriami/superseriami/blokami oraz na start treningu):
       // Przygotowanie stanowiska: Wyświetlana jest lista ćwiczeń wraz z DOKŁADNYMI OBCIĄŻENIAMI do przygotowania
-      const curSs = nextUpcoming.ex.supersetGroup;
-      let blockExercises = [];
-      if (curSs) {
-        blockExercises = STATE.activeWorkout.exercises.filter(e => (e.supersetGroup || '').trim() === curSs);
-      } else {
-        blockExercises = [nextUpcoming.ex];
-      }
-
+      const blockExercises = nextUpcoming.blockExercises || (nextUpcoming.ex?.supersetGroup
+        ? STATE.activeWorkout.exercises.filter(e => (e.supersetGroup || '').trim() === nextUpcoming.ex.supersetGroup.trim())
+        : [nextUpcoming.ex]);
+      const curSs = nextUpcoming.ex?.supersetGroup || null;
       const isInitialPrep = (afterExercise === 'Start treningu');
 
       if (nextUpHeader) {
@@ -3968,7 +4176,7 @@ function startRestTimer(
       // ZWYKŁA PRZERWA (między seriami wewnątrz bloku):
       // Minimalistyczny widok: timer i informacja wyłącznie o bezpośrednio nadchodzącej serii.
       const ex = nextUpcoming.ex;
-      const s = nextUpcoming.set;
+      const s = nextUpcoming.set || (ex.sets && ex.sets[0]) || { num: 1, reps: 10, weight: 0 };
       const isDualDb = ex.loadType === 'dual_dumbbell';
       const isDb = isDumbbellExercise(ex);
 
@@ -3994,7 +4202,7 @@ function startRestTimer(
       if (nextUpContent) {
         nextUpContent.innerHTML = `
           <div style="font-size: 14.5px; font-weight: 800; color: #ffffff; line-height: 1.3;">${ssPrefix}${escapeHtml(ex.name)}</div>
-          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Seria ${s.num} z ${ex.sets.length} • Ciężar: <b style="color: var(--text);">${wStr}</b> • Cel: <b style="color: var(--text);">${s.reps} powt.</b></div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Seria ${s.num} z ${(ex.sets || []).length} • Ciężar: <b style="color: var(--text);">${wStr}</b> • Cel: <b style="color: var(--text);">${s.reps} powt.</b></div>
           ${ziproHtml}
         `;
       }
@@ -4371,7 +4579,55 @@ function updateGeminiModelBadges(model, isFallback = false, keyLabel = '') {
   }
 }
 
+// ============================================================================
+// AI LATENCY LOGGING & TELEMETRY (Hidden telemetry stored in localStorage)
+// ============================================================================
+function recordAiLatencyLog(entry) {
+  try {
+    STATE.aiLatencyLogs = STATE.aiLatencyLogs || [];
+    STATE.aiLatencyLogs.unshift(entry);
+    if (STATE.aiLatencyLogs.length > 100) {
+      STATE.aiLatencyLogs = STATE.aiLatencyLogs.slice(0, 100);
+    }
+    localStorage.setItem('iron_ai_latency_logs', JSON.stringify(STATE.aiLatencyLogs));
+  } catch (e) {
+    console.warn('[AI Latency Log] Błąd zapisu do localStorage:', e);
+  }
+}
+
+window.getAiLatencyLogs = function() {
+  return STATE.aiLatencyLogs || [];
+};
+
+window.showAiLatencyTable = function() {
+  const logs = STATE.aiLatencyLogs || [];
+  if (logs.length === 0) {
+    console.log('%c[AI Latency Telemetry]%c Brak zarejestrowanych logów.', 'color: #00E5FF; font-weight: bold;', 'color: auto;');
+    return;
+  }
+  console.log(`%c[AI Latency Telemetry]%c Łącznie zarejestrowanych ${logs.length} zapytań:`, 'color: #00E5FF; font-weight: bold;', 'color: auto;');
+  console.table(logs.map((l, idx) => ({
+    '#': idx + 1,
+    'Data/Czas': l.timestamp ? new Date(l.timestamp).toLocaleTimeString('pl-PL') : '',
+    'Tier': l.preferredTier,
+    'Użyty Model': l.chosenModel,
+    'Czas (s)': l.latencySec + 's',
+    'Status': l.success ? '✅ Sukces' : '❌ Błąd',
+    'Próby': l.attemptsCount,
+    'Pytanie': (l.promptSnippet || '').slice(0, 40) + '...'
+  })));
+};
+
+window.clearAiLatencyLogs = function() {
+  STATE.aiLatencyLogs = [];
+  localStorage.removeItem('iron_ai_latency_logs');
+  console.log('[AI Latency Telemetry] Wyczyszczono logi.');
+};
+
 async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onChunk = null) {
+  const callStartTime = Date.now();
+  const promptSnippet = (typeof prompt === 'string') ? prompt.slice(0, 120).replace(/\s+/g, ' ') : 'Multimodal / Object';
+
   const primaryKey = (STATE.apiKey || '').trim();
   const backupKey = (STATE.backupApiKey || '').trim();
 
@@ -4385,23 +4641,22 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
     throw new Error('Brak klucza Gemini API');
   }
 
-  // Active models confirmed from Google AI Studio dashboard
+  // Active models confirmed from Google AI Studio official API
   const ACTIVE_TIER_FLASH = [
-    'gemini-3.8-flash',
-    'gemini-3.6-flash',
-    'gemini-3-flash',
-    'gemini-2.5-flash'
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash'
   ];
 
   const ACTIVE_TIER_LITE = [
-    'gemini-3.5-flash-lite',
-    'gemini-3.1-flash-lite',
+    'gemini-2.0-flash-lite',
+    'gemini-1.5-flash-8b',
     'gemini-2.5-flash-lite'
   ];
 
   const ACTIVE_TIER_PRO = [
-    'gemini-3.1-pro',
-    'gemini-2.5-pro'
+    'gemini-2.5-pro',
+    'gemini-1.5-pro'
   ];
 
   // Quality-First Tier Ordering:
@@ -4414,23 +4669,20 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
     orderedTiers.push({ tierNum: 3, name: 'Lite', models: ACTIVE_TIER_LITE });
     orderedTiers.push({ tierNum: 2, name: 'Flash', models: ACTIVE_TIER_FLASH });
   } else {
-    // Default 'fast' -> prioritize Flash (3.8, 3.6), fall back to Lite (500 req/day).
-    // Pro is intentionally omitted from 'fast' because free accounts have 0/0 quota for Pro, which causes slow 404 delays.
+    // Default 'fast' -> prioritize Flash, fall back to Lite.
+    // Pro is intentionally omitted from 'fast' because free accounts have 0/0 quota for Pro.
     orderedTiers.push({ tierNum: 2, name: 'Flash', models: ACTIVE_TIER_FLASH });
     orderedTiers.push({ tierNum: 3, name: 'Lite', models: ACTIVE_TIER_LITE });
   }
 
   // Healthy Key Sorting:
-  // Keys with an active 429 quota cooldown are placed last.
-  // The key that succeeded on the last request is tried FIRST!
   STATE.keyCooldowns = STATE.keyCooldowns || {};
   STATE.modelQuotaCooldowns = STATE.modelQuotaCooldowns || {};
   STATE.unavailableModels = STATE.unavailableModels || new Set();
 
   const now = Date.now();
 
-  // Automatic Google AI Studio Daily Quota Reset
-  // Google resets quotas at midnight Pacific Time (00:00 PST = 09:00 CET in Poland)
+  // Automatic Google AI Studio Daily Quota Reset (Midnight PST = 09:00 CET)
   const lastResetCheck = STATE.lastQuotaResetCheck || 0;
   const currentPSTDay = new Date(now - (8 * 3600 * 1000)).getUTCDate();
   const lastPSTDay = lastResetCheck > 0 ? new Date(lastResetCheck - (8 * 3600 * 1000)).getUTCDate() : currentPSTDay;
@@ -4473,6 +4725,7 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
 
   const allAttempts = [];
   let attemptCount = 0;
+  const MAX_TOTAL_BUDGET_MS = 38000;
 
   for (let tIdx = 0; tIdx < orderedTiers.length; tIdx++) {
     const tierObj = orderedTiers[tIdx];
@@ -4488,6 +4741,12 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
       }
 
       for (let kIdx = 0; kIdx < keysToTry.length; kIdx++) {
+        // Enforce maximum latency budget across all attempts
+        if (Date.now() - callStartTime > MAX_TOTAL_BUDGET_MS) {
+          console.warn(`[Gemini Timeout Budget] Przekroczono limit czasu oczekiwania (${Math.round((Date.now() - callStartTime) / 1000)}s). Przerywam kolejne próby fallback.`);
+          break;
+        }
+
         const { key, label } = keysToTry[kIdx];
         const quotaKey = `${key}:${modelName}`;
 
@@ -4507,7 +4766,7 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
         if (useStreaming) {
           const streamUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:streamGenerateContent?alt=sse&key=${key}`;
           const streamController = new AbortController();
-          const streamTimeoutId = setTimeout(() => streamController.abort(), 45000);
+          const streamTimeoutId = setTimeout(() => streamController.abort(), 12000); // 12s connection timeout
 
           try {
             response = await fetch(streamUrl, {
@@ -4523,8 +4782,17 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
               const decoder = new TextDecoder();
               let buffer = '';
               let accumulatedText = '';
+
+              // Streaming activity watchdog helper (stalls longer than 10s abort stream and fallback)
+              const readWithWatchdog = (streamReader, timeoutMs = 10000) => {
+                return Promise.race([
+                  streamReader.read(),
+                  new Promise((_, reject) => setTimeout(() => reject(new Error('Stall: brak danych przez 10s')), timeoutMs))
+                ]);
+              };
+
               while (true) {
-                const { done, value } = await reader.read();
+                const { done, value } = await readWithWatchdog(reader, 10000);
                 if (done) break;
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split('\n');
@@ -4555,6 +4823,21 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
                 STATE.lastWorkingKey = key;
                 const isFallback = (attemptCount > 1 || kIdx > 0 || tIdx > 0);
                 updateGeminiModelBadges(modelName, isFallback, label);
+
+                const latencyMs = Date.now() - callStartTime;
+                recordAiLatencyLog({
+                  timestamp: new Date().toISOString(),
+                  promptSnippet,
+                  preferredTier,
+                  chosenModel: modelName,
+                  keyLabel: label,
+                  success: true,
+                  latencyMs,
+                  latencySec: (latencyMs / 1000).toFixed(2),
+                  attemptsCount: attemptCount,
+                  mode: 'stream'
+                });
+
                 return finalText;
               }
             } else if (response.status === 429 || response.status === 404) {
@@ -4565,19 +4848,19 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
             }
           } catch (streamErr) {
             clearTimeout(streamTimeoutId);
-            console.warn(`[Gemini Streaming] Połączenie SSE przerwane lub zablokowane dla ${modelName} [${label}]. Przełączam na standardowe zapytanie HTTP POST:`, streamErr);
+            console.warn(`[Gemini Streaming] Połączenie SSE przerwane lub stall dla ${modelName} [${label}]. Przełączam na szybkie zapytanie standardowe:`, streamErr.message);
             response = null;
           }
         }
 
-        // 2. Standard Non-Streaming HTTP POST fallback (resilient on cellular networks and proxies)
+        // 2. Standard Non-Streaming HTTP POST fallback (resilient on mobile/cellular and proxies)
         if (!response) {
           const standardUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`;
-          const retries = (!navigator.onLine) ? 1 : 3;
+          const retries = 1; // Exactly 1 quick attempt per model to prevent multi-minute stalls
 
           for (let retry = 0; retry < retries; retry++) {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s generation timeout
+            const timeoutId = setTimeout(() => controller.abort(), 16000); // 16s generation timeout
 
             try {
               response = await fetch(standardUrl, {
@@ -4592,17 +4875,13 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
             } catch (err) {
               clearTimeout(timeoutId);
               networkErr = err;
-              if (retry < retries - 1 && !controller.signal.aborted) {
-                const backoffMs = (retry + 1) * 1500;
-                await new Promise(r => setTimeout(r, backoffMs));
-              }
             }
           }
         }
 
         if (networkErr && !response) {
-          const isTimeout = networkErr.name === 'AbortError';
-          const reason = isTimeout ? 'Timeout połączenia (45s)' : 'Błąd sieci';
+          const isTimeout = networkErr.name === 'AbortError' || (networkErr.message && networkErr.message.includes('timeout'));
+          const reason = isTimeout ? 'Timeout połączenia (16s)' : 'Błąd sieci';
           allAttempts.push({ keyLabel: label, model: modelName, status: 0, reason, details: networkErr.message });
           console.warn(`[Gemini Auto-Fallback] ${reason} dla modelu ${modelName} [${label}]:`, networkErr);
           continue;
@@ -4636,6 +4915,21 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
             }
 
             updateGeminiModelBadges(modelName, isFallback, label);
+
+            const latencyMs = Date.now() - callStartTime;
+            recordAiLatencyLog({
+              timestamp: new Date().toISOString(),
+              promptSnippet,
+              preferredTier,
+              chosenModel: modelName,
+              keyLabel: label,
+              success: true,
+              latencyMs,
+              latencySec: (latencyMs / 1000).toFixed(2),
+              attemptsCount: attemptCount,
+              mode: 'post'
+            });
+
             return text;
           } else {
             allAttempts.push({ keyLabel: label, model: modelName, status: 200, reason: 'Pusta odpowiedź (brak treści)' });
@@ -4648,7 +4942,6 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
           let reason = `HTTP ${status}`;
           if (status === 429 || rawMsg.toLowerCase().includes('quota') || rawMsg.toLowerCase().includes('resource_exhausted')) {
             reason = 'Wyczerpany limit (Quota / 429)';
-            // Cooldown this specific model on this key until next Pacific Midnight (09:00 CET reset in AI Studio)
             STATE.modelQuotaCooldowns = STATE.modelQuotaCooldowns || {};
             STATE.modelQuotaCooldowns[quotaKey] = Math.max(Date.now() + (2 * 60 * 60 * 1000), getNextPacificMidnightMs());
             saveModelQuotaCooldowns();
@@ -4665,6 +4958,21 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
       }
     }
   }
+
+  // Record failed request latency telemetry
+  const totalLatencyMs = Date.now() - callStartTime;
+  recordAiLatencyLog({
+    timestamp: new Date().toISOString(),
+    promptSnippet,
+    preferredTier,
+    chosenModel: 'brak',
+    keyLabel: 'brak',
+    success: false,
+    latencyMs: totalLatencyMs,
+    latencySec: (totalLatencyMs / 1000).toFixed(2),
+    attemptsCount: attemptCount,
+    attempts: allAttempts
+  });
 
   // Only reached if ALL keys and ALL tiers/models failed!
   const keyDiagnostics = keysToTry.map((kObj) => {
@@ -7146,9 +7454,389 @@ function onEditMealMacroInput() {
   }
 }
 
+// ============================================================================
+// NUTRITION: MEAL CATEGORIES MANAGEMENT (1 śniadanie, 2 śniadanie, lunch, obiad, kolacja, przekąski)
+// ============================================================================
+function initMealCategories() {
+  if (!Array.isArray(STATE.mealCategories) || STATE.mealCategories.length === 0) {
+    STATE.mealCategories = [
+      '1 śniadanie',
+      '2 śniadanie',
+      'Lunch',
+      'Obiad',
+      'Kolacja',
+      'Przekąski'
+    ];
+  }
+}
+
+function saveMealCategories() {
+  try {
+    localStorage.setItem('iron_meal_categories', JSON.stringify(STATE.mealCategories));
+  } catch (e) {
+    console.warn('[Meal Categories] Błąd zapisu:', e);
+  }
+}
+
+function getMealCategoryIcon(name) {
+  const n = (name || '').toLowerCase();
+  if (n.includes('1') && n.includes('śniadan')) return '🍳';
+  if (n.includes('2') && n.includes('śniadan')) return '🥪';
+  if (n.includes('lunch')) return '🥗';
+  if (n.includes('obiad')) return '🍲';
+  if (n.includes('kolacj')) return '🍽️';
+  if (n.includes('przekąsk') || n.includes('snack')) return '🍏';
+  if (n.includes('trening') || n.includes('przedtrening') || n.includes('potrening')) return '⚡';
+  if (n.includes('kawa') || n.includes('coffee')) return '☕';
+  if (n.includes('kolac')) return '🌙';
+  return '🍴';
+}
+
+function toggleMealCategoriesDrawer() {
+  const drawer = document.getElementById('nutrition-meal-categories-drawer');
+  if (!drawer) return;
+  const isHidden = drawer.style.display === 'none' || !drawer.style.display;
+  drawer.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) {
+    renderMealCategoriesDrawer();
+  }
+}
+
+function renderMealCategoriesDrawer() {
+  const listEl = document.getElementById('meal-categories-list');
+  if (!listEl) return;
+  initMealCategories();
+
+  listEl.innerHTML = STATE.mealCategories.map((cat, idx) => {
+    const icon = getMealCategoryIcon(cat);
+    const isFirst = idx === 0;
+    const isLast = idx === STATE.mealCategories.length - 1;
+    return `
+      <div style="display: flex; align-items: center; justify-content: space-between; background: #12151b; border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;">
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--text);">
+          <span style="font-size: 16px;">${icon}</span>
+          <span>${escapeHtml(cat)}</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 4px;">
+          <button type="button" class="btn btn-sm btn-secondary" style="padding: 2px 6px; font-size: 11px;" ${isFirst ? 'disabled style="opacity: 0.3;"' : ''} onclick="moveMealCategory(${idx}, -1)" title="W górę">⬆️</button>
+          <button type="button" class="btn btn-sm btn-secondary" style="padding: 2px 6px; font-size: 11px;" ${isLast ? 'disabled style="opacity: 0.3;"' : ''} onclick="moveMealCategory(${idx}, 1)" title="W dół">⬇️</button>
+          <button type="button" class="btn btn-sm btn-secondary" style="padding: 2px 7px; font-size: 11px; color: var(--accent);" onclick="editMealCategory(${idx})" title="Zmień nazwę">✏️</button>
+          <button type="button" class="btn btn-sm btn-secondary" style="padding: 2px 7px; font-size: 11px; color: var(--danger);" onclick="deleteMealCategory(${idx})" title="Usuń posiłek">🗑️</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function addNewMealCategory() {
+  const input = document.getElementById('new-meal-category-name');
+  const val = (input?.value || '').trim();
+  if (!val) {
+    return alert('Wpisz nazwę posiłku (np. Drugie śniadanie, Podwieczorek, Przedtreningowy)!');
+  }
+  initMealCategories();
+  if (STATE.mealCategories.some(c => c.toLowerCase() === val.toLowerCase())) {
+    return alert('Posiłek o takiej nazwie już istnieje!');
+  }
+  STATE.mealCategories.push(val);
+  saveMealCategories();
+  if (input) input.value = '';
+  renderMealCategoriesDrawer();
+  renderNutritionView();
+}
+
+function editMealCategory(idx) {
+  initMealCategories();
+  const current = STATE.mealCategories[idx];
+  if (!current) return;
+  const newName = prompt('Podaj nową nazwę posiłku:', current);
+  if (newName === null) return;
+  const trimmed = newName.trim();
+  if (!trimmed) {
+    return alert('Nazwa posiłku nie może być pusta!');
+  }
+  if (trimmed === current) return;
+
+  STATE.mealCategories[idx] = trimmed;
+  // Also migrate existing diary meals with the old name
+  (STATE.nutritionDiary || []).forEach(m => {
+    if (m.mealType === current) {
+      m.mealType = trimmed;
+    }
+  });
+  localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
+  saveMealCategories();
+  renderMealCategoriesDrawer();
+  renderNutritionView();
+}
+
+function deleteMealCategory(idx) {
+  initMealCategories();
+  const current = STATE.mealCategories[idx];
+  if (!current) return;
+
+  const countUsage = (STATE.nutritionDiary || []).filter(m => m.mealType === current).length;
+  const note = countUsage > 0 ? ` (${countUsage} zapisanych dań zostanie oznaczonych jako "Inne")` : '';
+  if (!confirm(`Czy na pewno chcesz usunąć posiłek "${current}"?${note}`)) return;
+
+  STATE.mealCategories.splice(idx, 1);
+  if (STATE.mealCategories.length === 0) {
+    STATE.mealCategories.push('Posiłek');
+  }
+  // Assign orphaned meals to 'Inne'
+  (STATE.nutritionDiary || []).forEach(m => {
+    if (m.mealType === current) {
+      m.mealType = 'Inne';
+    }
+  });
+  localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
+  saveMealCategories();
+  renderMealCategoriesDrawer();
+  renderNutritionView();
+}
+
+function moveMealCategory(idx, dir) {
+  initMealCategories();
+  const target = idx + dir;
+  if (target < 0 || target >= STATE.mealCategories.length) return;
+  const tmp = STATE.mealCategories[idx];
+  STATE.mealCategories[idx] = STATE.mealCategories[target];
+  STATE.mealCategories[target] = tmp;
+  saveMealCategories();
+  renderMealCategoriesDrawer();
+  renderNutritionView();
+}
+
+function openAddMealToCategory(categoryName) {
+  STATE.activeSelectedMealCategory = categoryName;
+  STATE.editingMealId = null;
+  STATE.lastAnalyzedMealPhotos = [];
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+  openMealEditorWithValues({
+    name: '',
+    mealType: categoryName,
+    timeLabel: timeStr,
+    kcal: '',
+    proteinG: '',
+    carbsG: '',
+    fatG: '',
+    ingredientsSummary: '',
+    coachComment: '',
+    userComment: ''
+  });
+  const box = document.getElementById('meal-editor-box');
+  if (box) box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// ============================================================================
+// COFFEE TRACKER (Czarna vs Z mlekiem 50ml 2%)
+// ============================================================================
+function getCoffeeDayStats(dateKey) {
+  const meals = (STATE.nutritionDiary || []).filter(m => m.dateKey === dateKey);
+  let totalCount = 0;
+  let blackCount = 0;
+  let milkCount = 0;
+  let totalKcal = 0;
+  let totalP = 0;
+  let totalC = 0;
+  let totalF = 0;
+
+  meals.forEach(m => {
+    const isCof = Boolean(m.isCoffee || m.coffeeType || (m.name && m.name.toLowerCase().startsWith('kawa')));
+    if (isCof) {
+      totalCount += 1;
+      const isMilk = m.coffeeType === 'milk' || (m.name && m.name.toLowerCase().includes('mlek'));
+      if (isMilk) {
+        milkCount += 1;
+      } else {
+        blackCount += 1;
+      }
+      totalKcal += (parseFloat(m.kcal) || 0);
+      totalP += (parseFloat(m.proteinG) || 0);
+      totalC += (parseFloat(m.carbsG) || 0);
+      totalF += (parseFloat(m.fatG) || 0);
+    }
+  });
+
+  return {
+    count: totalCount,
+    blackCount,
+    milkCount,
+    kcal: totalKcal,
+    proteinG: totalP,
+    carbsG: totalC,
+    fatG: totalF
+  };
+}
+
+function logQuickCoffee(type = 'black') {
+  const dateKey = STATE.selectedNutritionDate || getTodayIsoDate();
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+  const isMilk = (type === 'milk');
+
+  // Standard milk 50ml 2%: 25 kcal, 1.7g B, 2.4g W, 1.0g T
+  const name = isMilk ? 'Kawa z mlekiem 2% (50ml)' : 'Kawa czarna';
+  const kcal = isMilk ? 25 : 2;
+  const proteinG = isMilk ? 1.7 : 0;
+  const carbsG = isMilk ? 2.4 : 0;
+  const fatG = isMilk ? 1.0 : 0;
+  const ingredients = isMilk
+    ? 'Kawa + mleko krowie 2% (standard 50ml: 25 kcal, 1.7g B, 2.4g W, 1.0g T)'
+    : 'Kawa czarna bez dodatków (~2 kcal)';
+
+  initMealCategories();
+  const snackCat = STATE.mealCategories.find(c => c.toLowerCase().includes('przekąsk')) || STATE.mealCategories[0] || 'Przekąski';
+
+  const entry = {
+    id: 'meal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+    dateKey: dateKey,
+    timeLabel: timeStr,
+    fullDateTime: `${dateKey} ${timeStr}`,
+    timestamp: Date.now(),
+    name: name,
+    meal_name: name,
+    mealType: snackCat,
+    isCoffee: true,
+    coffeeType: type,
+    kcal: kcal,
+    proteinG: proteinG,
+    carbsG: carbsG,
+    fatG: fatG,
+    macro_nutrients: { kcal, proteinG, carbsG, fatG },
+    ingredientsSummary: ingredients,
+    ingredients_list: ingredients,
+    coachComment: isMilk ? 'Kawa z 50ml mleka 2% doliczona do bilansu.' : 'Kawa czarna bez kalorii zarejestrowana.',
+    userComment: ''
+  };
+
+  STATE.nutritionDiary.unshift(entry);
+  localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
+  renderNutritionView();
+  renderHomeKpis();
+
+  if (navigator.vibrate) navigator.vibrate(35);
+}
+
+function undoLastCoffee() {
+  const dateKey = STATE.selectedNutritionDate || getTodayIsoDate();
+  const coffeeIdx = (STATE.nutritionDiary || []).findIndex(m =>
+    m.dateKey === dateKey && (m.isCoffee || m.coffeeType || (m.name && m.name.toLowerCase().startsWith('kawa')))
+  );
+
+  if (coffeeIdx === -1) {
+    return alert('Brak kawy do cofnięcia w wybranym dniu!');
+  }
+
+  const removed = STATE.nutritionDiary.splice(coffeeIdx, 1)[0];
+  localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
+  renderNutritionView();
+  renderHomeKpis();
+}
+
+// ============================================================================
+// WHOLE MEAL BLOCK TRANSFER & COPY
+// ============================================================================
+function openMealBlockTransfer(sourceCategory) {
+  STATE.blockTransferSourceCategory = sourceCategory;
+  initMealCategories();
+
+  const drawer = document.getElementById('meal-block-transfer-drawer');
+  const titleEl = document.getElementById('block-transfer-title');
+  const descEl = document.getElementById('block-transfer-desc');
+  const targetDateInput = document.getElementById('block-transfer-target-date');
+  const targetCatSelect = document.getElementById('block-transfer-target-category');
+  if (!drawer) return;
+
+  const curDate = STATE.selectedNutritionDate || getTodayIsoDate();
+  const sourceMeals = (STATE.nutritionDiary || []).filter(m => m.dateKey === curDate && m.mealType === sourceCategory);
+
+  if (sourceMeals.length === 0) {
+    return alert(`W posiłku "${sourceCategory}" nie ma żadnych zapisanych dań do skopiowania.`);
+  }
+
+  const totalKcal = Math.round(sourceMeals.reduce((acc, m) => acc + (parseFloat(m.kcal) || 0), 0));
+
+  if (titleEl) titleEl.textContent = `📋 Kopiuj cały posiłek: ${sourceCategory}`;
+  if (descEl) descEl.innerHTML = `Wybierasz <b>${sourceMeals.length}</b> pozycję/pozycji (${totalKcal} kcal) z dnia <b>${formatNutritionDateHeading(curDate)}</b>.<br>Wybierz dzień oraz docelowy posiłek:`;
+
+  if (targetDateInput) {
+    targetDateInput.value = getOffsetIsoDate(curDate, 1); // default to tomorrow
+  }
+
+  if (targetCatSelect) {
+    targetCatSelect.innerHTML = STATE.mealCategories.map(cat => `
+      <option value="${escapeHtml(cat)}" ${cat === sourceCategory ? 'selected' : ''}>${getMealCategoryIcon(cat)} ${escapeHtml(cat)}</option>
+    `).join('');
+  }
+
+  drawer.style.display = 'flex';
+}
+
+function closeMealBlockTransferDrawer() {
+  const drawer = document.getElementById('meal-block-transfer-drawer');
+  if (drawer) drawer.style.display = 'none';
+  STATE.blockTransferSourceCategory = null;
+}
+
+function setBlockTransferQuickDate(offsetFromToday) {
+  const dateInput = document.getElementById('block-transfer-target-date');
+  if (!dateInput) return;
+  dateInput.value = getOffsetIsoDate(getTodayIsoDate(), offsetFromToday);
+}
+
+function confirmMealBlockTransfer() {
+  const sourceCategory = STATE.blockTransferSourceCategory;
+  const targetDate = (document.getElementById('block-transfer-target-date')?.value || '').trim();
+  const targetCategory = (document.getElementById('block-transfer-target-category')?.value || sourceCategory || 'Posiłek').trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+    return alert('Wybierz poprawną datę docelową!');
+  }
+
+  const curDate = STATE.selectedNutritionDate || getTodayIsoDate();
+  const sourceMeals = (STATE.nutritionDiary || []).filter(m => m.dateKey === curDate && m.mealType === sourceCategory);
+
+  if (sourceMeals.length === 0) {
+    return alert('Brak dań do skopiowania.');
+  }
+
+  sourceMeals.forEach((m, idx) => {
+    STATE.nutritionDiary.unshift({
+      ...m,
+      id: 'meal-' + Date.now() + '-' + idx + '-' + Math.random().toString(36).slice(2, 6),
+      dateKey: targetDate,
+      mealType: targetCategory,
+      timestamp: Date.now() + idx
+    });
+  });
+
+  localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
+  closeMealBlockTransferDrawer();
+  renderNutritionView();
+  alert(`📋 Pomyślnie skopiowano cały posiłek "${sourceCategory}" (${sourceMeals.length} pozycji) na dzień ${formatNutritionDateHeading(targetDate)} do "${targetCategory}"!`);
+}
+
 function openMealEditorWithValues(data) {
   const box = document.getElementById('meal-editor-box');
   if (!box) return;
+  initMealCategories();
+
+  // Populate meal category select
+  const catSelect = document.getElementById('edit-meal-type');
+  if (catSelect) {
+    const chosenCat = data.mealType || STATE.activeSelectedMealCategory || STATE.mealCategories[0] || '1 śniadanie';
+    catSelect.innerHTML = STATE.mealCategories.map(cat => `
+      <option value="${escapeHtml(cat)}" ${cat === chosenCat ? 'selected' : ''}>${getMealCategoryIcon(cat)} ${escapeHtml(cat)}</option>
+    `).join('');
+  }
+
+  // Populate meal time input
+  const timeInput = document.getElementById('edit-meal-time');
+  if (timeInput) {
+    timeInput.value = data.timeLabel || new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+  }
 
   document.getElementById('edit-meal-name').value = data.name || '';
   document.getElementById('edit-meal-kcal').value = data.kcal ?? '';
@@ -7189,8 +7877,12 @@ function openManualMealEditor() {
   const descInput = document.getElementById('meal-desc-input');
   const hint = (descInput?.value || '').trim();
   if (descInput) descInput.value = '';
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
   openMealEditorWithValues({
     name: hint || '',
+    mealType: STATE.activeSelectedMealCategory || STATE.mealCategories[0],
+    timeLabel: timeStr,
     kcal: '',
     proteinG: '',
     carbsG: '',
@@ -7216,6 +7908,10 @@ function saveEditedMealToDiary() {
   const fatG = Math.max(0, Math.round((parseFloat(document.getElementById('edit-meal-fat')?.value) || 0) * 10) / 10);
   const userComment = (document.getElementById('edit-meal-user-comment')?.value || '').trim();
 
+  initMealCategories();
+  const mealType = (document.getElementById('edit-meal-type')?.value || STATE.activeSelectedMealCategory || STATE.mealCategories[0] || '1 śniadanie').trim();
+  const timeLabel = (document.getElementById('edit-meal-time')?.value || new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })).trim();
+
   if (kcal === 0 && proteinG === 0 && carbsG === 0 && fatG === 0) {
     return alert('Podaj kalorie lub makroskładniki posiłku!');
   }
@@ -7231,6 +7927,9 @@ function saveEditedMealToDiary() {
     if (existing) {
       existing.name = name;
       existing.meal_name = name;
+      existing.mealType = mealType;
+      existing.timeLabel = timeLabel;
+      existing.fullDateTime = `${existing.dateKey || dateKey} ${timeLabel}`;
       existing.kcal = kcal;
       existing.proteinG = proteinG;
       existing.carbsG = carbsG;
@@ -7243,17 +7942,16 @@ function saveEditedMealToDiary() {
       if (thumbUrl) existing.thumbUrl = thumbUrl;
     }
   } else {
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
-    const fullDateTime = `${dateKey} ${timeStr}`;
+    const fullDateTime = `${dateKey} ${timeLabel}`;
     STATE.nutritionDiary.unshift({
       id: 'meal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
       dateKey,
-      timeLabel: timeStr,
+      timeLabel: timeLabel,
       fullDateTime: fullDateTime,
       timestamp: Date.now(),
       name,
       meal_name: name,
+      mealType: mealType,
       kcal,
       proteinG,
       carbsG,
@@ -7290,6 +7988,8 @@ function editDiaryMeal(mealId) {
   STATE.lastAnalyzedMealPhotos = [];
   openMealEditorWithValues({
     name: meal.name,
+    mealType: meal.mealType,
+    timeLabel: meal.timeLabel,
     kcal: meal.kcal,
     proteinG: meal.proteinG,
     carbsG: meal.carbsG,
@@ -7342,25 +8042,31 @@ function copyOrMoveMeal(mealId, mode = 'copy') {
     return alert('Wybierz docelową datę!');
   }
 
+  initMealCategories();
+  const catSelect = document.getElementById(`meal-transfer-cat-${mealId}`);
+  const targetCategory = (catSelect?.value || meal.mealType || STATE.mealCategories[0] || '1 śniadanie').trim();
+
   if (mode === 'move') {
-    if (meal.dateKey === targetDate) {
-      return alert('Ten posiłek jest już przypisany do tego dnia!');
+    if (meal.dateKey === targetDate && meal.mealType === targetCategory) {
+      return alert('Ten posiłek jest już przypisany do tej kategorii w tym dniu!');
     }
     meal.dateKey = targetDate;
+    meal.mealType = targetCategory;
     localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
     renderNutritionView();
-    alert(`➡️ Przeniesiono posiłek "${meal.name}" na dzień ${formatNutritionDateHeading(targetDate)}!`);
+    alert(`➡️ Przeniesiono posiłek "${meal.name}" na dzień ${formatNutritionDateHeading(targetDate)} do posiłku "${targetCategory}"!`);
   } else {
     const cloned = {
       ...meal,
       id: 'meal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
       dateKey: targetDate,
+      mealType: targetCategory,
       timestamp: Date.now()
     };
     STATE.nutritionDiary.unshift(cloned);
     localStorage.setItem('iron_nutrition_diary', JSON.stringify(STATE.nutritionDiary));
     renderNutritionView();
-    alert(`📋 Skopiowano posiłek "${meal.name}" na dzień ${formatNutritionDateHeading(targetDate)}!`);
+    alert(`📋 Skopiowano posiłek "${meal.name}" na dzień ${formatNutritionDateHeading(targetDate)} do posiłku "${targetCategory}"!`);
   }
 }
 
@@ -7459,6 +8165,7 @@ function getNutritionDayTotals(dateKey) {
 function renderNutritionView() {
   const dateKey = STATE.selectedNutritionDate || getTodayIsoDate();
   const goals = STATE.nutritionGoals || { kcal: 2500, proteinG: 180, carbsG: 260, fatG: 75 };
+  initMealCategories();
 
   // Populate goal inputs if not currently focused
   const kEl = document.getElementById('goal-kcal-input');
@@ -7479,7 +8186,20 @@ function renderNutritionView() {
 
   const totals = getNutritionDayTotals(dateKey);
 
-  // 1. Render Progress Bars
+  // 1. Update Coffee Tracker Stats
+  const coffeeStats = getCoffeeDayStats(dateKey);
+  const coffeeCountEl = document.getElementById('coffee-counter-total-count');
+  const coffeeBreakdownEl = document.getElementById('coffee-counter-breakdown');
+  const coffeeMacrosEl = document.getElementById('coffee-counter-macros');
+  if (coffeeCountEl) coffeeCountEl.textContent = coffeeStats.count;
+  if (coffeeBreakdownEl) {
+    coffeeBreakdownEl.textContent = `(czarnych: ${coffeeStats.blackCount} • z mlekiem: ${coffeeStats.milkCount})`;
+  }
+  if (coffeeMacrosEl) {
+    coffeeMacrosEl.textContent = `Kcal: ${Math.round(coffeeStats.kcal)} kcal | B: ${coffeeStats.proteinG.toFixed(1)}g | W: ${coffeeStats.carbsG.toFixed(1)}g | T: ${coffeeStats.fatG.toFixed(1)}g`;
+  }
+
+  // 2. Render Daily Goal Progress Bars
   const progContainer = document.getElementById('nutrition-daily-progress');
   if (progContainer) {
     const kcalPct = Math.min(100, Math.round((totals.kcal / (goals.kcal || 1)) * 100));
@@ -7538,74 +8258,150 @@ function renderNutritionView() {
     `;
   }
 
-  // 2. Render Meals List for selected day
+  // 3. Render Grouped Meals List by Meal Categories with Subtotals
   const mealsListEl = document.getElementById('nutrition-meals-list');
   const countBadge = document.getElementById('nutrition-meals-count');
-  if (countBadge) countBadge.textContent = `${totals.count} posiłków`;
+  if (countBadge) countBadge.textContent = `${totals.count} dań`;
 
   if (mealsListEl) {
     if (totals.meals.length === 0) {
       mealsListEl.innerHTML = `
-        <p style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 14px 0;">
-          Brak zapisanych posiłków w tym dniu. Zrób zdjęcie talerza powyżej, dodaj ręcznie lub skopiuj posiłki z innego dnia!
-        </p>
-      `;
-    } else {
-      mealsListEl.innerHTML = totals.meals.map(m => {
-        const mealTitle = m.meal_name || m.name || 'Posiłek';
-        const mealIngredients = m.ingredients_list || m.ingredientsSummary || '';
-        const dateHeader = m.fullDateTime || (m.dateKey ? `${m.dateKey} ${m.timeLabel || ''}` : (m.timeLabel || ''));
-        return `
-        <div style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;">
-          <div style="font-size: 10px; font-weight: 800; color: var(--accent); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">
-            📅 ${escapeHtml(dateHeader)}
-          </div>
-          <div style="display: flex; gap: 10px; align-items: flex-start;">
-            ${m.thumbUrl ? `<img src="${m.thumbUrl}" alt="Posiłek" style="width: 54px; height: 54px; border-radius: 8px; object-fit: cover; flex-shrink: 0; border: 1px solid var(--border);">` : ''}
-            <div style="flex: 1; min-width: 0;">
-              <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 6px;">
-                <div style="font-weight: 800; font-size: 14px; color: var(--text);">
-                  ${escapeHtml(mealTitle)}
-                </div>
-                <span style="font-weight: 900; font-size: 14px; color: var(--primary); white-space: nowrap;">${Math.round(m.kcal)} kcal</span>
-              </div>
-              <div style="font-size: 12px; color: var(--text-muted); margin-top: 3px;">
-                🥩 B: <b style="color: var(--success);">${Math.round(m.proteinG)}g</b> •
-                🍚 W: <b style="color: var(--accent);">${Math.round(m.carbsG)}g</b> •
-                🥑 T: <b style="color: var(--primary);">${Math.round(m.fatG)}g</b>
-              </div>
-              ${mealIngredients ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">⚖️ ${escapeHtml(mealIngredients)}</div>` : ''}
-              ${m.coachComment ? `<div style="font-size: 11px; color: var(--accent); margin-top: 3px;">💡 AI: ${escapeHtml(m.coachComment)}</div>` : ''}
-              ${m.userComment ? `<div style="font-size: 11px; color: var(--primary); margin-top: 3px;">📝 Notatka: ${escapeHtml(m.userComment)}</div>` : ''}
-              <div style="display: flex; justify-content: flex-end; gap: 6px; margin-top: 7px; flex-wrap: wrap;">
-                <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px; color: var(--accent);" onclick="toggleMealTransferBar('${m.id}')">📅 Przenieś / Kopiuj</button>
-                <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="editDiaryMeal('${m.id}')">✏️ Edytuj / Dopytaj AI</button>
-                <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px; color: var(--danger);" onclick="deleteDiaryMeal('${m.id}')">Usuń</button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Inline Per-Meal Copy / Move Bar -->
-          <div id="meal-transfer-bar-${m.id}" style="display: none; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border);">
-            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 5px;">Wybierz dzień docelowy dla posiłku <b>${escapeHtml(m.name)}</b>:</div>
-            <div style="display: flex; gap: 5px; align-items: center; margin-bottom: 6px; flex-wrap: wrap;">
-              <input type="date" id="meal-transfer-date-${m.id}" class="input-box" style="flex: 1; font-size: 12px; padding: 5px 8px; min-width: 130px;" value="${getTodayIsoDate()}">
-              <button type="button" class="btn btn-sm btn-secondary" style="padding: 4px 7px; font-size: 10px;" onclick="setMealTransferQuickDate('${m.id}', -1)">Wczoraj</button>
-              <button type="button" class="btn btn-sm btn-secondary" style="padding: 4px 7px; font-size: 10px;" onclick="setMealTransferQuickDate('${m.id}', 0)">Dzisiaj</button>
-              <button type="button" class="btn btn-sm btn-secondary" style="padding: 4px 7px; font-size: 10px;" onclick="setMealTransferQuickDate('${m.id}', 1)">Jutro</button>
-            </div>
-            <div style="display: flex; gap: 6px;">
-              <button type="button" class="btn btn-sm btn-accent" style="flex: 1; padding: 6px; font-size: 11px;" onclick="copyOrMoveMeal('${m.id}', 'copy')">📋 Kopiuj tam</button>
-              <button type="button" class="btn btn-sm btn-primary" style="flex: 1; padding: 6px; font-size: 11px;" onclick="copyOrMoveMeal('${m.id}', 'move')">➡️ Przenieś tam</button>
-            </div>
+        <div style="text-align: center; padding: 22px 12px; background: var(--surface-elevated); border-radius: 12px; border: 1px dashed var(--border);">
+          <div style="font-size: 26px; margin-bottom: 6px;">🍽️</div>
+          <p style="color: var(--text-muted); font-size: 13px; margin: 0 0 10px 0;">
+            Brak zapisanych posiłków w tym dniu.
+          </p>
+          <div style="font-size: 12px; color: var(--text-muted);">
+            Zrób zdjęcie talerza aparatem powyżej, dodaj pozycję w wybranym posiłku lub kliknij <b style="color: var(--accent);">📋 Kopiuj dzień</b>.
           </div>
         </div>
       `;
-    }).join('');
+    } else {
+      const activeCats = [...STATE.mealCategories];
+      // Check for orphan meals whose mealType is not in activeCats
+      const orphanMeals = totals.meals.filter(m => !m.mealType || !activeCats.includes(m.mealType));
+
+      const groupsToRender = activeCats.map(cat => ({
+        name: cat,
+        icon: getMealCategoryIcon(cat),
+        meals: totals.meals.filter(m => m.mealType === cat)
+      }));
+
+      if (orphanMeals.length > 0) {
+        groupsToRender.push({
+          name: 'Inne / Nieskategoryzowane',
+          icon: '🍴',
+          meals: orphanMeals
+        });
+      }
+
+      mealsListEl.innerHTML = groupsToRender.map(group => {
+        const catMeals = group.meals;
+        const subKcal = Math.round(catMeals.reduce((acc, m) => acc + (parseFloat(m.kcal) || 0), 0));
+        const subP = Math.round(catMeals.reduce((acc, m) => acc + (parseFloat(m.proteinG) || 0), 0));
+        const subC = Math.round(catMeals.reduce((acc, m) => acc + (parseFloat(m.carbsG) || 0), 0));
+        const subF = Math.round(catMeals.reduce((acc, m) => acc + (parseFloat(m.fatG) || 0), 0));
+
+        const catOptionsHtml = STATE.mealCategories.map(c => `<option value="${escapeHtml(c)}">${getMealCategoryIcon(c)} ${escapeHtml(c)}</option>`).join('');
+
+        const itemsHtml = catMeals.length === 0 ? `
+          <div style="font-size: 11px; color: var(--text-muted); padding: 8px 10px; font-style: italic; background: rgba(0,0,0,0.2); border-radius: 8px;">
+            Brak pozycji w tym posiłku. Kliknij <b>➕ Dodaj</b>, aby zapisać.
+          </div>
+        ` : catMeals.map(m => {
+          const mealTitle = m.meal_name || m.name || 'Posiłek';
+          const mealIngredients = m.ingredients_list || m.ingredientsSummary || '';
+          const timeBadge = m.timeLabel || '';
+
+          return `
+            <div style="background: #12151b; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 7px;">
+              <div style="display: flex; gap: 10px; align-items: flex-start;">
+                ${m.thumbUrl ? `<img src="${m.thumbUrl}" alt="Posiłek" style="width: 50px; height: 50px; border-radius: 8px; object-fit: cover; flex-shrink: 0; border: 1px solid var(--border);">` : ''}
+                <div style="flex: 1; min-width: 0;">
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 6px;">
+                    <div>
+                      <span style="font-weight: 800; font-size: 13.5px; color: var(--text);">${escapeHtml(mealTitle)}</span>
+                      ${timeBadge ? `<span style="font-size: 10px; color: var(--text-muted); margin-left: 6px; background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px;">🕒 ${escapeHtml(timeBadge)}</span>` : ''}
+                    </div>
+                    <span style="font-weight: 900; font-size: 13.5px; color: var(--primary); white-space: nowrap;">${Math.round(m.kcal)} kcal</span>
+                  </div>
+                  <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 3px;">
+                    🥩 B: <b style="color: var(--success);">${Math.round(m.proteinG)}g</b> •
+                    🍚 W: <b style="color: var(--accent);">${Math.round(m.carbsG)}g</b> •
+                    🥑 T: <b style="color: var(--primary);">${Math.round(m.fatG)}g</b>
+                  </div>
+                  ${mealIngredients ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 3px; line-height: 1.35;">⚖️ ${escapeHtml(mealIngredients)}</div>` : ''}
+                  ${m.coachComment ? `<div style="font-size: 11px; color: var(--accent); margin-top: 3px;">💡 AI: ${escapeHtml(m.coachComment)}</div>` : ''}
+                  ${m.userComment ? `<div style="font-size: 11px; color: var(--primary); margin-top: 3px;">📝 Notatka: ${escapeHtml(m.userComment)}</div>` : ''}
+
+                  <div style="display: flex; justify-content: flex-end; gap: 5px; margin-top: 7px; flex-wrap: wrap;">
+                    <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px; color: var(--accent);" onclick="toggleMealTransferBar('${m.id}')">📅 Kopiuj / Przenieś</button>
+                    <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="editDiaryMeal('${m.id}')">✏️ Edytuj</button>
+                    <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 8px; font-size: 11px; color: var(--danger);" onclick="deleteDiaryMeal('${m.id}')">Usuń</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Inline Per-Meal Copy / Move Bar with Target Category & Date -->
+              <div id="meal-transfer-bar-${m.id}" style="display: none; margin-top: 8px; padding: 10px; background: rgba(0,0,0,0.4); border-radius: 8px; border: 1px dashed var(--border);">
+                <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 6px;">Kopiuj lub przenieś pozycję:</div>
+                <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap;">
+                  <div style="flex: 1; min-width: 130px;">
+                    <label style="font-size: 10px; color: var(--text-muted); display: block; margin-bottom: 2px;">Dzień docelowy:</label>
+                    <input type="date" id="meal-transfer-date-${m.id}" class="input-box" style="font-size: 12px; padding: 5px 7px; width: 100%;" value="${m.dateKey || getTodayIsoDate()}">
+                  </div>
+                  <div style="flex: 1; min-width: 130px;">
+                    <label style="font-size: 10px; color: var(--text-muted); display: block; margin-bottom: 2px;">Posiłek docelowy:</label>
+                    <select id="meal-transfer-cat-${m.id}" class="input-box" style="font-size: 12px; padding: 5px 7px; width: 100%;">
+                      ${STATE.mealCategories.map(c => `<option value="${escapeHtml(c)}" ${(m.mealType || '') === c ? 'selected' : ''}>${getMealCategoryIcon(c)} ${escapeHtml(c)}</option>`).join('')}
+                    </select>
+                  </div>
+                </div>
+                <div style="display: flex; gap: 5px; margin-bottom: 8px;">
+                  <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 6px; font-size: 10px;" onclick="setMealTransferQuickDate('${m.id}', -1)">Wczoraj</button>
+                  <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 6px; font-size: 10px;" onclick="setMealTransferQuickDate('${m.id}', 0)">Dzisiaj</button>
+                  <button type="button" class="btn btn-sm btn-secondary" style="padding: 3px 6px; font-size: 10px;" onclick="setMealTransferQuickDate('${m.id}', 1)">Jutro</button>
+                </div>
+                <div style="display: flex; gap: 6px;">
+                  <button type="button" class="btn btn-sm btn-accent" style="flex: 1; padding: 6px; font-size: 11px; font-weight: 700;" onclick="copyOrMoveMeal('${m.id}', 'copy')">📋 Skopiuj</button>
+                  <button type="button" class="btn btn-sm btn-primary" style="flex: 1; padding: 6px; font-size: 11px; font-weight: 700;" onclick="copyOrMoveMeal('${m.id}', 'move')">➡️ Przenieś</button>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        return `
+          <div style="background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 6px;">
+              <div style="display: flex; align-items: center; gap: 7px;">
+                <span style="font-size: 18px;">${group.icon}</span>
+                <span style="font-size: 14px; font-weight: 800; color: #ffffff;">${escapeHtml(group.name)}</span>
+                <span style="font-size: 11px; color: var(--text-muted); background: rgba(0,0,0,0.35); padding: 2px 6px; border-radius: 6px;">${catMeals.length}</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 13px; font-weight: 900; color: var(--primary);">${subKcal} kcal</span>
+                <span style="font-size: 11px; color: var(--text-muted);">(B: ${subP}g • W: ${subC}g • T: ${subF}g)</span>
+              </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 6px; margin-bottom: 8px;">
+              <button type="button" class="btn btn-sm btn-secondary" style="padding: 4px 8px; font-size: 11px; color: var(--accent); border-color: rgba(0, 229, 255, 0.35);" onclick="openAddMealToCategory('${escapeHtml(group.name)}')">➕ Dodaj</button>
+              ${catMeals.length > 0 ? `
+                <button type="button" class="btn btn-sm btn-secondary" style="padding: 4px 8px; font-size: 11px; color: #ffeb3b; border-color: rgba(255, 235, 59, 0.35);" onclick="openMealBlockTransfer('${escapeHtml(group.name)}')">📋 Kopiuj posiłek</button>
+              ` : ''}
+            </div>
+
+            <div style="display: flex; flex-direction: column;">
+              ${itemsHtml}
+            </div>
+          </div>
+        `;
+      }).join('');
     }
   }
 
-  // 3. Render 7-Day History Summary
+  // 4. Render 7-Day History Summary
   const histEl = document.getElementById('nutrition-days-history');
   if (histEl) {
     const uniqueDates = Array.from(new Set([
@@ -7627,7 +8423,7 @@ function renderNutritionView() {
               ${escapeHtml(formatNutritionDateHeading(dKey))}
             </div>
             <div style="font-size: 11px; color: var(--text-muted);">
-              Posiłków: ${dt.count} • B: ${Math.round(dt.proteinG)}g • W: ${Math.round(dt.carbsG)}g • T: ${Math.round(dt.fatG)}g
+              Dań: ${dt.count} • B: ${Math.round(dt.proteinG)}g • W: ${Math.round(dt.carbsG)}g • T: ${Math.round(dt.fatG)}g
             </div>
           </div>
           <div style="text-align: right;">
@@ -8623,8 +9419,9 @@ async function testApiKeysConnection() {
     if (!key) return { label, ok: false, empty: true, text: `• <b>${label}</b>: <span style="color: var(--text-muted);">⚪ Brak wpisanego klucza</span>` };
 
     const modelsToTry = [
-      { name: 'gemini-3.8-flash', desc: 'Flash (główny model do analiz i czatu)' },
-      { name: 'gemini-3.5-flash-lite', desc: 'Flash-Lite (wysoki limit 500 req/dzień)' }
+      { name: 'gemini-2.5-flash', desc: 'Flash (główny model do analiz i czatu)' },
+      { name: 'gemini-2.0-flash-lite', desc: 'Flash-Lite (wysoki limit zapytań/dzień)' },
+      { name: 'gemini-1.5-flash', desc: 'Flash 1.5 (stabilny fallback)' }
     ];
 
     let lastError = null;

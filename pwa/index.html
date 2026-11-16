@@ -365,6 +365,11 @@
       touch-action: pan-y !important;
       user-select: auto !important;
     }
+    body.focus-lock #rest-timer-bar,
+    body.focus-lock #rest-timer-bar * {
+      touch-action: pan-y !important;
+      user-select: auto !important;
+    }
     #rest-timer-bar {
       display: none;
       position: fixed;
@@ -377,25 +382,31 @@
       z-index: 9999;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      padding: 20px;
+      justify-content: flex-start;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 16px 12px 48px 12px;
       pointer-events: all;
-      touch-action: none;
+      touch-action: pan-y;
+      box-sizing: border-box;
     }
     .focus-overlay-card {
       width: 100%;
       max-width: 480px;
+      margin: auto 0;
       background: linear-gradient(160deg, #063d23 0%, #0b663a 100%);
       border: 2px solid #00E676;
       box-shadow: 0 24px 64px rgba(0, 0, 0, 0.9), 0 0 40px rgba(0, 230, 118, 0.28);
       border-radius: 26px;
-      padding: 24px 20px;
+      padding: 24px 18px;
       display: flex;
       flex-direction: column;
       align-items: center;
       gap: 14px;
       text-align: center;
       transition: background 0.25s, border-color 0.25s, box-shadow 0.25s;
+      box-sizing: border-box;
+      touch-action: pan-y;
     }
     #rest-timer-bar.overtime .focus-overlay-card {
       background: linear-gradient(160deg, #4a0d0d 0%, #7a1515 100%) !important;
@@ -606,7 +617,7 @@
       </div>
 
       <!-- PRD-05: Next Up & Zipro dumbbell setup card (Supports full superset & series preparation) -->
-      <div id="timer-next-up-card" style="display: none; width: 100%; background: rgba(0,0,0,0.55); border: 1px solid rgba(0, 229, 255, 0.35); border-radius: 12px; padding: 10px 14px; text-align: left; margin: 4px 0; max-height: 280px; overflow-y: auto;">
+      <div id="timer-next-up-card" style="display: none; width: 100%; background: rgba(0,0,0,0.55); border: 1px solid rgba(0, 229, 255, 0.35); border-radius: 12px; padding: 10px 14px; text-align: left; margin: 4px 0;">
         <div id="timer-next-up-header" style="font-size: 11px; font-weight: 800; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">⏭️ Kolejny zestaw / Next Up:</div>
         <div id="timer-next-up-content">
           <div id="timer-next-up-name" style="font-size: 14px; font-weight: 800; color: #ffffff; margin-top: 2px;"></div>
@@ -1069,9 +1080,26 @@
             </div>
             <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 10px; font-size: 12px;" onclick="changeNutritionDay(1)">▶</button>
           </div>
-          <div style="display: flex; gap: 6px;">
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 9px; font-size: 11px; color: #ffeb3b; border-color: rgba(255,235,59,0.35);" onclick="toggleMealCategoriesDrawer()">⚙️ Posiłki</button>
             <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 9px; font-size: 11px; color: var(--accent); border-color: rgba(0,229,255,0.35);" onclick="toggleDayTransferDrawer()">📋 Kopiuj dzień</button>
             <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 9px; font-size: 11px; color: var(--primary); border-color: rgba(255,179,0,0.35);" onclick="toggleNutritionGoalsDrawer()">🎯 Cel</button>
+          </div>
+        </div>
+
+        <!-- Collapsible Meal Categories (1 śniadanie, 2 śniadanie, lunch, obiad, kolacja, przekąski) Manager -->
+        <div id="nutrition-meal-categories-drawer" style="display: none; background: var(--surface-elevated); border: 1px solid rgba(255, 235, 59, 0.4); border-radius: 12px; padding: 12px; margin-bottom: 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span style="font-size: 13px; font-weight: 800; color: #ffeb3b;">⚙️ Definiowanie Posiłków w Ciągu Dnia</span>
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 2px 8px; font-size: 11px;" onclick="toggleMealCategoriesDrawer()">✕</button>
+          </div>
+          <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
+            Możesz zmienić nazwy, dodać nowy posiłek (np. Przedtreningowy, Podwieczorek) lub usunąć zbędny posiłek:
+          </p>
+          <div id="meal-categories-list" style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px;"></div>
+          <div style="display: flex; gap: 6px;">
+            <input type="text" id="new-meal-category-input" class="input-box" style="text-align: left; font-size: 13px; padding: 7px 9px; flex: 1;" placeholder="Nazwa nowego posiłku (np. Podwieczorek)">
+            <button type="button" class="btn btn-sm btn-primary" style="padding: 7px 12px; font-size: 12px;" onclick="addNewMealCategory()">➕ Dodaj</button>
           </div>
         </div>
 
@@ -1130,6 +1158,31 @@
 
         <!-- Daily Progress Bars -->
         <div id="nutrition-daily-progress"></div>
+
+        <!-- Coffee Counter (Licznik Kaw w Dniu) -->
+        <div id="nutrition-coffee-counter" style="margin-top: 12px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255, 179, 0, 0.35); border-radius: 12px; padding: 10px 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 16px;">☕</span>
+              <span style="font-size: 13px; font-weight: 800; color: var(--primary);">Licznik Kaw Dzisiaj:</span>
+              <span id="coffee-counter-total" style="font-size: 14px; font-weight: 900; color: var(--text); background: rgba(255,179,0,0.18); padding: 2px 8px; border-radius: 6px;">0</span>
+            </div>
+            <div id="coffee-counter-details" style="font-size: 11px; color: var(--text-muted);">
+              0 czarnych • 0 z mlekiem (50ml 2%)
+            </div>
+          </div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <button type="button" class="btn btn-sm btn-secondary" style="flex: 1; min-width: 130px; font-size: 11px; padding: 6px 8px; border-color: rgba(255,255,255,0.25);" onclick="logQuickCoffee('black')">
+              + ☕ Czarna (bez mleka)
+            </button>
+            <button type="button" class="btn btn-sm btn-secondary" style="flex: 1.2; min-width: 160px; font-size: 11px; padding: 6px 8px; color: var(--primary); border-color: rgba(255,179,0,0.4);" onclick="logQuickCoffee('milk')">
+              + ☕🥛 Z mlekiem (50ml 2%)
+            </button>
+            <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 8px; font-size: 11px; color: var(--text-muted);" onclick="undoLastCoffee()" title="Cofnij ostatnią kawę">
+              ↩️ Cofnij
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- 2. AI Photo Camera & High-Model Meal Estimator -->
@@ -1177,6 +1230,19 @@
         <!-- Editable AI Meal Preview / Manual Entry Box -->
         <div id="meal-editor-box" style="display: none; background: var(--surface-elevated); border: 1px solid var(--accent); border-radius: 12px; padding: 12px; margin-top: 12px;">
           <div style="font-size: 12px; font-weight: 800; color: var(--accent); margin-bottom: 6px;" id="meal-editor-header">✨ Oszacowanie AI (możesz skorygować lub dopytać AI przed zapisem):</div>
+          
+          <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
+            <div style="flex: 2;">
+              <label style="font-size: 10px; color: var(--text-muted); display: block; margin-bottom: 3px;">Kategoria posiłku:</label>
+              <select id="edit-meal-type" class="input-box" style="text-align: left; font-size: 13px; padding: 7px 9px; width: 100%;">
+              </select>
+            </div>
+            <div style="flex: 1;">
+              <label style="font-size: 10px; color: var(--text-muted); display: block; margin-bottom: 3px;">Godzina:</label>
+              <input type="time" id="edit-meal-time" class="input-box" style="font-size: 13px; padding: 6px 8px; width: 100%;">
+            </div>
+          </div>
+
           <input type="text" id="edit-meal-name" class="input-box" style="text-align: left; font-size: 14px; margin-bottom: 8px;" placeholder="Nazwa posiłku (np. Kurczak z ryżem i brokułami)">
           <div id="edit-meal-ingredients" style="display: none; font-size: 11px; color: var(--text-muted); margin-bottom: 8px; line-height: 1.4; padding: 8px; background: #12151b; border-radius: 8px; border: 1px solid var(--border);"></div>
 
@@ -1243,6 +1309,37 @@
       </div>
     </div>
   </section>
+
+  <!-- DRAWER / MODAL: COPY ENTIRE MEAL BLOCK -->
+  <div id="meal-block-transfer-drawer" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 10040; align-items: center; justify-content: center; padding: 14px; pointer-events: all; touch-action: auto;" onclick="if(event.target===this) closeMealBlockTransferDrawer()">
+    <div style="background: var(--surface); border: 1px solid var(--accent); border-radius: 16px; padding: 18px; max-width: 440px; width: 100%; box-shadow: 0 12px 36px rgba(0,0,0,0.75);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h3 id="block-transfer-title" style="font-size: 15px; font-weight: 800; color: var(--accent); margin: 0;">📋 Kopiuj Cały Posiłek</h3>
+        <button type="button" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer; padding: 0 4px;" onclick="closeMealBlockTransferDrawer()">✕</button>
+      </div>
+      <p id="block-transfer-desc" style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.4;"></p>
+      
+      <div style="margin-bottom: 10px;">
+        <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">Docelowa data:</label>
+        <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+          <input type="date" id="block-transfer-target-date" class="input-box" style="flex: 1; font-size: 13px; padding: 7px 9px; min-width: 140px;">
+          <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 8px; font-size: 11px;" onclick="setBlockTransferQuickDate(0)">Dzisiaj</button>
+          <button type="button" class="btn btn-sm btn-secondary" style="padding: 6px 8px; font-size: 11px;" onclick="setBlockTransferQuickDate(1)">Jutro</button>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 14px;">
+        <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">Docelowy posiłek:</label>
+        <select id="block-transfer-target-category" class="input-box" style="text-align: left; font-size: 13px; padding: 7px 9px; width: 100%;">
+        </select>
+      </div>
+
+      <div style="display: flex; gap: 8px;">
+        <button type="button" class="btn btn-primary" style="flex: 2; padding: 10px; font-size: 13px; font-weight: 800;" onclick="confirmMealBlockTransfer()">📋 Skopiuj wszystkie pozycje</button>
+        <button type="button" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 12px;" onclick="closeMealBlockTransferDrawer()">Anuluj</button>
+      </div>
+    </div>
+  </div>
 
   <!-- VIEW: SETTINGS -->
   <section id="view-settings" class="view">
@@ -1933,6 +2030,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=63"></script>
+  <script src="app.js?v=64"></script>
 </body>
 </html>
