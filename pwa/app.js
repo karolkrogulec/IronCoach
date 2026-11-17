@@ -4817,6 +4817,7 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
                 ]);
               };
 
+              let streamInterrupted = false;
               try {
                 while (true) {
                   const { done, value } = await readWithWatchdog(reader, 8000);
@@ -4841,11 +4842,13 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
                   }
                 }
               } catch (readErr) {
+                streamInterrupted = true;
                 console.warn(`[Gemini Streaming Reader] Przerwano strumień ${modelName}:`, readErr.message);
               }
 
               const finalText = accumulatedText.trim();
-              if (finalText) {
+              // If stream completed cleanly or has full answer:
+              if (finalText && (!streamInterrupted || finalText.length > 250)) {
                 delete (STATE.keyCooldowns || {})[key];
                 if (STATE.modelQuotaCooldowns) {
                   delete STATE.modelQuotaCooldowns[quotaKey];
@@ -4871,7 +4874,7 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
 
                 return finalText;
               } else {
-                console.warn(`[Gemini Streaming] Brak tekstu w strumieniu dla ${modelName}, przełączam na zapytanie standardowe.`);
+                console.warn(`[Gemini Streaming] Strumień pusty lub przerwany przedwcześnie (${finalText.length} zn.) dla ${modelName}, przełączam na zapytanie standardowe.`);
               }
             } else if (sRes.status === 429) {
               STATE.modelQuotaCooldowns = STATE.modelQuotaCooldowns || {};
@@ -4908,6 +4911,26 @@ async function callGemini(prompt, preferredTier = 'fast', inlineData = null, onC
         } catch (err) {
           clearTimeout(timeoutId);
           postErr = err;
+        }
+
+        // Auto-retry once on transient network glitch (e.g. mobile cellular handover)
+        if (postErr && !postRes) {
+          await new Promise(r => setTimeout(r, 600));
+          const retryController = new AbortController();
+          const retryTimeoutId = setTimeout(() => retryController.abort(), 18000);
+          try {
+            postRes = await fetch(standardUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contents: [{ parts: parts }] }),
+              signal: retryController.signal
+            });
+            clearTimeout(retryTimeoutId);
+            postErr = null;
+          } catch (retryErr) {
+            clearTimeout(retryTimeoutId);
+            postErr = retryErr;
+          }
         }
 
         if (postErr || !postRes) {
