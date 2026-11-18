@@ -1964,6 +1964,47 @@ function regenerateCurrentAnalysis() {
   forceCoachAnalysis(targetId);
 }
 
+function formatCoachReportHtml(rawFeedback, nextTargets = null) {
+  if (!rawFeedback) return '';
+  // Clean machine-readable JSON targets block so raw JSON isn't displayed in prose
+  let cleaned = String(rawFeedback)
+    .replace(/```json:next_targets[\s\S]*?```/gi, '')
+    .replace(/```json\s*\[\s*\{[\s\S]*?\}\s*\]\s*```/gi, '')
+    .trim();
+
+  let targetsHtml = '';
+  if (Array.isArray(nextTargets) && nextTargets.length > 0) {
+    targetsHtml = `
+      <div style="margin-top: 18px; padding: 15px 16px; background: rgba(0, 229, 255, 0.08); border: 1px solid rgba(0, 229, 255, 0.35); border-radius: 14px;">
+        <div style="font-weight: 800; color: var(--accent); margin-bottom: 10px; font-size: 13.5px; display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 17px;">🎯</span>
+          <span>CELE PROGRESYWNE ZAŁADOWANE NA KOLEJNY TRENING:</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 7px;">
+          ${nextTargets.map(t => {
+            const wVal = parseFloat(t.targetWeight) || 0;
+            const wText = wVal > 0 ? `${wVal} kg` : (t.targetWeight === 0 ? 'Masa ciała (BW)' : '');
+            return `
+              <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.35); padding: 8px 12px; border-radius: 8px; font-size: 12px; gap: 10px;">
+                <span style="font-weight: 700; color: #ffffff;">${escapeHtml(t.exercise)}</span>
+                <div style="text-align: right; flex-shrink: 0;">
+                  <span style="color: var(--primary); font-weight: 800; font-size: 13px;">${wText ? wText + ' × ' : ''}${t.targetReps} powt.</span>
+                  ${t.progressionReason ? `<div style="font-size: 10.5px; color: var(--text-muted); margin-top: 2px;">${escapeHtml(t.progressionReason)}</div>` : ''}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 10px; text-align: right;">
+          ⚡ Powyższe obciążenia i powtórzenia zostaną automatycznie wstawione do serii po rozpoczęciu tego treningu.
+        </div>
+      </div>
+    `;
+  }
+
+  return formatMarkdown(cleaned) + targetsHtml;
+}
+
 function refreshCoachReportBox() {
   const loading = document.getElementById('coach-loading');
   const reportBox = document.getElementById('coach-report-content');
@@ -1983,7 +2024,7 @@ function refreshCoachReportBox() {
     const latestWithFeedback = STATE.history.find(s => s.coachFeedback);
     if (latestWithFeedback) {
       STATE.currentCoachReportSessionId = latestWithFeedback.id;
-      reportBox.innerHTML = formatMarkdown(latestWithFeedback.coachFeedback);
+      reportBox.innerHTML = formatCoachReportHtml(latestWithFeedback.coachFeedback, latestWithFeedback.nextTargets);
       reportBox.style.display = 'block';
     } else if (STATE.history.length > 0) {
       const latest = STATE.history[0];
@@ -2006,7 +2047,7 @@ function refreshCoachReportBox() {
   } else {
     const activeSession = STATE.history.find(s => s.id === STATE.currentCoachReportSessionId);
     if (activeSession && activeSession.coachFeedback && (!loading || loading.style.display === 'none')) {
-      reportBox.innerHTML = formatMarkdown(activeSession.coachFeedback);
+      reportBox.innerHTML = formatCoachReportHtml(activeSession.coachFeedback, activeSession.nextTargets);
       reportBox.style.display = 'block';
     }
   }
@@ -2024,7 +2065,7 @@ function viewHistoryReport(sessionId) {
   const reportBox = document.getElementById('coach-report-content');
   if (loading) loading.style.display = 'none';
   if (session.coachFeedback) {
-    reportBox.innerHTML = formatMarkdown(session.coachFeedback);
+    reportBox.innerHTML = formatCoachReportHtml(session.coachFeedback, session.nextTargets);
     reportBox.style.display = 'block';
   } else if (isWorkoutShortOrTest(session)) {
     renderSkippedShortWorkoutNotice(session);
@@ -2093,6 +2134,15 @@ function startWorkout(planId) {
   const lastSamePlanSession = findLastCompletedSessionForPlan(plan);
   const lastSessionEndTs = lastSamePlanSession ? (lastSamePlanSession.endTime || lastSamePlanSession.startTime || 0) : 0;
 
+  // Progression targets from AI Coach analysis:
+  // 1) From plan.aiNextTargets (saved when coach generated recommendations)
+  // 2) From lastSamePlanSession.nextTargets
+  const aiTargetsList = (plan.aiNextTargets && Array.isArray(plan.aiNextTargets.targets) && plan.aiNextTargets.targets.length > 0)
+    ? plan.aiNextTargets.targets
+    : ((lastSamePlanSession && Array.isArray(lastSamePlanSession.nextTargets) && lastSamePlanSession.nextTargets.length > 0)
+        ? lastSamePlanSession.nextTargets
+        : null);
+
   const exercises = (plan.exercises || []).map(ex => {
     const loadType = ex.loadType || 'standard';
     const hasInitialWeight = (parseFloat(ex.weight) || 0) > 0;
@@ -2104,6 +2154,17 @@ function startWorkout(planId) {
       ? lastSamePlanSession.sets.filter(s => normalizeExKey(s.exercise) === normExName)
       : [];
 
+    const matchedAiTarget = (!isManualOverride && aiTargetsList)
+      ? aiTargetsList.find(t => normalizeExKey(t.exercise) === normExName)
+      : null;
+
+    const aiWeight = (matchedAiTarget && matchedAiTarget.targetWeight !== undefined && matchedAiTarget.targetWeight !== null && !isNaN(parseFloat(matchedAiTarget.targetWeight)))
+      ? parseFloat(matchedAiTarget.targetWeight)
+      : null;
+    const aiReps = (matchedAiTarget && matchedAiTarget.targetReps !== undefined && matchedAiTarget.targetReps !== null && !isNaN(parseInt(matchedAiTarget.targetReps)))
+      ? parseInt(matchedAiTarget.targetReps)
+      : null;
+
     let progressionSourceLabel = '';
     const numSets = parseInt(ex.sets) || 3;
     const sets = [];
@@ -2113,7 +2174,19 @@ function startWorkout(planId) {
       let defaultWeight = loadType === 'bodyweight' && !hasInitialWeight ? 0 : (parseFloat(ex.weight) || 0);
       let defaultReps = parseInt(ex.reps) || 10;
 
-      if (histSet) {
+      if (!isManualOverride && matchedAiTarget && (aiWeight !== null || aiReps !== null)) {
+        // Priority 1: AI Coach planned progression targets
+        if (aiWeight !== null) {
+          defaultWeight = (loadType === 'bodyweight' && !hasInitialWeight && !(aiWeight > 0)) ? 0 : aiWeight;
+        }
+        if (aiReps !== null) {
+          defaultReps = aiReps;
+        }
+        const reasonStr = matchedAiTarget.progressionReason ? ` (${matchedAiTarget.progressionReason})` : '';
+        const wStr = (loadType === 'bodyweight' && !hasInitialWeight && !(defaultWeight > 0)) ? 'BW' : `${defaultWeight}kg`;
+        progressionSourceLabel = `🎯 Cel AI: ${wStr} × ${defaultReps}${reasonStr}`;
+      } else if (histSet) {
+        // Priority 2: Algorithmic effort-based auto-progression
         const lastW = parseFloat(histSet.weight) || 0;
         const lastR = parseInt(histSet.reps) || defaultReps;
         const lastEffort = parseInt(histSet.effort) || 0;
@@ -2708,8 +2781,9 @@ function renderSingleExerciseCard(ex, exIdx, isNextInSuperset) {
     loadBadgeHtml = `<span class="badge" style="font-size: 10px; background: rgba(0, 230, 118, 0.15); color: var(--success);">🤸 Kalistenika / Masa ciała</span>`;
   }
 
+  const isAiTarget = Boolean(ex.progressionHint && ex.progressionHint.includes('🎯'));
   const progBadgeHtml = ex.progressionHint
-    ? `<span class="badge" style="font-size: 9px; background: rgba(255,255,255,0.06); color: var(--text-muted); border: 1px solid var(--border);">${escapeHtml(ex.progressionHint)}</span>`
+    ? `<span class="badge" style="font-size: 9px; ${isAiTarget ? 'background: rgba(0, 229, 255, 0.12); color: var(--accent); border: 1px solid rgba(0, 229, 255, 0.4); font-weight: 700;' : 'background: rgba(255,255,255,0.06); color: var(--text-muted); border: 1px solid var(--border);'}">${escapeHtml(ex.progressionHint)}</span>`
     : '';
 
   let extraWeightToggleBtn = '';
@@ -4115,7 +4189,7 @@ function startRestTimer(
   const reorderBtn = document.getElementById('timer-reorder-structure-btn');
 
   if (bar) {
-    bar.classList.remove('overtime');
+    bar.classList.remove('overtime', 'buffer');
     bar.style.display = 'flex';
   }
 
@@ -4240,7 +4314,7 @@ function updateTimerDisplayUI() {
     // Technical Break: Count UP from 1s indefinitely
     const elapsed = Math.max(1, STATE.timerElapsedSeconds || 1);
     display.textContent = `${elapsed}s`;
-    bar.classList.remove('overtime');
+    bar.classList.remove('overtime', 'buffer');
     if (overtimeBadge) overtimeBadge.style.display = 'none';
     if (targetRef) {
       targetRef.textContent = STATE.timerRefText || '🔧 Czas na przygotowanie stanowiska • Stoper liczy czas w górę (brak limitu)';
@@ -4252,34 +4326,52 @@ function updateTimerDisplayUI() {
 
     if (remaining > 0) {
       // On track: green background
-      bar.classList.remove('overtime');
+      bar.classList.remove('overtime', 'buffer');
       display.textContent = `${remaining}s`;
       if (overtimeBadge) overtimeBadge.style.display = 'none';
       if (targetRef) {
         targetRef.textContent = STATE.timerRefText || `⏱️ Planowany odpoczynek: ${target}s (odliczanie w dół)`;
       }
     } else if (remaining === 0) {
-      // Hit 0s
+      // Hit 0s: start buffer
       bar.classList.remove('overtime');
+      bar.classList.add('buffer');
       display.textContent = `0s`;
       if (overtimeBadge) {
         overtimeBadge.style.display = 'inline-block';
-        overtimeBadge.textContent = `🔔 CZAS MINĄŁ — ROZPOCZNIJ SERIĘ!`;
+        overtimeBadge.textContent = `🔔 CZAS MINĄŁ — PODEJDŹ DO STANOWISKA`;
       }
       if (targetRef) {
-        targetRef.textContent = `🔔 Koniec zaplanowanego odpoczynku (${target}s)`;
+        targetRef.textContent = `🚶 Koniec odpoczynku (${target}s). Chwyć ciężar i rozpocznij serię (~20s bufor)`;
       }
     } else {
-      // Overtime! (remaining < 0) -> Count in reverse (+1s, +2s...) with RED background
-      bar.classList.add('overtime');
+      // remaining < 0 -> Count up
       const overSec = Math.abs(remaining);
       display.textContent = `+${overSec}s`;
-      if (overtimeBadge) {
-        overtimeBadge.style.display = 'inline-block';
-        overtimeBadge.textContent = `⚠️ ZA DŁUGI ODPOCZYNEK: +${overSec}s`;
-      }
-      if (targetRef) {
-        targetRef.textContent = `⚠️ Przekroczono zaplanowany czas odpoczynku (${target}s)`;
+
+      if (overSec <= 20) {
+        // Operational buffer: 1-20s for approaching station, gripping weights, straps/chalk
+        bar.classList.remove('overtime');
+        bar.classList.add('buffer');
+        if (overtimeBadge) {
+          overtimeBadge.style.display = 'inline-block';
+          overtimeBadge.textContent = `🚶 BUFOR TECHNICZNY: +${overSec}s / 20s (podejście i start)`;
+        }
+        if (targetRef) {
+          targetRef.textContent = `⏱️ Czas na podejście do stanowiska, chwycenie ciężaru i start serii (~20s bufor operacyjny)`;
+        }
+      } else {
+        // True overtime (> 20s over planned)
+        bar.classList.remove('buffer');
+        bar.classList.add('overtime');
+        const netOverSec = overSec - 20;
+        if (overtimeBadge) {
+          overtimeBadge.style.display = 'inline-block';
+          overtimeBadge.textContent = `⚠️ ZA DŁUGI ODPOCZYNEK: +${overSec}s (+${netOverSec}s po buforze)`;
+        }
+        if (targetRef) {
+          targetRef.textContent = `⚠️ Przekroczono zaplanowany czas odpoczynku (${target}s + 20s bufor)`;
+        }
       }
     }
   }
@@ -4350,7 +4442,7 @@ function stopTimer() {
   document.body.classList.remove('focus-lock');
   const bar = document.getElementById('rest-timer-bar');
   if (bar) {
-    bar.classList.remove('overtime');
+    bar.classList.remove('overtime', 'buffer');
     bar.style.display = 'none';
   }
   if (isWorkoutDoneType) {
@@ -8923,6 +9015,41 @@ function formatSessionDetailsForCoach(session, userWeightKg = 0) {
   if (!session) return 'Brak danych sesji.';
   const durSec = session.durationSeconds || (session.endTime && session.startTime ? Math.round((session.endTime - session.startTime) / 1000) : 0);
 
+  const endTs = session.endTime || Date.now();
+  const startTs = session.startTime || (endTs - durSec * 1000);
+  const startDate = new Date(startTs);
+  const endDate = new Date(endTs);
+
+  const daysPl = ['Niedziela', 'Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota'];
+  const dayName = daysPl[startDate.getDay()];
+  const isWeekend = (startDate.getDay() === 0 || startDate.getDay() === 6);
+  const startHour = startDate.getHours();
+  const startMin = String(startDate.getMinutes()).padStart(2, '0');
+  const endHour = endDate.getHours();
+  const endMin = String(endDate.getMinutes()).padStart(2, '0');
+  const timeRange = `${String(startHour).padStart(2, '0')}:${startMin} – ${String(endHour).padStart(2, '0')}:${endMin}`;
+
+  let timeCategory = '';
+  let timeContextNote = '';
+  if (startHour >= 5 && startHour < 9) {
+    timeCategory = 'Wczesny poranek (5:00–9:00)';
+    timeContextNote = 'Trening poranny: po nocnym poście lub lekkim śniadaniu, naturalnie podwyższony poranny wyrzut kortyzolu, konieczność solidnej mobilizacji stawów i zaplanowania zbilansowanego zaopatrzenia w węglowodany/białko w ciągu dalszego dnia.';
+  } else if (startHour >= 9 && startHour < 13) {
+    timeCategory = 'Przedpołudnie (9:00–13:00)';
+    timeContextNote = 'Przedpołudniowe okno: wysoka czujność układu nerwowego, optymalny poziom glikogenu po 1-2 posiłkach, sprzyjający generowaniu szczytowej siły.';
+  } else if (startHour >= 13 && startHour < 17) {
+    timeCategory = 'Popołudnie (13:00–17:00)';
+    timeContextNote = 'Popołudnie: biologiczny szczyt temperatury ciała, elastyczności mięśniowej i siły skurczu.';
+  } else if (startHour >= 17 && startHour < 21) {
+    timeCategory = 'Wieczór (17:00–21:00)';
+    timeContextNote = isWeekend
+      ? 'Wieczór weekendowy: trening wypoczęty, bez obciążeń pracą zawodową.'
+      : 'Wieczór po pracy: zmęczenie psychiczne po obowiązkach zawodowych, istotny wpływ na centralny układ nerwowy (OUN) i potrzebę wyciszenia.';
+  } else {
+    timeCategory = 'Późny wieczór / Noc (po 21:00)';
+    timeContextNote = 'Późny wieczór / Noc: wysoki wyrzut adrenaliny i pobudzenie OUN tuż przed snem, ryzyko zaburzenia wydzielania melatoniny i fazy głębokiego snu; bezwzględna konieczność unikania mocnych stymulantów oraz wdrożenia lekkostrawnego posiłku regeneracyjnego, który nie obciąży przewodu pokarmowego podczas snu.';
+  }
+
   const setsSummary = (session.sets || []).map(s => {
     let wDesc = `${s.weight}kg`;
     if (s.loadType === 'dual_dumbbell') {
@@ -8943,17 +9070,31 @@ function formatSessionDetailsForCoach(session, userWeightKg = 0) {
 
   const restsSummary = (session.restLogs && session.restLogs.length > 0)
     ? session.restLogs.map((r, i) => {
-        const rTypeLabel = r.type === 'superset-short' ? 'wewnątrz superserii' : (r.type === 'superset-round' ? 'po obwodzie superserii' : 'między seriami');
-        return `Przerwa #${i + 1} (${rTypeLabel}, po ${r.afterExercise} S${r.afterSet}): planowana ${r.plannedSeconds}s, rzeczywista ${r.actualSeconds}s${r.overtimeSeconds > 0 ? ` (PRZEKROCZONO o +${r.overtimeSeconds}s)` : ' (w normie)'}`;
+        const rTypeLabel = r.type === 'superset-short' ? 'wewnątrz superserii' : (r.type === 'superset-round' ? 'po obwodzie superserii' : (r.type === 'technical-prep' || r.type === 'technical-break' ? 'techniczna/przygotowanie stanowiska' : 'między seriami'));
+        let overtimeNote = ' (w normie)';
+        if (r.overtimeSeconds > 0) {
+          if (r.overtimeSeconds <= 20) {
+            overtimeNote = ` (+${r.overtimeSeconds}s bufor operacyjny: podejście do stanowiska/chwyt ciężaru)`;
+          } else {
+            overtimeNote = ` (przekroczono o +${r.overtimeSeconds}s, w tym 20s naturalnego bufora)`;
+          }
+        }
+        return `Przerwa #${i + 1} (${rTypeLabel}, po ${r.afterExercise} S${r.afterSet}): planowana ${r.plannedSeconds}s, rzeczywista ${r.actualSeconds}s${overtimeNote}`;
       }).join('\n')
     : 'Brak szczegółowych pomiarów przerw.';
 
   return `Plan: ${session.planName}
-Data: ${new Date(session.endTime || Date.now()).toLocaleString('pl-PL')}
+Dzień tygodnia i data: ${dayName} (${isWeekend ? 'weekend' : 'dzień roboczy'}), ${startDate.toLocaleDateString('pl-PL')}
+Godziny sesji: ${timeRange}
+Pora dnia i kontekst fizjologiczny: ${timeCategory}
+-> ${timeContextNote}
 Całkowity czas treningu: ${formatDuration(durSec)} (${durSec} sekund)
 Średnia przerwa między seriami/ćwiczeniami: ${session.avgRestSeconds || 0} sekund
 Całkowity tonaż (z uwzględnieniem podwójnych hantli): ${session.totalVolumeKg} kg
 Ukończone serie: ${session.completedSets}
+
+ℹ️ ZASADA OCENY PRZERW (BUFOR OPERACYJNY ~15-25s):
+Wszystkie zarejestrowane przerwy obejmują czas odpoczynku ze stopera oraz niezbędne czynności operacyjne na siłowni (bezpieczne odłożenie ciężarów, podejście do stanowiska/maszyny, nałożenie magnezji/pasa, chwyt i ustawienie pozycji przed startem). Odstępstwa do 20 sekund powyżej planu to naturalny bufor techniczny, a nie opieszałość.
 
 Wykonane serie (z uwzględnieniem superserii, 2x hantli i masy ciała):
 ${setsSummary}
@@ -8972,6 +9113,15 @@ async function triggerCoachAnalysis(session) {
   const { profileSection, plansSection, userWeightKg } = buildCoachProfileAndPlansContext();
   const sessionWeight = getWeightForWorkout(session);
   const currentSessionDetails = formatSessionDetailsForCoach(session, sessionWeight || userWeightKg);
+
+  const durSec = session.durationSeconds || (session.endTime && session.startTime ? Math.round((session.endTime - session.startTime) / 1000) : 0);
+  const endTs = session.endTime || Date.now();
+  const startTs = session.startTime || (endTs - durSec * 1000);
+  const startDate = new Date(startTs);
+  const daysPl = ['Niedziela', 'Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota'];
+  const dayName = daysPl[startDate.getDay()];
+  const isWeekend = (startDate.getDay() === 0 || startDate.getDay() === 6);
+  const timeRange = `${String(startDate.getHours()).padStart(2, '0')}:${String(startDate.getMinutes()).padStart(2, '0')}`;
 
   let userFeedbackSection = '';
   if (session.userFeedback) {
@@ -8994,7 +9144,12 @@ Koniecznie odnieś się do zgłoszonych uwag i samopoczucia użytkownika w anali
 
   const prompt = `
 Działasz jako doświadczony, zaawansowany trener personalny i fizjolog sportowy w aplikacji IronCoach.
-Przeanalizuj zakończony trening użytkownika, biorąc pod uwagę WSZYSTKIE poniższe dane: jego wagę, wzrost, cel treningowy, pełny raport składu ciała z wagi Fitdays (21 wskaźników + analiza segmentowa tłuszczu i równowagi mięśniowej kończyn/tułowia), obwody ciała (talia, pas, klatka, ramiona, biceps, udo), historię zmian składu ciała w czasie, superserie, ćwiczenia z masą własnego ciała, ćwiczenia z dwoma hantlami (tonaż liczony podwójnie), czas trwania całego treningu oraz czasy poszczególnych przerw (w tym przekroczenia czasu przerwy).
+Przeanalizuj zakończony trening użytkownika (${session.planName}), biorąc pod uwagę WSZYSTKIE poniższe dane:
+- Dzień tygodnia (${dayName}, ${isWeekend ? 'weekend' : 'dzień roboczy'}) oraz dokładną porę dnia (${timeRange}),
+- Profil użytkownika, cel (${STATE.userProfile?.goal || 'Budowa masy mięśniowej (Hipertrofia)'}), skład ciała z wagi Fitdays (21 wskaźników + analiza segmentowa) oraz obwody ciała,
+- Wykonane serie (ciężary, powtórzenia, 2x hantle, kalistenika, subiektywne oceny trudności serii w skali 1–6),
+- Czasy przerw z uwzględnieniem bufora technicznego (~15-25s na podejście do stanowiska i chwyt),
+- Poprzednie treningi oraz historię tego planu.
 
 === PROFIL, SKŁAD CIAŁA (FITDAYS), OBWODY I CEL UŻYTKOWNIKA ===
 ${profileSection}
@@ -9009,11 +9164,39 @@ ${prevWorkouts}
 === AKTUALNE PLANY TRENINGOWE UŻYTKOWNIKA ===
 ${plansSection}
 
-Przygotuj pogłębioną, spersonalizowaną analizę w języku polskim:
-1. 📊 Ocena sesji pod kątem celu użytkownika (${STATE.userProfile?.goal || 'Hipertrofia'}) oraz jego składu ciała Fitdays i obwodów: oceń objętość, tonaż (w tym ćwiczenia z masą własnego ciała i 2x hantle), gęstość treningową (całkowity czas sesji oraz relatywne czasy rozpoczęcia i zakończenia poszczególnych serii), subiektywne oceny trudności serii dla ćwiczeń z ciężarem w skali 1–6 (gdzie 1=Lekko, 2=Spokojnie, 3=Optymalnie, 4=Ciężko, 5=Bardzo ciężko, 6=Hardcore; w kalistenice wyznacznikiem jest liczba powtórzeń) oraz dyscyplinę przerw między ćwiczeniami i wewnątrz superserii.
-2. 🎯 Konkretna periodyzacja i progresywne przeładowanie na kolejny trening (OPARTE NA OCENACH 1–6 ORAZ KALISTENICE): wskaż dokładnie, w których ćwiczeniach użytkownik ocenił serie na 1–2 (lub łatwe 3) i powinien podnieść ciężar (podaj o ile kg!), w których ćwiczeniach było 3–4 (utrzymać ciężar / dołożyć +1 powtórzenie), a gdzie było 5/6 Bardzo ciężko lub 6/6 Hardcore (zostać na obecnym ciężarze lub wydłużyć przerwę).
-3. ⚡ Praktyczne wskazówki biomechaniczne, żywieniowe (dopasowane do BMR, dziennika kalorii/makro, % tkanki tłuszczowej i celu) oraz regeneracyjne.
-Używaj czytelnego formatowania punktowego.`;
+Przygotuj pogłębioną, spersonalizowaną analizę w języku polskim w następujących sekcjach:
+
+1. 🕒 Wpływ pory dnia i dnia tygodnia na fizjologię sesji i regenerację:
+- Odnieś się bezpośrednio do dnia (${dayName}, ${isWeekend ? 'weekend' : 'dzień pracujący'}) i godzin sesji (${timeRange}).
+- Wyjaśnij, jak ta konkretna pora dnia wpływa na poziom kortyzolu, pobudzenie układu nerwowego, temperaturę ciała i glikogen.
+- Podaj konkretne zalecenia pod tę porę: jeśli wieczór/noc – jak wyciszyć OUN (stymulacja adrenergiczna), ochrona melatoniny i architektury snu głębokiego, lekkostrawny posiłek potreningowy bez obciążania żołądka na noc; jeśli poranek/dzień – zarządzanie energią i posiłkami w kolejnych godzinach.
+
+2. 📊 Ocena sesji, tonażu i dyscypliny przerw:
+- Oceń objętość i tonaż (w tym ćwiczenia z 2x hantlami i masą ciała) w korelacji z celem (${STATE.userProfile?.goal || 'Hipertrofia'}) oraz składem ciała Fitdays.
+- Oceń gęstość sesji i dyscyplinę przerw: PAMIĘTAJ o buforze technicznym (~15-25s) na podejście do stanowiska, chwycenie ciężaru i start serii – nie krytykuj użytkownika za naturalny czas operacyjny na siłowni!
+
+3. 🎯 Plan progresywnego przeładowania na kolejną sesję planu "${session.planName}":
+- Na podstawie subiektywnych ocen trudności (skala 1–6, gdzie 1=Lekko, 2=Spokojnie, 3=Optymalnie, 4=Ciężko, 5=Bardzo ciężko, 6=Hardcore) oraz wykonanych powtórzeń w kalistenice:
+  - Wskaż ćwiczenia, w których było 1–2 (lub bardzo łatwe 3) i należy podnieść ciężar (+1kg dla hantli / +2.5kg dla sztangi).
+  - Wskaż ćwiczenia z oceną 3–4 (utrzymać ciężar, dołożyć +1 powtórzenie).
+  - Wskaż ćwiczenia z oceną 5–6 (utrzymać obecny ciężar i powtórzenia do utrwalenia techniki).
+- Podsumuj czytelnie w tekście docelowe parametry dla każdego ćwiczenia.
+
+4. ⚡ Wskazówki techniczne, biomechaniczne i żywieniowe (dopasowane do BMR, kalorii i makroskładników).
+
+BARDZO WAŻNE — STRUKTURA DANYCH DLA APLIKACJI:
+Na samym końcu swojej wypowiedzi ZAWSZE umieść ukryty blok kodu json:next_targets zawierający dokładne cele na kolejną sesję tego planu, aby aplikacja mogła je automatycznie załadować do pól treningowych podczas kolejnego startu tego treningu:
+\`\`\`json:next_targets
+[
+  {
+    "exercise": "Dokładna nazwa ćwiczenia z planu",
+    "targetWeight": 82.5,
+    "targetReps": 10,
+    "progressionReason": "+2.5kg po lekkiej serii (ocena 2/6)"
+  }
+]
+\`\`\`
+Uwaga: Pola targetWeight (liczba w kg, dla kalisteniki bez ciężaru 0), targetReps (liczba całkowita) oraz progressionReason (krótki powód po polsku) są obowiązkowe dla każdego ćwiczenia z planu!`;
 
   try {
     const tier = STATE.preferredGeminiTier || 'fast';
@@ -9025,10 +9208,36 @@ Używaj czytelnego formatowania punktowego.`;
       return;
     }
     session.coachFeedback = feedback;
-    localStorage.setItem('iron_history', JSON.stringify(STATE.history));
+
+    // Parse structured AI progression targets for the next session
+    try {
+      const match = feedback.match(/```json:next_targets\s*([\s\S]*?)\s*```/) ||
+                    feedback.match(/```json\s*(\[\s*\{[\s\S]*?\}\s*\])\s*```/);
+      if (match && match[1]) {
+        const parsed = JSON.parse(match[1]);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          session.nextTargets = parsed;
+          // Persist directly into the plan object
+          const plan = STATE.plans.find(p => p.id === session.planId || (p.name && session.planName && p.name.trim().toLowerCase() === session.planName.trim().toLowerCase()));
+          if (plan) {
+            plan.aiNextTargets = {
+              sessionId: session.id,
+              updatedAt: Date.now(),
+              planName: session.planName,
+              targets: parsed
+            };
+            safeLocalStorageSet('iron_plans', JSON.stringify(STATE.plans));
+          }
+        }
+      }
+    } catch (parseErr) {
+      console.warn('Nie udało się wyodrębnić json:next_targets:', parseErr);
+    }
+
+    safeLocalStorageSet('iron_history', JSON.stringify(STATE.history));
     renderAnalysisSessionSelector();
     if (STATE.currentCoachReportSessionId === session.id) {
-      reportBox.innerHTML = formatMarkdown(feedback);
+      reportBox.innerHTML = formatCoachReportHtml(feedback, session.nextTargets);
       reportBox.style.display = 'block';
     }
   } catch (err) {
