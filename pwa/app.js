@@ -4177,6 +4177,9 @@ function startRestTimer(
     logged: false
   };
 
+  STATE.timerIsBufferMode = false;
+  STATE.bufferStartedAt = null;
+
   // Full screen lock: prevent scrolling and clicking background elements
   document.body.classList.add('focus-lock');
 
@@ -4191,6 +4194,10 @@ function startRestTimer(
   if (bar) {
     bar.classList.remove('overtime', 'buffer');
     bar.style.display = 'flex';
+  }
+
+  if (quickAdjust) {
+    quickAdjust.style.display = isTechnical ? 'none' : 'flex';
   }
 
   if (reorderBtn) {
@@ -4219,8 +4226,7 @@ function startRestTimer(
   STATE.currentRestUpcoming = nextUpcoming;
 
   // Determine button label according to user specification:
-  // - Zwykła przerwa: "Zakończ przerwę – [Kolejne ćwiczenie]"
-  // - Przerwa techniczna: "Zakończ przerwę – [Pierwsze ćwiczenie]"
+  // Pressing this button triggers the 20s operational buffer and auto-dismisses!
   if (confirmBtn) {
     if (btnText) {
       confirmBtn.textContent = btnText;
@@ -4229,11 +4235,11 @@ function startRestTimer(
         ? nextUpcoming.firstExerciseName
         : ((nextUpcoming && nextUpcoming.ex) ? nextUpcoming.ex.name : 'Pierwsze ćwiczenie');
       confirmBtn.textContent = (afterExercise === 'Start treningu')
-        ? `✅ Stanowisko gotowe – Rozpocznij: ${firstExName}`
-        : `Zakończ przerwę – ${firstExName}`;
+        ? `✅ Stanowisko gotowe – Idę do: ${firstExName} (bufor 20s)`
+        : `🚶 Idę do serii – ${firstExName} (bufor 20s)`;
     } else {
       const nextExName = (nextUpcoming && nextUpcoming.ex) ? nextUpcoming.ex.name : 'Kolejne ćwiczenie';
-      confirmBtn.textContent = `Zakończ przerwę – ${nextExName}`;
+      confirmBtn.textContent = `🚶 Idę do serii – ${nextExName} (bufor 20s)`;
     }
   }
 
@@ -4304,6 +4310,7 @@ function startRestTimer(
 }
 
 function updateTimerDisplayUI() {
+  if (STATE.timerIsBufferMode) return;
   const bar = document.getElementById('rest-timer-bar');
   const display = document.getElementById('timer-display');
   const overtimeBadge = document.getElementById('timer-overtime-badge');
@@ -4333,45 +4340,28 @@ function updateTimerDisplayUI() {
         targetRef.textContent = STATE.timerRefText || `⏱️ Planowany odpoczynek: ${target}s (odliczanie w dół)`;
       }
     } else if (remaining === 0) {
-      // Hit 0s: start buffer
-      bar.classList.remove('overtime');
-      bar.classList.add('buffer');
+      // Hit 0s: alert user
+      bar.classList.remove('overtime', 'buffer');
       display.textContent = `0s`;
       if (overtimeBadge) {
         overtimeBadge.style.display = 'inline-block';
-        overtimeBadge.textContent = `🔔 CZAS MINĄŁ — PODEJDŹ DO STANOWISKA`;
+        overtimeBadge.textContent = `🔔 CZAS MINĄŁ — WCIŚNIJ GUZIK I IDŹ DO SERII`;
       }
       if (targetRef) {
-        targetRef.textContent = `🚶 Koniec odpoczynku (${target}s). Chwyć ciężar i rozpocznij serię (~20s bufor)`;
+        targetRef.textContent = `🔔 Koniec odpoczynku (${target}s). Wciśnij guzik poniżej, aby uruchomić 20s bufor na podejście.`;
       }
     } else {
-      // remaining < 0 -> Count up
+      // remaining < 0 -> Count up in overtime
+      bar.classList.add('overtime');
+      bar.classList.remove('buffer');
       const overSec = Math.abs(remaining);
       display.textContent = `+${overSec}s`;
-
-      if (overSec <= 20) {
-        // Operational buffer: 1-20s for approaching station, gripping weights, straps/chalk
-        bar.classList.remove('overtime');
-        bar.classList.add('buffer');
-        if (overtimeBadge) {
-          overtimeBadge.style.display = 'inline-block';
-          overtimeBadge.textContent = `🚶 BUFOR TECHNICZNY: +${overSec}s / 20s (podejście i start)`;
-        }
-        if (targetRef) {
-          targetRef.textContent = `⏱️ Czas na podejście do stanowiska, chwycenie ciężaru i start serii (~20s bufor operacyjny)`;
-        }
-      } else {
-        // True overtime (> 20s over planned)
-        bar.classList.remove('buffer');
-        bar.classList.add('overtime');
-        const netOverSec = overSec - 20;
-        if (overtimeBadge) {
-          overtimeBadge.style.display = 'inline-block';
-          overtimeBadge.textContent = `⚠️ ZA DŁUGI ODPOCZYNEK: +${overSec}s (+${netOverSec}s po buforze)`;
-        }
-        if (targetRef) {
-          targetRef.textContent = `⚠️ Przekroczono zaplanowany czas odpoczynku (${target}s + 20s bufor)`;
-        }
+      if (overtimeBadge) {
+        overtimeBadge.style.display = 'inline-block';
+        overtimeBadge.textContent = `⚠️ PRZEDŁUŻONY ODPOCZYNEK: +${overSec}s`;
+      }
+      if (targetRef) {
+        targetRef.textContent = `⏱️ Wciśnij guzik poniżej, aby uruchomić 20s bufor na podejście do stanowiska.`;
       }
     }
   }
@@ -4410,6 +4400,7 @@ function finalizeCurrentRestLog(nextExerciseName = null, nextSetNum = null) {
       plannedSeconds: plannedSec,
       actualSeconds: actualSec,
       overtimeSeconds: overtimeSec,
+      bufferSeconds: OPERATIONAL_BUFFER_SECONDS,
       timestamp: Date.now()
     });
     STATE.currentRestInfo.logged = true;
@@ -4420,9 +4411,110 @@ function finalizeCurrentRestLog(nextExerciseName = null, nextSetNum = null) {
     if (lastLog && !lastLog.beforeExercise) {
       lastLog.actualSeconds = actualSec;
       lastLog.overtimeSeconds = Math.max(0, actualSec - (lastLog.plannedSeconds || 90));
+      lastLog.bufferSeconds = OPERATIONAL_BUFFER_SECONDS;
       lastLog.beforeExercise = nextExerciseName || '';
       lastLog.beforeSet = nextSetNum || null;
     }
+  }
+}
+
+// ============================================================================
+// OPERATIONAL BUFFER (20s Auto-Dismissing Station Setup & Grip Buffer)
+// User presses button -> 20s countdown begins -> Automatically closes!
+// ============================================================================
+const OPERATIONAL_BUFFER_SECONDS = 20;
+
+function handleTimerConfirmClick() {
+  const isWorkoutDoneType = (STATE.currentRestInfo && STATE.currentRestInfo.type === 'workout-done');
+  if (isWorkoutDoneType) {
+    stopTimer();
+    return;
+  }
+
+  // If already in 20s buffer mode, tapping the button again skips remaining buffer immediately
+  if (STATE.timerIsBufferMode) {
+    stopTimer();
+    return;
+  }
+
+  // 1. Finalize and log the rest period at the exact moment user presses button
+  if (STATE.currentRestInfo && !STATE.currentRestInfo.logged) {
+    finalizeCurrentRestLog();
+  }
+
+  // 2. Launch the 20-second operational buffer that automatically dismisses itself
+  startOperationalBuffer();
+}
+
+function startOperationalBuffer() {
+  clearInterval(STATE.timerInterval);
+  STATE.timerIsBufferMode = true;
+  STATE.bufferStartedAt = Date.now();
+  STATE.bufferTargetSeconds = OPERATIONAL_BUFFER_SECONDS; // 20s
+
+  const bar = document.getElementById('rest-timer-bar');
+  const badgePill = document.getElementById('timer-badge-pill');
+  const modeLabel = document.getElementById('timer-mode-label');
+  const display = document.getElementById('timer-display');
+  const targetRef = document.getElementById('timer-target-ref');
+  const confirmBtn = document.getElementById('timer-confirm-btn');
+  const quickAdjust = document.getElementById('timer-quick-adjust-row');
+  const overtimeBadge = document.getElementById('timer-overtime-badge');
+  const reorderBtn = document.getElementById('timer-reorder-structure-btn');
+
+  if (bar) {
+    bar.classList.remove('overtime');
+    bar.classList.add('buffer');
+    bar.style.display = 'flex';
+  }
+
+  if (quickAdjust) quickAdjust.style.display = 'none';
+  if (reorderBtn) reorderBtn.style.display = 'none';
+  if (overtimeBadge) overtimeBadge.style.display = 'none';
+
+  if (badgePill) {
+    badgePill.textContent = '🚶 BUFOR OPERACYJNY (20s)';
+  }
+  if (modeLabel) {
+    modeLabel.textContent = 'Podejdź do stanowiska, chwyć ciężar i ustaw pozycję';
+  }
+  if (confirmBtn) {
+    confirmBtn.textContent = '⚡ Rozpocznij serię teraz (pomiń bufor)';
+  }
+
+  if (navigator.vibrate) {
+    try { navigator.vibrate([100]); } catch (e) {}
+  }
+
+  updateOperationalBufferUI();
+
+  STATE.timerInterval = setInterval(() => {
+    updateOperationalBufferUI();
+  }, 250);
+}
+
+function updateOperationalBufferUI() {
+  if (!STATE.timerIsBufferMode || !STATE.bufferStartedAt) return;
+  const elapsed = Math.floor((Date.now() - STATE.bufferStartedAt) / 1000);
+  const remaining = Math.max(0, (STATE.bufferTargetSeconds || OPERATIONAL_BUFFER_SECONDS) - elapsed);
+
+  const display = document.getElementById('timer-display');
+  const targetRef = document.getElementById('timer-target-ref');
+
+  if (display) {
+    display.textContent = `${remaining}s`;
+  }
+  if (targetRef) {
+    targetRef.textContent = `⏱️ Ekran wygasi się automatycznie za ${remaining}s (nie musisz wracać do telefonu)`;
+  }
+
+  if (remaining <= 0) {
+    // 20s elapsed! Play sound/vibe cue and auto-dismiss
+    playRestTimerAlertSound();
+    if (navigator.vibrate) {
+      try { navigator.vibrate([200, 100, 200]); } catch (e) {}
+    }
+    stopTimer();
   }
 }
 
@@ -4432,13 +4524,15 @@ function stopTimer() {
     finalizeCurrentRestLog();
   }
   if (STATE.activeWorkout) {
-    // Module 4: Pressing OK / Gotowe starts relative timer for the next set/superset
+    // Module 4: When timer or buffer finishes, start relative timer for the active set
     STATE.activeWorkout.currentSetStartedAt = Date.now();
     saveActiveWorkout();
   }
   clearInterval(STATE.timerInterval);
   STATE.timerInterval = null;
   STATE.timerStartedAt = null;
+  STATE.timerIsBufferMode = false;
+  STATE.bufferStartedAt = null;
   document.body.classList.remove('focus-lock');
   const bar = document.getElementById('rest-timer-bar');
   if (bar) {
